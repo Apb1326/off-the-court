@@ -87,24 +87,35 @@ function getPlayerTendencyForPlay(player: Player, playType: PlayType): number {
   }
 }
 
+export interface ShotZoneContext {
+  /** >1 chases threes (trailing late), <1 avoids them (protecting a lead). */
+  threePointBias?: number;
+  /** 0-1 rim deterrence from a shot-blocker — pushes shots away from the rim. */
+  rimDeterrence?: number;
+}
+
 export function selectShotZone(
   shooter: Player,
   playType: PlayType,
   rng: SeededRNG,
+  ctx: ShotZoneContext = {},
 ): ShotZone {
   const zoneOptions = PLAY_TYPE_SHOT_ZONES[playType];
   const zones = zoneOptions.map((z) => z.zone);
   const outside = shooter.ratings.outsideShooting / 80;
+  const threeBias = ctx.threePointBias ?? 1;
+  const rimDeterrence = ctx.rimDeterrence ?? 0;
   const weights = zoneOptions.map((z) => {
     let w = z.weight;
     // Modify based on player shot tendencies and ability. A poor outside shooter
     // both wants to and should rarely launch threes.
     if (z.zone === 'corner_three' || z.zone === 'above_break_three' || z.zone === 'deep_three') {
-      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5);
+      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5) * threeBias;
     } else if (z.zone === 'short_midrange' || z.zone === 'long_midrange') {
       w *= 0.5 + shooter.tendencies.midrangeRate * 2.0;
     } else if (z.zone === 'rim') {
-      w *= 0.5 + shooter.tendencies.rimRate * 2.0;
+      // Elite rim protection deters attacks at the basket.
+      w *= (0.5 + shooter.tendencies.rimRate * 2.0) * (1 - rimDeterrence * 0.2);
     }
     return Math.max(0.01, w);
   });
@@ -161,7 +172,19 @@ export function selectDefender(
   defensivePlayers: Player[],
   shooter: Player,
   rng: SeededRNG,
+  playType: PlayType = 'isolation',
 ): Player {
+  // On isolation and post-ups the offense actively hunts the weakest defender
+  // (a classic switch-and-attack), so the primary defender skews softer.
+  const huntsMismatch = playType === 'isolation' || playType === 'post_up';
+  if (huntsMismatch && rng.nextBool(0.45)) {
+    const weakWeights = defensivePlayers.map((d) => {
+      const defRating = (d.ratings.perimeterDefense + d.ratings.interiorDefense + d.ratings.defensiveIQ) / 3;
+      return Math.max(1, 85 - defRating); // invert: weaker defenders weighted higher
+    });
+    return rng.weightedChoice(defensivePlayers, weakWeights);
+  }
+
   // Match by position primarily
   const positionalMatch = defensivePlayers.find(
     (d) => d.position === shooter.position || d.secondaryPosition === shooter.position

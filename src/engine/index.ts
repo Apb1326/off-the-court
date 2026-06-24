@@ -105,6 +105,8 @@ export function simulateGame(
     rng,
     previousPossessionTurnover: false,
     previousPossessionLongRebound: false,
+    homeMomentum: 0,
+    awayMomentum: 0,
   };
 
   let totalGameSeconds = 0;
@@ -151,6 +153,7 @@ export function simulateGame(
     // Process stat events from play-by-play
     const lastEvent = gameState.playByPlay[gameState.playByPlay.length - 1];
     if (lastEvent) {
+      updateMomentum(gameState, isHome, lastEvent);
       recordEventStats(stats, lastEvent);
     }
 
@@ -246,6 +249,36 @@ function clampForm(form: number): number {
   return Math.max(-0.13, Math.min(0.13, form));
 }
 
+// Live momentum: a small, fast-decaying swing that builds when a team strings
+// together scores and stops. Kept deliberately small — real team scoring is
+// close to the shot-noise floor, so this adds feel without manufacturing runs.
+const MOMENTUM_DECAY = 0.8;
+const MOMENTUM_CAP = 0.02;
+
+function updateMomentum(state: GameState, isHomeOffense: boolean, ev: PlayByPlayEvent): void {
+  // Decay toward zero every possession.
+  state.homeMomentum *= MOMENTUM_DECAY;
+  state.awayMomentum *= MOMENTUM_DECAY;
+
+  const offScored = ev.outcome === 'made_shot' || ev.outcome === 'and_one';
+  const defStop = ev.outcome === 'turnover' ||
+    (ev.outcome === 'missed_shot' && ev.reboundType === 'defensive');
+
+  let offDelta = 0;
+  let defDelta = 0;
+  if (offScored) { offDelta = 0.006; defDelta = -0.003; }
+  else if (defStop) { offDelta = -0.003; defDelta = 0.004; }
+
+  const clamp = (v: number) => Math.max(-MOMENTUM_CAP, Math.min(MOMENTUM_CAP, v));
+  if (isHomeOffense) {
+    state.homeMomentum = clamp(state.homeMomentum + offDelta);
+    state.awayMomentum = clamp(state.awayMomentum + defDelta);
+  } else {
+    state.awayMomentum = clamp(state.awayMomentum + offDelta);
+    state.homeMomentum = clamp(state.homeMomentum + defDelta);
+  }
+}
+
 function determineFirstPossession(
   homePlayers: Player[],
   awayPlayers: Player[],
@@ -273,11 +306,13 @@ function processSubstitutions(
   stats: StatsAccumulator,
   _gameSeconds: number,
 ): void {
+  const margin = Math.abs(state.homeScore - state.awayScore);
+
   // Home subs
   const homeSubs = checkSubstitutions(
     state.homeLineup, homeBench, playerMap,
     state.fatigue, state.fouls, homeTeam.rotation,
-    state.clock.quarter, state.clock.gameClock, true,
+    state.clock.quarter, state.clock.gameClock, true, margin,
   );
   for (const sub of homeSubs) {
     stats.recordExit(sub.playerOut, state.homeScore, state.awayScore, state.homeTeamId);
@@ -295,7 +330,7 @@ function processSubstitutions(
   const awaySubs = checkSubstitutions(
     state.awayLineup, awayBench, playerMap,
     state.fatigue, state.fouls, awayTeam.rotation,
-    state.clock.quarter, state.clock.gameClock, true,
+    state.clock.quarter, state.clock.gameClock, true, margin,
   );
   for (const sub of awaySubs) {
     stats.recordExit(sub.playerOut, state.homeScore, state.awayScore, state.homeTeamId);

@@ -17,6 +17,7 @@ export function checkTurnover(
   defenderFatigue: Map<string, number>,
   playType: PlayType,
   rng: SeededRNG,
+  stealMult: number = 1,
 ): TurnoverResult {
   const baseTORate = PLAY_TYPE_TURNOVER_RATE[playType];
 
@@ -36,7 +37,9 @@ export function checkTurnover(
   const defSteal = getEffectiveRating(bestDefender.ratings.steal, defF);
   const defMod = (defSteal - 40) / 40 * 0.04;
 
-  const turnoverChance = Math.max(0.03, Math.min(0.25, baseTORate + handlerMod + defMod));
+  // Defensive pressure (scheme + intensity) scales the steal-driven portion.
+  const pressuredDefMod = defMod * stealMult;
+  const turnoverChance = Math.max(0.03, Math.min(0.25, baseTORate + handlerMod + pressuredDefMod));
 
   if (!rng.nextBool(turnoverChance)) {
     return { occurred: false };

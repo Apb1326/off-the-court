@@ -20,12 +20,14 @@ export function checkSubstitutions(
   quarter: number,
   gameClock: number,
   isDeadBall: boolean,
+  scoreMargin: number = 0,
 ): SubstitutionAction[] {
   if (!isDeadBall || bench.length === 0) return [];
 
   const actions: SubstitutionAction[] = [];
   const benchSet = new Set(bench);
   const onCourtSet = new Set(onCourt);
+  const minutesLeft = gameClock / 60;
 
   // Mandatory subs: fouled out or extreme fatigue
   for (const playerId of onCourt) {
@@ -47,7 +49,24 @@ export function checkSubstitutions(
 
   if (actions.length > 0) return actions;
 
-  const minutesLeft = gameClock / 60;
+  // Garbage time: a decided game late in the 4th — empty the bench and rest the
+  // starters. This mirrors how real blowouts top out (starters sit, leads stop
+  // growing) and keeps margins from ballooning unrealistically.
+  const garbageTime = quarter >= 4 && minutesLeft <= 5 && scoreMargin >= 20;
+  if (garbageTime) {
+    const startersOnCourt = Array.from(onCourtSet)
+      .filter((id) => rotation.starters.includes(id))
+      .sort((a, b) => getPlayerOverall(players.get(b)) - getPlayerOverall(players.get(a)));
+    for (const starterId of startersOnCourt) {
+      if (benchSet.size === 0) break;
+      const replacement = findBestReplacement(starterId, Array.from(benchSet), players, fatigue, fouls, rotation);
+      if (replacement && !rotation.starters.includes(replacement)) {
+        actions.push({ playerOut: starterId, playerIn: replacement });
+        benchSet.delete(replacement);
+      }
+    }
+    return actions;
+  }
 
   // Rotation-based substitutions at key moments
   if (!isRotationWindow(quarter, minutesLeft)) return [];

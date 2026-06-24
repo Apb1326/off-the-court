@@ -60,10 +60,12 @@ export function determineContestLevel(
   defender: Player,
   defenderFatigue: number,
   rng: SeededRNG,
+  pressureBonus: number = 0,
 ): ContestLevel {
   const defIQ = getEffectiveRating(defender.ratings.defensiveIQ, defenderFatigue);
   const athleticism = getEffectiveRating(defender.ratings.athleticism, defenderFatigue);
-  const contestSkill = (defIQ + athleticism) / 2;
+  // Team defensive pressure makes contests tougher (or softer) on every shot.
+  const contestSkill = (defIQ + athleticism) / 2 + pressureBonus * 100;
 
   const roll = rng.next() * 100;
   if (contestSkill > 60) {
@@ -93,6 +95,17 @@ export interface ShotResult {
   contestLevel: ContestLevel;
 }
 
+export interface ShotContext {
+  /** Team defensive pressure toughening contests (from defensivePressure). */
+  pressureBonus?: number;
+  /** The shooter is being double-teamed — extra contest, lower make. */
+  doubleTeamed?: boolean;
+  /** Live momentum swing for the shooting team (small, +/-). */
+  momentum?: number;
+  /** Multiplier on shooting-foul rate from defensive aggressiveness. */
+  foulMult?: number;
+}
+
 export function resolveShot(
   shooter: Player,
   shooterFatigue: number,
@@ -102,8 +115,9 @@ export function resolveShot(
   playType: PlayType,
   rng: SeededRNG,
   shooterForm: number = 0,
+  ctx: ShotContext = {},
 ): ShotResult {
-  const contestLevel = determineContestLevel(defender, defenderFatigue, rng);
+  const contestLevel = determineContestLevel(defender, defenderFatigue, rng, ctx.pressureBonus ?? 0);
 
   const basePct = BASE_FG_PCT_BY_ZONE[zone];
   const shooterMod = ratingToModifier(getEffectiveRating(getShooterRating(shooter, zone), shooterFatigue));
@@ -115,9 +129,12 @@ export function resolveShot(
   // Threes swing more than twos (streaky shooting), interior is steadiest.
   const formScale = zone === 'rim' ? 0.5 : POINTS_BY_ZONE[zone] === 3 ? 1.3 : 1.0;
   const formMod = shooterForm * formScale;
+  // A double-team meaningfully lowers shot quality; momentum nudges it.
+  const doubleMod = ctx.doubleTeamed ? -0.08 : 0;
+  const momentumMod = (ctx.momentum ?? 0) * formScale;
 
   const finalProbability = Math.max(0.05, Math.min(0.95,
-    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod + formMod
+    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod + formMod + doubleMod + momentumMod
   ));
 
   // Block check (before shot)
@@ -135,7 +152,7 @@ export function resolveShot(
   // Shooting foul check
   const baseFoulRate = SHOOTING_FOUL_RATE_BY_ZONE[zone];
   const drawFoulMod = (shooter.tendencies.drawFoulRate - 0.10) * 0.5;
-  const foulChance = Math.max(0.01, baseFoulRate + drawFoulMod);
+  const foulChance = Math.max(0.01, (baseFoulRate + drawFoulMod) * (ctx.foulMult ?? 1));
   const fouled = rng.nextBool(foulChance);
 
   return { made, points, zone, fouled, blocked: false, contestLevel };

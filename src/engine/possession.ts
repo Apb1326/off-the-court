@@ -8,6 +8,8 @@ import { resolveShot, resolveFreeThrows } from './shot';
 import { selectPlayType, selectShotZone, selectPrimaryPlayer, selectDefender, checkTransitionOpportunity } from './play-types';
 import { resolveRebound } from './rebound';
 import { checkTurnover } from './turnover';
+import { buildContext, clockUsageMultiplier, threePointBias, shouldIntentionalFoul } from './tactics';
+import { rimProtection, defensivePressure, shouldDoubleTeam } from './defense';
 import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX } from './constants';
 
 export interface GameState {
@@ -27,6 +29,8 @@ export interface GameState {
   rng: SeededRNG;
   previousPossessionTurnover: boolean;
   previousPossessionLongRebound: boolean;
+  homeMomentum: number; // live hot/cold swing, decays each possession
+  awayMomentum: number;
 }
 
 export interface PossessionResult {
@@ -39,7 +43,7 @@ export function simulatePossession(
   state: GameState,
   allPlayers: Map<string, Player>,
   offensiveSystem: OffensiveSystem,
-  _defensiveSystem: DefensiveSystem,
+  defensiveSystem: DefensiveSystem,
 ): PossessionResult {
   const isHome = state.possessionTeamId === state.homeTeamId;
   const offLineup = isHome ? state.homeLineup : state.awayLineup;
@@ -52,6 +56,38 @@ export function simulatePossession(
     return { state, switchPossession: true, isDeadBall: true };
   }
 
+  // Game-state awareness + team defensive behavior for this possession.
+  const scoreDiff = isHome
+    ? state.homeScore - state.awayScore
+    : state.awayScore - state.homeScore;
+  const ctx = buildContext(state.clock, scoreDiff);
+  const pressure = defensivePressure(defensiveSystem);
+  const rimDeterrence = rimProtection(defPlayers, state.fatigue);
+  const offMomentum = isHome ? state.homeMomentum : state.awayMomentum;
+
+  // Intentional foul: the trailing defense fouls late to stop the clock and get
+  // the ball back, sending the ball handler to the line.
+  if (shouldIntentionalFoul(-scoreDiff, ctx.secondsLeft)) {
+    const clock = advanceClock(state.clock, state.rng.nextInt(2, 4));
+    const fouled = offPlayers[0];
+    const fouler = defPlayers[state.rng.nextInt(0, defPlayers.length - 1)];
+    const ft = resolveFreeThrows(fouled, state.fatigue.get(fouled.id) ?? 0, 2, state.rng);
+    const desc = `Intentional foul on ${fouled.firstName} ${fouled.lastName}. FT: ${ft.made}/${ft.attempted}`;
+    const event = createEvent(state, clock, 'isolation', fouled, 'foul', desc);
+    event.foulPlayerId = fouler.id;
+    event.freeThrowsMade = ft.made;
+    event.freeThrowsAttempted = ft.attempted;
+    event.points = ft.made;
+    const ns = updateState(state, clock, event);
+    addScore(ns, isHome, ft.made);
+    addFoulStat(ns, fouler.id);
+    addFreeThrowStats(ns, fouled.id, ft.made, ft.attempted);
+    addTeamFoul(ns, !isHome, state.clock.quarter);
+    ns.previousPossessionTurnover = false;
+    ns.previousPossessionLongRebound = false;
+    return { state: ns, switchPossession: true, isDeadBall: true };
+  }
+
   // Check for transition opportunity
   const isTransition = checkTransitionOpportunity(
     offPlayers,
@@ -59,11 +95,6 @@ export function simulatePossession(
     state.previousPossessionLongRebound,
     state.rng,
   );
-
-  // Select play type
-  const scoreDiff = isHome
-    ? state.homeScore - state.awayScore
-    : state.awayScore - state.homeScore;
 
   const playType = selectPlayType(
     offPlayers[0], // PG or first in lineup
@@ -73,10 +104,11 @@ export function simulatePossession(
     state.rng,
   );
 
-  // Determine possession time
-  const possTime = isTransition
+  // Determine possession time, then stretch/shrink it for clock management.
+  const baseTime = isTransition
     ? state.rng.nextInt(TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX)
     : state.rng.nextInt(BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX);
+  const possTime = Math.max(1, Math.round(baseTime * clockUsageMultiplier(ctx)));
 
   // Advance clock
   const newClock = advanceClock(state.clock, possTime);
@@ -93,14 +125,19 @@ export function simulatePossession(
 
   // Select primary player and defender
   const primaryPlayer = selectPrimaryPlayer(offPlayers, playType, state.rng);
-  const defender = selectDefender(defPlayers, primaryPlayer, state.rng);
+  const defender = selectDefender(defPlayers, primaryPlayer, state.rng, playType);
   const primaryFatigue = state.fatigue.get(primaryPlayer.id) ?? 0;
   const defFatigue = state.fatigue.get(defender.id) ?? 0;
 
-  // Turnover check
+  // The defense may send a second man at an elite scorer.
+  const doubleTeamed = (playType === 'isolation' || playType === 'post_up' || playType === 'pick_and_roll')
+    && shouldDoubleTeam(primaryPlayer, defensiveSystem, state.rng);
+
+  // Turnover check (defensive pressure + the chaos of a double-team add risk)
   const turnoverResult = checkTurnover(
     primaryPlayer, primaryFatigue, defPlayers,
     state.fatigue, playType, state.rng,
+    pressure.stealMult * (doubleTeamed ? 1.3 : 1),
   );
 
   if (turnoverResult.occurred) {
@@ -123,13 +160,22 @@ export function simulatePossession(
     return { state: newState, switchPossession: true, isDeadBall: false };
   }
 
-  // Shot attempt
-  const shotZone = selectShotZone(primaryPlayer, playType, state.rng);
+  // Shot attempt — shaped by rim protection and late-game three-point chasing.
+  const shotZone = selectShotZone(primaryPlayer, playType, state.rng, {
+    threePointBias: threePointBias(ctx),
+    rimDeterrence,
+  });
   const shotResult = resolveShot(
     primaryPlayer, primaryFatigue,
     defender, defFatigue,
     shotZone, playType, state.rng,
     state.shootingForm.get(primaryPlayer.id) ?? 0,
+    {
+      pressureBonus: pressure.contestBonus,
+      foulMult: pressure.foulMult,
+      doubleTeamed,
+      momentum: offMomentum,
+    },
   );
 
   // Record FGA
@@ -191,20 +237,24 @@ export function simulatePossession(
     let totalPoints = shotResult.points;
     let desc = `${primaryPlayer.firstName} ${primaryPlayer.lastName} makes ${describeShotZone(shotZone)}`;
 
-    // Check for assist
-    const assistChance = PLAY_TYPE_ASSIST_RATE[playType];
+    // Check for assist. A double-team forces a kick-out, so the shot is more
+    // likely to be set up by a teammate.
+    const assistChance = Math.min(0.97, PLAY_TYPE_ASSIST_RATE[playType] * (doubleTeamed ? 1.4 : 1));
+    const initiator = offPlayers[0];
     let assister: Player | undefined;
     if (state.rng.nextBool(assistChance)) {
       const otherPlayers = offPlayers.filter((p) => p.id !== primaryPlayer.id);
       if (otherPlayers.length > 0) {
-        // Weight strongly toward the best distributor on the floor. A linear
-        // weight spreads assists almost evenly across the lineup; squaring the
-        // (rating + passing-tendency) lets primary playmakers rack up double-
-        // digit assists the way real lead guards and point-centers do.
+        // Weight strongly toward the best distributor on the floor, and credit
+        // the player who actually ran the action (the on-ball initiator) — so
+        // the pass that created the shot is recorded the way it happens in real
+        // life. Squaring the skill term lets lead guards and point-centers rack
+        // up double-digit assists instead of the floor spreading them evenly.
         const assistWeights = otherPlayers.map((p) => {
           const skill = p.ratings.passing + p.ratings.offensiveIQ * 0.3;
           const tendency = 1 + p.tendencies.assistRate * 3;
-          return Math.max(1, Math.pow(skill, 2.6) * tendency);
+          const initiatorBonus = p.id === initiator.id ? 2.4 : 1;
+          return Math.max(1, Math.pow(skill, 2.6) * tendency * initiatorBonus);
         });
         assister = state.rng.weightedChoice(otherPlayers, assistWeights);
         desc += ` (assist: ${assister.firstName} ${assister.lastName})`;
