@@ -21,6 +21,7 @@ export interface GameState {
   awayScore: number;
   fatigue: Map<string, number>;
   fouls: Map<string, number>;
+  shootingForm: Map<string, number>; // per-game hot/cold shooting modifier
   teamFouls: { home: number[]; away: number[] }; // per-quarter fouls
   playByPlay: PlayByPlayEvent[];
   rng: SeededRNG;
@@ -128,6 +129,7 @@ export function simulatePossession(
     primaryPlayer, primaryFatigue,
     defender, defFatigue,
     shotZone, playType, state.rng,
+    state.shootingForm.get(primaryPlayer.id) ?? 0,
   );
 
   // Record FGA
@@ -195,7 +197,15 @@ export function simulatePossession(
     if (state.rng.nextBool(assistChance)) {
       const otherPlayers = offPlayers.filter((p) => p.id !== primaryPlayer.id);
       if (otherPlayers.length > 0) {
-        const assistWeights = otherPlayers.map((p) => Math.max(1, p.ratings.passing));
+        // Weight strongly toward the best distributor on the floor. A linear
+        // weight spreads assists almost evenly across the lineup; squaring the
+        // (rating + passing-tendency) lets primary playmakers rack up double-
+        // digit assists the way real lead guards and point-centers do.
+        const assistWeights = otherPlayers.map((p) => {
+          const skill = p.ratings.passing + p.ratings.offensiveIQ * 0.3;
+          const tendency = 1 + p.tendencies.assistRate * 3;
+          return Math.max(1, Math.pow(skill, 2.6) * tendency);
+        });
         assister = state.rng.weightedChoice(otherPlayers, assistWeights);
         desc += ` (assist: ${assister.firstName} ${assister.lastName})`;
       }

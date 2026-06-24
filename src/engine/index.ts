@@ -61,6 +61,20 @@ export function simulateGame(
     fouls.set(p.id, 0);
   }
 
+  // Per-game shooting form: each player gets a "hot/cold" night drawn from a
+  // normal distribution. This is the dominant source of game-to-game variance —
+  // without it, ~90 shot attempts per team average out and scores cluster too
+  // tightly around each team's true mean. SD ~5% => realistic swings.
+  // The home team gets a small constant edge (home-court advantage).
+  const shootingForm = new Map<string, number>();
+  const assignForm = (p: Player, homeEdge: number) => {
+    const consistency = p.ratings.offensiveIQ / 80; // steadier players vary less
+    const sd = 0.065 - consistency * 0.025; // ~0.04 (stars) to ~0.065 (role players)
+    shootingForm.set(p.id, clampForm(rng.nextGaussian() * sd + homeEdge));
+  };
+  for (const p of homePlayers) assignForm(p, HOME_COURT_FORM_EDGE);
+  for (const p of awayPlayers) assignForm(p, 0);
+
   // Record initial entry for plus/minus
   for (const id of [...homeLineup, ...awayLineup]) {
     stats.recordEntry(id, 0, 0);
@@ -83,6 +97,7 @@ export function simulateGame(
     awayScore: 0,
     fatigue,
     fouls,
+    shootingForm,
     teamFouls: { home: [0, 0, 0, 0], away: [0, 0, 0, 0] },
     playByPlay: [],
     rng,
@@ -216,6 +231,17 @@ export function simulateGame(
     boxScore,
     playByPlay: gameState.playByPlay,
   };
+}
+
+// Home-court advantage, expressed as a small bump to the home team's shooting
+// form. ~+0.012 works out to roughly a 2-3 point edge over a full game, which
+// reproduces the league's ~55% home win rate.
+const HOME_COURT_FORM_EDGE = 0.012;
+
+// Keep per-game form within a believable band (~±13%) so no single night turns
+// a role player into an All-Star or vice versa.
+function clampForm(form: number): number {
+  return Math.max(-0.13, Math.min(0.13, form));
 }
 
 function determineFirstPossession(

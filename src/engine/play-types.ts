@@ -94,11 +94,13 @@ export function selectShotZone(
 ): ShotZone {
   const zoneOptions = PLAY_TYPE_SHOT_ZONES[playType];
   const zones = zoneOptions.map((z) => z.zone);
+  const outside = shooter.ratings.outsideShooting / 80;
   const weights = zoneOptions.map((z) => {
     let w = z.weight;
-    // Modify based on player shot tendencies
+    // Modify based on player shot tendencies and ability. A poor outside shooter
+    // both wants to and should rarely launch threes.
     if (z.zone === 'corner_three' || z.zone === 'above_break_three' || z.zone === 'deep_three') {
-      w *= 0.5 + shooter.tendencies.threePointRate * 2.0;
+      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5);
     } else if (z.zone === 'short_midrange' || z.zone === 'long_midrange') {
       w *= 0.5 + shooter.tendencies.midrangeRate * 2.0;
     } else if (z.zone === 'rim') {
@@ -120,10 +122,39 @@ export function selectPrimaryPlayer(
     let w = Math.sqrt(p.tendencies.usageRate) * 50;
     const posWeight = POSITION_PLAY_WEIGHTS[p.position]?.[playType] ?? 0.8;
     w *= posWeight;
-    return Math.max(3, w);
+    // Skill fit: the player finishing a play should be suited to it. This keeps
+    // shooters taking spot-up/off-screen threes and bigs taking post-ups,
+    // instead of a center launching catch-and-shoot threes.
+    w *= playTypeSkillFit(p, playType);
+    return Math.max(1, w);
   });
 
   return rng.weightedChoice(onCourt, weights);
+}
+
+// Multiplier on a player's likelihood of finishing a given play type, based on
+// whether their skills match the shots that play tends to produce.
+function playTypeSkillFit(p: Player, playType: PlayType): number {
+  const outside = p.ratings.outsideShooting / 80;
+  const interior = p.ratings.interiorScoring / 80;
+  const handle = p.ratings.ballHandling / 80;
+  switch (playType) {
+    case 'spot_up':
+    case 'off_screen':
+    case 'handoff':
+      return 0.3 + outside * 1.7; // perimeter shooters
+    case 'post_up':
+      return 0.3 + interior * 1.5; // back-to-the-basket scorers
+    case 'putback':
+    case 'cut':
+      return 0.5 + interior * 1.2; // finishers near the rim
+    case 'isolation':
+      return 0.5 + handle * 1.0; // shot creators
+    case 'pick_and_roll':
+      return 0.6 + handle * 0.8;
+    default:
+      return 1.0;
+  }
 }
 
 export function selectDefender(

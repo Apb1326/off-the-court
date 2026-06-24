@@ -97,6 +97,7 @@ export function resolveShot(
   zone: ShotZone,
   playType: PlayType,
   rng: SeededRNG,
+  shooterForm: number = 0,
 ): ShotResult {
   const contestLevel = determineContestLevel(defender, defenderFatigue, rng);
 
@@ -106,9 +107,13 @@ export function resolveShot(
   const fatigueMod = -0.08 * shooterFatigue;
   const playTypeMod = PLAY_TYPE_EFFICIENCY_MOD[playType];
   const contestMod = CONTEST_MODIFIER[contestLevel];
+  // Per-game "hot/cold" form: shifts a player's accuracy for the whole game.
+  // Threes swing more than twos (streaky shooting), interior is steadiest.
+  const formScale = zone === 'rim' ? 0.5 : POINTS_BY_ZONE[zone] === 3 ? 1.3 : 1.0;
+  const formMod = shooterForm * formScale;
 
   const finalProbability = Math.max(0.05, Math.min(0.95,
-    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod
+    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod + formMod
   ));
 
   // Block check (before shot)
