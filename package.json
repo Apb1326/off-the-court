@@ -9,6 +9,8 @@
     "lint": "eslint",
     "ingest": "tsx scripts/ingest.ts",
     "seed": "tsx scripts/seed-test.ts",
+    "download-history": "tsx scripts/download-history.ts",
+    "calibrate": "tsx scripts/calibrate-history.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

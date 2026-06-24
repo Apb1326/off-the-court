@@ -19,9 +19,13 @@ const CONTEST_MODIFIER: Record<ContestLevel, number> = {
 };
 
 function ratingToModifier(rating: number): number {
-  // Sigmoid-like curve: rating 40 (avg) -> 0, rating 80 -> +0.12, rating 1 -> -0.15
+  // Sigmoid-like curve: rating 40 (avg) -> 0, rating 80 -> +0.078, rating 1 -> -0.10.
+  // The shooter and defender modifiers compound on every shot, so the per-side
+  // swing is kept modest — otherwise an elite-vs-poor mismatch produces shot
+  // probabilities far outside what real NBA efficiency gaps support, which in
+  // turn inflates blowout margins (calibrated vs real games, ~11 pt avg margin).
   const centered = (rating - 40) / 40; // -1 to +1
-  return centered * 0.12 * (1 + 0.25 * Math.abs(centered));
+  return centered * 0.085 * (1 + 0.25 * Math.abs(centered));
 }
 
 function getShooterRating(player: Player, zone: ShotZone): number {

@@ -62,14 +62,16 @@ export function simulateGame(
   }
 
   // Per-game shooting form: each player gets a "hot/cold" night drawn from a
-  // normal distribution. This is the dominant source of game-to-game variance —
-  // without it, ~90 shot attempts per team average out and scores cluster too
-  // tightly around each team's true mean. SD ~5% => realistic swings.
+  // normal distribution. The ~90 shot attempts per team already carry a lot of
+  // binomial variance on their own, so this only needs a light touch — real NBA
+  // team-scoring SD (~12 pts) is close to that shot-noise floor. Calibrated
+  // against six decades of real games (see scripts/calibrate-history.ts): too
+  // much form here produces unrealistic blowouts.
   // The home team gets a small constant edge (home-court advantage).
   const shootingForm = new Map<string, number>();
   const assignForm = (p: Player, homeEdge: number) => {
     const consistency = p.ratings.offensiveIQ / 80; // steadier players vary less
-    const sd = 0.065 - consistency * 0.025; // ~0.04 (stars) to ~0.065 (role players)
+    const sd = 0.030 - consistency * 0.012; // ~0.018 (stars) to ~0.030 (role players)
     shootingForm.set(p.id, clampForm(rng.nextGaussian() * sd + homeEdge));
   };
   for (const p of homePlayers) assignForm(p, HOME_COURT_FORM_EDGE);
@@ -234,9 +236,9 @@ export function simulateGame(
 }
 
 // Home-court advantage, expressed as a small bump to the home team's shooting
-// form. ~+0.012 works out to roughly a 2-3 point edge over a full game, which
-// reproduces the league's ~55% home win rate.
-const HOME_COURT_FORM_EDGE = 0.012;
+// form. Tuned so the home team wins ~57-59% of games and outscores the road
+// team by ~2.5-3 pts/game, matching the real 2010-2015 benchmark.
+const HOME_COURT_FORM_EDGE = 0.018;
 
 // Keep per-game form within a believable band (~±13%) so no single night turns
 // a role player into an All-Star or vice versa.
