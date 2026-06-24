@@ -10,7 +10,7 @@ import { resolveRebound } from './rebound';
 import { checkTurnover } from './turnover';
 import { buildContext, clockUsageMultiplier, threePointBias, shouldIntentionalFoul } from './tactics';
 import { rimProtection, defensivePressure, shouldDoubleTeam } from './defense';
-import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX } from './constants';
+import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX, NON_SHOOTING_FOUL_RATE, TEAM_FOUL_BONUS_THRESHOLD } from './constants';
 
 export interface GameState {
   clock: ClockState;
@@ -88,6 +88,46 @@ export function simulatePossession(
     return { state: ns, switchPossession: true, isDeadBall: true };
   }
 
+  // Non-shooting defensive foul (reach-in, off-ball, loose ball). Once the
+  // defense is in the penalty it sends the offense to the line for two; before
+  // that it just adds to the team-foul count and the offense keeps the ball.
+  const defQIdx = Math.min(state.clock.quarter - 1, 3);
+  const defFoulsBefore = isHome ? state.teamFouls.away[defQIdx] : state.teamFouls.home[defQIdx];
+  if (state.rng.nextBool(NON_SHOOTING_FOUL_RATE)) {
+    const clock = advanceClock(state.clock, state.rng.nextInt(2, 5));
+    const fouler = defPlayers[state.rng.nextInt(0, defPlayers.length - 1)];
+    const inPenalty = defFoulsBefore + 1 >= TEAM_FOUL_BONUS_THRESHOLD;
+
+    if (inPenalty) {
+      const fouled = offPlayers[0];
+      const ft = resolveFreeThrows(fouled, state.fatigue.get(fouled.id) ?? 0, 2, state.rng);
+      const desc = `Penalty foul on ${fouler.lastName}, ${fouled.firstName} ${fouled.lastName} to the line. FT: ${ft.made}/${ft.attempted}`;
+      const event = createEvent(state, clock, 'isolation', fouled, 'foul', desc);
+      event.foulPlayerId = fouler.id;
+      event.freeThrowsMade = ft.made;
+      event.freeThrowsAttempted = ft.attempted;
+      event.points = ft.made;
+      const ns = updateState(state, clock, event);
+      addScore(ns, isHome, ft.made);
+      addFoulStat(ns, fouler.id);
+      addFreeThrowStats(ns, fouled.id, ft.made, ft.attempted);
+      addTeamFoul(ns, !isHome, state.clock.quarter);
+      ns.previousPossessionTurnover = false;
+      ns.previousPossessionLongRebound = false;
+      return { state: ns, switchPossession: true, isDeadBall: true };
+    }
+
+    const event = createEvent(state, clock, 'isolation', offPlayers[0], 'foul',
+      `Loose-ball foul on ${fouler.firstName} ${fouler.lastName}`);
+    event.foulPlayerId = fouler.id;
+    const ns = updateState(state, clock, event);
+    addFoulStat(ns, fouler.id);
+    addTeamFoul(ns, !isHome, state.clock.quarter);
+    ns.previousPossessionTurnover = false;
+    ns.previousPossessionLongRebound = false;
+    return { state: ns, switchPossession: false, isDeadBall: true };
+  }
+
   // Check for transition opportunity
   const isTransition = checkTransitionOpportunity(
     offPlayers,
@@ -105,10 +145,14 @@ export function simulatePossession(
   );
 
   // Determine possession time, then stretch/shrink it for clock management.
+  // Cap at the shot clock remaining — after an offensive rebound only 14s are
+  // left, so a possession can't run the full 24 (which would otherwise produce
+  // a flood of phantom shot-clock violations).
   const baseTime = isTransition
     ? state.rng.nextInt(TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX)
     : state.rng.nextInt(BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX);
-  const possTime = Math.max(1, Math.round(baseTime * clockUsageMultiplier(ctx)));
+  const stretched = Math.round(baseTime * clockUsageMultiplier(ctx));
+  const possTime = Math.max(1, Math.min(state.clock.shotClock - 1, stretched));
 
   // Advance clock
   const newClock = advanceClock(state.clock, possTime);
@@ -194,8 +238,10 @@ export function simulatePossession(
 
     // Rebound
     const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
-    addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
-    event.reboundPlayerId = rebResult.rebounder.id;
+    if (rebResult.rebounder) {
+      addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
+      event.reboundPlayerId = rebResult.rebounder.id;
+    }
     event.reboundType = rebResult.type;
 
     updatedState.previousPossessionTurnover = false;
@@ -304,10 +350,14 @@ export function simulatePossession(
 
   // Rebound
   const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
-  addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
-  event.reboundPlayerId = rebResult.rebounder.id;
+  if (rebResult.rebounder) {
+    addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
+    event.reboundPlayerId = rebResult.rebounder.id;
+    event.description += `. ${rebResult.rebounder.firstName} ${rebResult.rebounder.lastName} ${rebResult.type} rebound`;
+  } else {
+    event.description += `. Team rebound (${rebResult.type})`;
+  }
   event.reboundType = rebResult.type;
-  event.description += `. ${rebResult.rebounder.firstName} ${rebResult.rebounder.lastName} ${rebResult.type} rebound`;
 
   updatedState.previousPossessionTurnover = false;
   updatedState.previousPossessionLongRebound = rebResult.type === 'defensive';

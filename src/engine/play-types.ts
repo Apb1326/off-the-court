@@ -110,7 +110,9 @@ export function selectShotZone(
     // Modify based on player shot tendencies and ability. A poor outside shooter
     // both wants to and should rarely launch threes.
     if (z.zone === 'corner_three' || z.zone === 'above_break_three' || z.zone === 'deep_three') {
-      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5) * threeBias;
+      // Global dampener pulls the league's three-point share down to ~40% of
+      // attempts (real ~35 3PA on ~88 FGA).
+      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5) * threeBias * 0.62;
     } else if (z.zone === 'short_midrange' || z.zone === 'long_midrange') {
       w *= 0.5 + shooter.tendencies.midrangeRate * 2.0;
     } else if (z.zone === 'rim') {

@@ -139,7 +139,7 @@ export function resolveShot(
 
   // Block check (before shot)
   const blockRating = getEffectiveRating(defender.ratings.block, defenderFatigue);
-  const blockChance = (blockRating / 80) * 0.06 * (zone === 'rim' ? 2.0 : zone === 'short_midrange' ? 0.5 : 0.1);
+  const blockChance = (blockRating / 80) * 0.10 * (zone === 'rim' ? 2.0 : zone === 'short_midrange' ? 0.5 : 0.1);
   const blocked = rng.nextBool(blockChance);
 
   if (blocked) {
@@ -165,7 +165,7 @@ export function resolveFreeThrows(
   rng: SeededRNG,
 ): { made: number; attempted: number } {
   const ftRating = getEffectiveRating(shooter.ratings.freeThrowShooting, shooterFatigue);
-  const ftPct = 0.50 + (ftRating / 80) * 0.40; // 50% to 90% range
+  const ftPct = 0.53 + (ftRating / 80) * 0.40; // ~53% to 93% range
 
   let made = 0;
   for (let i = 0; i < attempts; i++) {

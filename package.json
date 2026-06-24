@@ -11,6 +11,7 @@
     "seed": "tsx scripts/seed-test.ts",
     "download-history": "tsx scripts/download-history.ts",
     "calibrate": "tsx scripts/calibrate-history.ts",
+    "profile": "tsx scripts/profile-engine.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

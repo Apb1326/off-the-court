@@ -45,8 +45,10 @@ export function checkTurnover(
     return { occurred: false };
   }
 
-  // Determine turnover type
-  const stealChance = defSteal / 80 * 0.6;
+  // Determine turnover type. Roughly half of real turnovers are steals, so a
+  // forced turnover lands as a steal more often than not (scaled by the best
+  // on-ball defender's hands).
+  const stealChance = Math.min(0.78, 0.20 + defSteal / 80 * 0.45);
   if (rng.nextBool(stealChance)) {
     return { occurred: true, type: 'steal', stealBy: bestDefender };
   }

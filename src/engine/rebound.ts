@@ -1,10 +1,10 @@
 import { Player } from '@/models/player';
 import { SeededRNG } from '@/lib/rng';
 import { getEffectiveRating } from './fatigue';
-import { BASE_OFFENSIVE_REBOUND_RATE } from './constants';
+import { BASE_OFFENSIVE_REBOUND_RATE, TEAM_REBOUND_RATE } from './constants';
 
 export interface ReboundResult {
-  rebounder: Player;
+  rebounder: Player | null; // null = uncredited team rebound
   type: 'offensive' | 'defensive';
 }
 
@@ -22,14 +22,17 @@ export function resolveRebound(
   const clampedRate = Math.max(0.15, Math.min(0.40, offRebRate));
 
   const isOffensiveRebound = rng.nextBool(clampedRate);
+  const type = isOffensiveRebound ? 'offensive' : 'defensive';
 
-  if (isOffensiveRebound) {
-    const rebounder = selectRebounder(offensivePlayers, offensiveFatigue, rng);
-    return { rebounder, type: 'offensive' };
-  } else {
-    const rebounder = selectRebounder(defensivePlayers, defensiveFatigue, rng);
-    return { rebounder, type: 'defensive' };
+  // A fraction of boards are uncredited team rebounds (ball out of bounds): the
+  // possession still resolves by type, but no player is awarded the rebound.
+  if (rng.nextBool(TEAM_REBOUND_RATE)) {
+    return { rebounder: null, type };
   }
+
+  const pool = isOffensiveRebound ? offensivePlayers : defensivePlayers;
+  const fatigue = isOffensiveRebound ? offensiveFatigue : defensiveFatigue;
+  return { rebounder: selectRebounder(pool, fatigue, rng), type };
 }
 
 function calculateTeamReboundStrength(
