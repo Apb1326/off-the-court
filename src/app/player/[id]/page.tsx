@@ -2,6 +2,7 @@
 
 import { useState, useEffect, use } from 'react';
 import Link from 'next/link';
+import { ratingHex as getRatingColor } from '@/lib/ui';
 
 interface Player {
   id: string;
@@ -38,24 +39,6 @@ interface Team {
 
 function formatHeight(inches: number): string {
   return `${Math.floor(inches / 12)}'${inches % 12}"`;
-}
-
-function getRatingColor(value: number): string {
-  if (value >= 70) return '#22c55e';
-  if (value >= 60) return '#3b82f6';
-  if (value >= 50) return '#8b5cf6';
-  if (value >= 40) return '#f59e0b';
-  if (value >= 30) return '#f97316';
-  return '#ef4444';
-}
-
-function getRatingLabel(value: number): string {
-  if (value >= 70) return 'Elite';
-  if (value >= 60) return 'All-Star';
-  if (value >= 50) return 'Above Avg';
-  if (value >= 40) return 'Average';
-  if (value >= 30) return 'Below Avg';
-  return 'Poor';
 }
 
 const RATING_GROUPS = {
@@ -116,50 +99,57 @@ export default function PlayerPage({ params }: { params: Promise<{ id: string }>
   return (
     <div>
       {/* Header */}
-      <div className="rounded-lg p-6 mb-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-3xl font-bold" style={{ color: 'var(--muted)' }}>#{player.jerseyNumber}</span>
-              <h1 className="text-3xl font-bold">{player.firstName} {player.lastName}</h1>
+      <div className="ootp-panel mb-4" style={{ borderTop: `3px solid ${getRatingColor(overall)}` }}>
+        <div className="p-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-2xl font-bold" style={{ color: 'var(--muted-dim)' }}>#{player.jerseyNumber}</span>
+                <h1 className="text-2xl font-bold">{player.firstName} {player.lastName}</h1>
+              </div>
+              <div className="flex items-center gap-4 text-[13px]" style={{ color: 'var(--muted)' }}>
+                <span className="ootp-pill" style={{ background: 'var(--table-header)', color: 'var(--foreground)' }}>{player.position}{player.secondaryPosition ? `/${player.secondaryPosition}` : ''}</span>
+                <span>{formatHeight(player.height)}, {player.weight} lbs</span>
+                <span>Age {player.age}</span>
+                <span>{player.experience} yr{player.experience !== 1 ? 's' : ''} exp</span>
+                {team && (
+                  <Link href={`/roster?team=${team.id}`} style={{ color: 'var(--accent)' }}>
+                    {team.city} {team.name}
+                  </Link>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--muted)' }}>
-              <span>{player.position}{player.secondaryPosition ? `/${player.secondaryPosition}` : ''}</span>
-              <span>{formatHeight(player.height)}, {player.weight} lbs</span>
-              <span>Age {player.age}</span>
-              <span>{player.experience} yr{player.experience !== 1 ? 's' : ''} exp</span>
-              {team && (
-                <Link href={`/roster?team=${team.id}`} style={{ color: 'var(--accent)' }}>
-                  {team.city} {team.name}
-                </Link>
-              )}
+            <div className="flex items-center gap-6">
+              <div className="text-center">
+                <div className="text-4xl font-black tabular-nums" style={{ color: getRatingColor(overall) }}>{overall}</div>
+                <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Overall</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold tabular-nums" style={{ color: getRatingColor(potentialOverall) }}>{potentialOverall}</div>
+                <div className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Potential</div>
+              </div>
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-4xl font-bold" style={{ color: getRatingColor(overall) }}>{overall}</div>
-            <div className="text-xs uppercase" style={{ color: 'var(--muted)' }}>Overall</div>
-            <div className="text-lg mt-1" style={{ color: getRatingColor(potentialOverall) }}>{potentialOverall} POT</div>
-          </div>
-        </div>
 
-        {/* Contract */}
-        <div className="mt-4 pt-4 flex gap-6 text-sm" style={{ borderTop: '1px solid var(--card-border)' }}>
-          <span style={{ color: 'var(--muted)' }}>
-            Contract: <span style={{ color: 'var(--foreground)' }}>${player.contract.salaryPerYear.toFixed(1)}M/yr</span>
-            {' '}&middot; {player.contract.yearsRemaining} yr{player.contract.yearsRemaining !== 1 ? 's' : ''} remaining
-          </span>
-          <span style={{ color: player.health.healthy ? 'var(--success)' : 'var(--danger)' }}>
-            {player.health.healthy ? 'Healthy' : player.health.injury}
-          </span>
+          {/* Contract */}
+          <div className="mt-4 pt-3 flex gap-6 text-[13px]" style={{ borderTop: '1px solid var(--card-border)' }}>
+            <span style={{ color: 'var(--muted)' }}>
+              Contract: <span style={{ color: 'var(--foreground)' }}>${player.contract.salaryPerYear.toFixed(1)}M/yr</span>
+              {' '}&middot; {player.contract.yearsRemaining} yr{player.contract.yearsRemaining !== 1 ? 's' : ''} remaining
+            </span>
+            <span style={{ color: player.health.healthy ? 'var(--success)' : 'var(--danger)' }}>
+              {player.health.healthy ? '● Healthy' : `✚ ${player.health.injury}`}
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Ratings */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         {Object.entries(RATING_GROUPS).map(([group, ratings]) => (
-          <div key={group} className="rounded-lg p-4" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-            <h2 className="font-semibold mb-3">{group}</h2>
-            <div className="space-y-2">
+          <div key={group} className="ootp-panel">
+            <div className="ootp-panel-header">{group}</div>
+            <div className="p-3 space-y-2">
               {ratings.map(({ key, label }) => {
                 const current = player.ratings[key] ?? 0;
                 const pot = player.potential[key] ?? 0;
@@ -192,39 +182,39 @@ export default function PlayerPage({ params }: { params: Promise<{ id: string }>
 
       {/* Career Stats */}
       {player.careerStats.length > 0 && (
-        <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-          <div className="px-4 py-3 font-semibold" style={{ background: 'var(--table-header)' }}>Career Stats</div>
+        <div className="ootp-panel">
+          <div className="ootp-panel-header">Career Stats</div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="ootp-table">
               <thead>
-                <tr style={{ background: 'var(--table-header)' }}>
-                  <th className="px-3 py-2 text-left text-xs" style={{ color: 'var(--muted)' }}>Season</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>GP</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>MPG</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>PPG</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>FG%</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>3P%</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>FT%</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>RPG</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>APG</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>SPG</th>
-                  <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>BPG</th>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>Season</th>
+                  <th style={{ textAlign: 'right' }}>GP</th>
+                  <th style={{ textAlign: 'right' }}>MPG</th>
+                  <th style={{ textAlign: 'right' }}>PPG</th>
+                  <th style={{ textAlign: 'right' }}>FG%</th>
+                  <th style={{ textAlign: 'right' }}>3P%</th>
+                  <th style={{ textAlign: 'right' }}>FT%</th>
+                  <th style={{ textAlign: 'right' }}>RPG</th>
+                  <th style={{ textAlign: 'right' }}>APG</th>
+                  <th style={{ textAlign: 'right' }}>SPG</th>
+                  <th style={{ textAlign: 'right' }}>BPG</th>
                 </tr>
               </thead>
               <tbody>
                 {player.careerStats.map((season) => (
-                  <tr key={season.season} style={{ borderBottom: '1px solid var(--card-border)' }}>
-                    <td className="px-3 py-1.5 font-medium">{season.season}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.gamesPlayed}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.minutesPerGame.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono font-bold">{season.stats.points?.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{((season.stats.fieldGoalPct ?? 0) * 100).toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{((season.stats.threePointPct ?? 0) * 100).toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{((season.stats.freeThrowPct ?? 0) * 100).toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.stats.rebounds?.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.stats.assists?.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.stats.steals?.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{season.stats.blocks?.toFixed(1)}</td>
+                  <tr key={season.season}>
+                    <td style={{ fontWeight: 600 }}>{season.season}</td>
+                    <td className="num">{season.gamesPlayed}</td>
+                    <td className="num">{season.minutesPerGame.toFixed(1)}</td>
+                    <td className="num" style={{ fontWeight: 700 }}>{season.stats.points?.toFixed(1)}</td>
+                    <td className="num">{((season.stats.fieldGoalPct ?? 0) * 100).toFixed(1)}</td>
+                    <td className="num">{((season.stats.threePointPct ?? 0) * 100).toFixed(1)}</td>
+                    <td className="num">{((season.stats.freeThrowPct ?? 0) * 100).toFixed(1)}</td>
+                    <td className="num">{season.stats.rebounds?.toFixed(1)}</td>
+                    <td className="num">{season.stats.assists?.toFixed(1)}</td>
+                    <td className="num">{season.stats.steals?.toFixed(1)}</td>
+                    <td className="num">{season.stats.blocks?.toFixed(1)}</td>
                   </tr>
                 ))}
               </tbody>

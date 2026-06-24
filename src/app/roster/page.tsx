@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { ratingCell } from '@/lib/ui';
 
 interface Team {
   id: string;
@@ -35,15 +36,6 @@ function formatHeight(inches: number): string {
 function getOverall(ratings: Record<string, number>): number {
   const values = Object.values(ratings);
   return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
-}
-
-function getRatingColor(value: number): string {
-  if (value >= 70) return '#22c55e';
-  if (value >= 60) return '#3b82f6';
-  if (value >= 50) return '#8b5cf6';
-  if (value >= 40) return '#f59e0b';
-  if (value >= 30) return '#f97316';
-  return '#ef4444';
 }
 
 function RosterContent() {
@@ -113,56 +105,70 @@ function RosterContent() {
     }
   };
 
-  const SortHeader = ({ col, label, width }: { col: string; label: string; width?: string }) => (
+  const SortHeader = ({ col, label, align = 'left' }: { col: string; label: string; align?: 'left' | 'right' | 'center' }) => (
     <th
-      className="px-2 py-2 text-left text-xs font-medium uppercase cursor-pointer select-none"
-      style={{ color: sortBy === col ? 'var(--accent)' : 'var(--muted)', width }}
+      className="cursor-pointer"
+      style={{ color: sortBy === col ? 'var(--accent)' : undefined, textAlign: align }}
       onClick={() => handleSort(col)}
     >
-      {label} {sortBy === col ? (sortAsc ? '↑' : '↓') : ''}
+      {label}{sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : ''}
     </th>
   );
 
   return (
     <div>
-      <div className="flex items-center gap-4 mb-6">
-        <h1 className="text-2xl font-bold">Roster</h1>
-        <select
-          className="rounded px-3 py-1.5 text-sm"
-          style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}
-          value={selectedTeamId}
-          onChange={(e) => setSelectedTeamId(e.target.value)}
-        >
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.city} {t.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      <h1 className="text-xl font-bold mb-3 tracking-tight">Roster</h1>
 
-      {loading ? (
-        <div style={{ color: 'var(--muted)' }}>Loading...</div>
-      ) : (
-        <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+      <div className="ootp-panel">
+        {/* Toolbar */}
+        <div className="ootp-toolbar">
+          <label className="flex items-center gap-2">
+            <span className="uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>Team</span>
+            <select
+              className="ootp-select"
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+            >
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>{t.city} {t.name}</option>
+              ))}
+            </select>
+          </label>
+          <span className="flex items-center gap-1.5">
+            <span className="uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>View</span>
+            <span style={{ color: 'var(--foreground)' }}>Batting Ratings — All Positions</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>Scouting</span>
+            <span style={{ color: 'var(--accent)' }}>★★★★★</span>
+          </span>
+          <span className="ml-auto uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>
+            {players.length} Players · Active Roster
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="px-4 py-10 text-center" style={{ color: 'var(--muted)' }}>Loading…</div>
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="ootp-table">
               <thead>
-                <tr style={{ background: 'var(--table-header)' }}>
-                  <SortHeader col="name" label="Player" width="200px" />
-                  <th className="px-2 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Pos</th>
-                  <SortHeader col="age" label="Age" />
-                  <th className="px-2 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Ht</th>
-                  <SortHeader col="overall" label="OVR" />
-                  <SortHeader col="outsideShooting" label="3PT" />
-                  <SortHeader col="midrangeShooting" label="MID" />
-                  <SortHeader col="interiorScoring" label="INT" />
-                  <SortHeader col="passing" label="PAS" />
-                  <SortHeader col="perimeterDefense" label="P.DEF" />
-                  <SortHeader col="interiorDefense" label="I.DEF" />
-                  <SortHeader col="athleticism" label="ATH" />
-                  <SortHeader col="rebounding" label="REB" />
-                  <SortHeader col="ppg" label="PPG" />
+                <tr>
+                  <th style={{ textAlign: 'left' }}>#</th>
+                  <SortHeader col="name" label="Name" />
+                  <th style={{ textAlign: 'left' }}>Pos</th>
+                  <SortHeader col="age" label="Age" align="right" />
+                  <th style={{ textAlign: 'left' }}>Ht</th>
+                  <SortHeader col="overall" label="OVR" align="center" />
+                  <SortHeader col="outsideShooting" label="3PT" align="center" />
+                  <SortHeader col="midrangeShooting" label="MID" align="center" />
+                  <SortHeader col="interiorScoring" label="INT" align="center" />
+                  <SortHeader col="passing" label="PAS" align="center" />
+                  <SortHeader col="perimeterDefense" label="P.DEF" align="center" />
+                  <SortHeader col="interiorDefense" label="I.DEF" align="center" />
+                  <SortHeader col="athleticism" label="ATH" align="center" />
+                  <SortHeader col="rebounding" label="REB" align="center" />
+                  <SortHeader col="ppg" label="PPG" align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -171,23 +177,18 @@ function RosterContent() {
                   const isStarter = selectedTeam?.rotation.starters.includes(p.id);
                   const currentStats = p.careerStats[0]?.stats;
                   return (
-                    <tr
-                      key={p.id}
-                      className="transition-colors"
-                      style={{ borderBottom: '1px solid var(--card-border)' }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--table-row-hover)'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <td className="px-2 py-2">
+                    <tr key={p.id}>
+                      <td style={{ color: 'var(--muted-dim)', textAlign: 'left' }} className="num">{p.jerseyNumber}</td>
+                      <td>
                         <Link href={`/player/${p.id}`} style={{ color: 'var(--accent)' }} className="hover:underline">
-                          {isStarter && <span className="text-xs mr-1" title="Starter">*</span>}
+                          {isStarter && <span className="mr-1" style={{ color: 'var(--success)' }} title="Starter">●</span>}
                           {p.firstName} {p.lastName}
                         </Link>
                       </td>
-                      <td className="px-2 py-2" style={{ color: 'var(--muted)' }}>{p.position}</td>
-                      <td className="px-2 py-2">{p.age}</td>
-                      <td className="px-2 py-2" style={{ color: 'var(--muted)' }}>{formatHeight(p.height)}</td>
-                      <td className="px-2 py-2 font-bold" style={{ color: getRatingColor(ovr) }}>{ovr}</td>
+                      <td style={{ color: 'var(--muted)' }}>{p.position}</td>
+                      <td className="num">{p.age}</td>
+                      <td style={{ color: 'var(--muted)' }}>{formatHeight(p.height)}</td>
+                      <td style={ratingCell(ovr)}>{ovr}</td>
                       <RatingCell value={p.ratings.outsideShooting} />
                       <RatingCell value={p.ratings.midrangeShooting} />
                       <RatingCell value={p.ratings.interiorScoring} />
@@ -196,25 +197,21 @@ function RosterContent() {
                       <RatingCell value={p.ratings.interiorDefense} />
                       <RatingCell value={p.ratings.athleticism} />
                       <RatingCell value={p.ratings.rebounding} />
-                      <td className="px-2 py-2">{currentStats?.points?.toFixed(1) ?? '-'}</td>
+                      <td className="num" style={{ fontWeight: 600 }}>{currentStats?.points?.toFixed(1) ?? '-'}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 function RatingCell({ value }: { value: number }) {
-  return (
-    <td className="px-2 py-2 font-mono text-xs" style={{ color: getRatingColor(value) }}>
-      {value}
-    </td>
-  );
+  return <td style={ratingCell(value)}>{value}</td>;
 }
 
 export default function RosterPage() {

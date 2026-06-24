@@ -1,18 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0f1117;
-  --foreground: #e5e7eb;
-  --card-bg: #1a1d27;
-  --card-border: #2a2d3a;
+  /* Content surfaces — deep cool slate, like OOTP's dark skin */
+  --background: #0b0f17;
+  --foreground: #dfe4ec;
+  --card-bg: #141a24;
+  --card-border: #283242;
+
+  /* Navy chrome (status bar, tab strip, panel headers) */
+  --chrome-top: #21324f;
+  --chrome-bottom: #16223a;
+  --chrome-border: #0a1322;
+  --chrome-text: #c8d4e6;
+
+  /* Panel header gradient */
+  --panel-head-top: #233454;
+  --panel-head-bottom: #1a2538;
+
+  /* Accent — kept warm so the brand pops against the navy */
   --accent: #f97316;
   --accent-hover: #fb923c;
+
   --header-bg: #141620;
-  --table-header: #1e2130;
-  --table-row-hover: #22253a;
-  --muted: #9ca3af;
-  --success: #22c55e;
-  --danger: #ef4444;
+  --table-header: #1b2433;
+  --table-row: #131922;
+  --table-row-alt: #161d28;
+  --table-row-hover: #1f2a3a;
+  --muted: #8a96a8;
+  --muted-dim: #5e6a7d;
+  --success: #34d399;
+  --danger: #f87171;
+
+  /* Rating heatmap tiers (1-80 scale) */
+  --r-elite: #34d399;
+  --r-great: #6ee7a8;
+  --r-good: #a3e635;
+  --r-avg: #fbbf24;
+  --r-below: #fb923c;
+  --r-poor: #f87171;
 }
 
 @theme inline {
@@ -23,23 +48,177 @@
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(1200px 600px at 50% -200px, rgba(33, 50, 79, 0.25) 0%, transparent 60%),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-size: 13px;
+}
+
+/* ---- Top status bar (team identity / date / primary action) ---- */
+.ootp-statusbar {
+  background: linear-gradient(180deg, var(--chrome-top) 0%, var(--chrome-bottom) 100%);
+  border-bottom: 1px solid var(--chrome-border);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 6px rgba(0, 0, 0, 0.4);
+  color: var(--chrome-text);
+}
+
+/* ---- Tab strip ---- */
+.ootp-tabbar {
+  background: linear-gradient(180deg, #131a27 0%, #0d121b 100%);
+  border-bottom: 1px solid var(--chrome-border);
+}
+.ootp-tab {
+  position: relative;
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-right: 1px solid #0a0f18;
+  transition: background 0.12s, color 0.12s;
+}
+.ootp-tab:hover {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ootp-tab.active {
+  color: #fff;
+  background: linear-gradient(180deg, var(--chrome-top) 0%, var(--chrome-bottom) 100%);
+}
+.ootp-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* ---- Panels ---- */
+.ootp-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ootp-panel-header {
+  background: linear-gradient(180deg, var(--panel-head-top) 0%, var(--panel-head-bottom) 100%);
+  border-bottom: 1px solid var(--chrome-border);
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--chrome-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ---- Toolbar (filters row) ---- */
+.ootp-toolbar {
+  background: linear-gradient(180deg, #1a2230 0%, #141a24 100%);
+  border-bottom: 1px solid var(--card-border);
+  padding: 6px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+}
+
+/* ---- Dense data tables ---- */
+.ootp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ootp-table thead th {
+  position: sticky;
+  top: 0;
+  background: linear-gradient(180deg, #20293a 0%, #19212e 100%);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--chrome-border);
+  white-space: nowrap;
+  user-select: none;
+}
+.ootp-table tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(40, 50, 66, 0.5);
+  white-space: nowrap;
+}
+.ootp-table tbody tr:nth-child(odd) { background: var(--table-row); }
+.ootp-table tbody tr:nth-child(even) { background: var(--table-row-alt); }
+.ootp-table tbody tr:hover { background: var(--table-row-hover); }
+.ootp-table .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ---- Buttons ---- */
+.ootp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border-radius: 3px;
+  border: 1px solid var(--chrome-border);
+  background: linear-gradient(180deg, #2a3650 0%, #1d2840 100%);
+  color: var(--chrome-text);
+  cursor: pointer;
+  transition: filter 0.12s, opacity 0.12s;
+}
+.ootp-btn:hover { filter: brightness(1.18); }
+.ootp-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ootp-btn-primary {
+  border-color: #b45309;
+  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
+  color: #1a1206;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.ootp-btn-primary:hover { filter: brightness(1.08); }
+
+/* ---- Pills / badges ---- */
+.ootp-pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+select.ootp-select {
+  background: linear-gradient(180deg, #1a2230 0%, #131a24 100%);
+  border: 1px solid var(--card-border);
+  color: var(--foreground);
+  border-radius: 3px;
+  padding: 5px 9px;
+  font-size: 12px;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
 }
 ::-webkit-scrollbar-track {
   background: var(--background);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--card-border);
+  background: #2c374b;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
+  background: #3b4961;
 }

@@ -89,15 +89,14 @@ export default function SimPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Game Simulation</h1>
+      <h1 className="text-xl font-bold mb-3 tracking-tight">Game Simulation</h1>
 
-      <div className="rounded-lg p-6 mb-6" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-        <div className="flex items-center gap-6 justify-center">
-          <div className="text-center">
-            <label className="block text-xs mb-2 uppercase" style={{ color: 'var(--muted)' }}>Home</label>
+      <div className="ootp-panel mb-4">
+        <div className="ootp-toolbar" style={{ justifyContent: 'center', gap: '20px' }}>
+          <label className="flex items-center gap-2">
+            <span className="uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>Home</span>
             <select
-              className="rounded px-3 py-2 text-sm min-w-[200px]"
-              style={{ background: 'var(--background)', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}
+              className="ootp-select min-w-[190px]"
               value={homeTeamId}
               onChange={(e) => setHomeTeamId(e.target.value)}
             >
@@ -105,15 +104,14 @@ export default function SimPage() {
                 <option key={t.id} value={t.id}>{t.city} {t.name}</option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <span className="text-xl font-bold" style={{ color: 'var(--muted)' }}>vs</span>
+          <span className="font-bold" style={{ color: 'var(--muted)' }}>VS</span>
 
-          <div className="text-center">
-            <label className="block text-xs mb-2 uppercase" style={{ color: 'var(--muted)' }}>Away</label>
+          <label className="flex items-center gap-2">
+            <span className="uppercase tracking-wider text-[11px]" style={{ color: 'var(--muted)' }}>Away</span>
             <select
-              className="rounded px-3 py-2 text-sm min-w-[200px]"
-              style={{ background: 'var(--background)', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}
+              className="ootp-select min-w-[190px]"
               value={awayTeamId}
               onChange={(e) => setAwayTeamId(e.target.value)}
             >
@@ -121,20 +119,19 @@ export default function SimPage() {
                 <option key={t.id} value={t.id}>{t.city} {t.name}</option>
               ))}
             </select>
-          </div>
+          </label>
 
           <button
             onClick={simulate}
             disabled={simming || homeTeamId === awayTeamId}
-            className="px-6 py-2 rounded font-medium text-white disabled:opacity-50"
-            style={{ background: 'var(--accent)' }}
+            className="ootp-btn ootp-btn-primary"
           >
-            {simming ? 'Simulating...' : 'Simulate Game'}
+            {simming ? 'Simulating…' : '▶ Simulate Game'}
           </button>
         </div>
 
         {homeTeamId === awayTeamId && (
-          <p className="text-center mt-3 text-sm" style={{ color: 'var(--danger)' }}>
+          <p className="text-center py-2 text-xs" style={{ color: 'var(--danger)' }}>
             Select two different teams
           </p>
         )}
@@ -143,23 +140,29 @@ export default function SimPage() {
       {result && (
         <div>
           {/* Score Banner */}
-          <div className="rounded-lg p-6 mb-6 text-center" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-            <div className="text-sm mb-2 uppercase" style={{ color: 'var(--muted)' }}>Final{result.result.overtimePeriods > 0 ? ` (${result.result.overtimePeriods}OT)` : ''}</div>
-            <div className="flex items-center justify-center gap-8 text-3xl font-bold">
-              <div className={result.result.winnerId === homeTeamId ? '' : 'opacity-60'}>
-                <div className="text-sm mb-1" style={{ color: 'var(--muted)' }}>{homeTeam?.abbreviation}</div>
-                {result.result.homeScore}
+          <div className="ootp-panel mb-4" style={{ background: 'linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom))' }}>
+            <div className="py-5 text-center">
+              <div className="text-[11px] mb-3 uppercase tracking-widest" style={{ color: 'var(--chrome-text)', opacity: 0.7 }}>
+                Final{result.result.overtimePeriods > 0 ? ` · ${result.result.overtimePeriods}OT` : ''}
               </div>
-              <span style={{ color: 'var(--muted)' }}>-</span>
-              <div className={result.result.winnerId === awayTeamId ? '' : 'opacity-60'}>
-                <div className="text-sm mb-1" style={{ color: 'var(--muted)' }}>{awayTeam?.abbreviation}</div>
-                {result.result.awayScore}
+              <div className="flex items-center justify-center gap-10">
+                <div className={`text-center ${result.result.winnerId === homeTeamId ? '' : 'opacity-55'}`}>
+                  <div className="text-sm mb-1 font-semibold tracking-wide" style={{ color: 'var(--chrome-text)' }}>{homeTeam?.abbreviation}</div>
+                  <div className="text-4xl font-black text-white tabular-nums">{result.result.homeScore}</div>
+                  {result.result.winnerId === homeTeamId && <div className="text-[10px] mt-1 font-bold" style={{ color: 'var(--accent)' }}>WIN</div>}
+                </div>
+                <span className="text-2xl" style={{ color: 'var(--muted)' }}>–</span>
+                <div className={`text-center ${result.result.winnerId === awayTeamId ? '' : 'opacity-55'}`}>
+                  <div className="text-sm mb-1 font-semibold tracking-wide" style={{ color: 'var(--chrome-text)' }}>{awayTeam?.abbreviation}</div>
+                  <div className="text-4xl font-black text-white tabular-nums">{result.result.awayScore}</div>
+                  {result.result.winnerId === awayTeamId && <div className="text-[10px] mt-1 font-bold" style={{ color: 'var(--accent)' }}>WIN</div>}
+                </div>
               </div>
             </div>
           </div>
 
           {/* Box Scores */}
-          <div className="grid grid-cols-1 gap-6">
+          <div className="grid grid-cols-1 gap-4">
             <BoxScoreTable
               title={`${homeTeam?.city} ${homeTeam?.name}`}
               team={result.boxScore.homeTeam}
@@ -187,24 +190,24 @@ function BoxScoreTable({
   playerNames: Map<string, string>;
 }) {
   return (
-    <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-      <div className="px-4 py-3 font-semibold" style={{ background: 'var(--table-header)' }}>{title}</div>
+    <div className="ootp-panel">
+      <div className="ootp-panel-header">{title}</div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="ootp-table">
           <thead>
-            <tr style={{ background: 'var(--table-header)' }}>
-              <th className="px-3 py-2 text-left text-xs" style={{ color: 'var(--muted)', width: '180px' }}>Player</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>MIN</th>
-              <th className="px-2 py-2 text-right text-xs font-bold" style={{ color: 'var(--foreground)' }}>PTS</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>FG</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>3PT</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>FT</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>REB</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>AST</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>STL</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>BLK</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>TO</th>
-              <th className="px-2 py-2 text-right text-xs" style={{ color: 'var(--muted)' }}>+/-</th>
+            <tr>
+              <th style={{ textAlign: 'left' }}>Player</th>
+              <th style={{ textAlign: 'right' }}>MIN</th>
+              <th style={{ textAlign: 'right', color: 'var(--foreground)' }}>PTS</th>
+              <th style={{ textAlign: 'right' }}>FG</th>
+              <th style={{ textAlign: 'right' }}>3PT</th>
+              <th style={{ textAlign: 'right' }}>FT</th>
+              <th style={{ textAlign: 'right' }}>REB</th>
+              <th style={{ textAlign: 'right' }}>AST</th>
+              <th style={{ textAlign: 'right' }}>STL</th>
+              <th style={{ textAlign: 'right' }}>BLK</th>
+              <th style={{ textAlign: 'right' }}>TO</th>
+              <th style={{ textAlign: 'right' }}>+/-</th>
             </tr>
           </thead>
           <tbody>
@@ -213,31 +216,30 @@ function BoxScoreTable({
               const fgParts = `${s.fieldGoalsMade}-${s.fieldGoalsAttempted}`;
               const threeParts = `${s.threePointersMade}-${s.threePointersAttempted}`;
               const ftParts = `${s.freeThrowsMade}-${s.freeThrowsAttempted}`;
-              const showDivider = i === 4; // after starters
+              const showDivider = i === 5; // after starters
 
               return (
                 <tr
                   key={p.playerId}
-                  style={{
-                    borderTop: showDivider ? '2px solid var(--accent)' : '1px solid var(--card-border)',
-                  }}
+                  style={showDivider ? { borderTop: '2px solid var(--chrome-border)' } : undefined}
                 >
-                  <td className="px-3 py-1.5">
+                  <td>
                     <Link href={`/player/${p.playerId}`} className="hover:underline" style={{ color: 'var(--accent)' }}>
+                      {p.starter && <span className="mr-1" style={{ color: 'var(--success)' }}>●</span>}
                       {playerNames.get(p.playerId) ?? p.playerId}
                     </Link>
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{Math.round(p.minutes)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono font-bold">{s.points}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>{fgParts}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>{threeParts}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>{ftParts}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{s.rebounds}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{s.assists}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{s.steals}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{s.blocks}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{s.turnovers}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{
+                  <td className="num" style={{ color: 'var(--muted)' }}>{Math.round(p.minutes)}</td>
+                  <td className="num" style={{ fontWeight: 700 }}>{s.points}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{fgParts}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{threeParts}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{ftParts}</td>
+                  <td className="num">{s.rebounds}</td>
+                  <td className="num">{s.assists}</td>
+                  <td className="num">{s.steals}</td>
+                  <td className="num">{s.blocks}</td>
+                  <td className="num">{s.turnovers}</td>
+                  <td className="num" style={{
                     color: s.plusMinus > 0 ? 'var(--success)' : s.plusMinus < 0 ? 'var(--danger)' : 'var(--muted)'
                   }}>
                     {s.plusMinus > 0 ? '+' : ''}{s.plusMinus}
@@ -246,25 +248,19 @@ function BoxScoreTable({
               );
             })}
             {/* Totals row */}
-            <tr style={{ borderTop: '2px solid var(--card-border)', background: 'var(--table-header)' }}>
-              <td className="px-3 py-2 font-semibold">TOTALS</td>
-              <td className="px-2 py-2 text-right font-mono" style={{ color: 'var(--muted)' }}></td>
-              <td className="px-2 py-2 text-right font-mono font-bold">{team.totals.points}</td>
-              <td className="px-2 py-2 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                {team.totals.fieldGoalsMade}-{team.totals.fieldGoalsAttempted}
-              </td>
-              <td className="px-2 py-2 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                {team.totals.threePointersMade}-{team.totals.threePointersAttempted}
-              </td>
-              <td className="px-2 py-2 text-right font-mono text-xs" style={{ color: 'var(--muted)' }}>
-                {team.totals.freeThrowsMade}-{team.totals.freeThrowsAttempted}
-              </td>
-              <td className="px-2 py-2 text-right font-mono">{team.totals.rebounds}</td>
-              <td className="px-2 py-2 text-right font-mono">{team.totals.assists}</td>
-              <td className="px-2 py-2 text-right font-mono">{team.totals.steals}</td>
-              <td className="px-2 py-2 text-right font-mono">{team.totals.blocks}</td>
-              <td className="px-2 py-2 text-right font-mono">{team.totals.turnovers}</td>
-              <td className="px-2 py-2"></td>
+            <tr style={{ borderTop: '2px solid var(--chrome-border)', background: 'var(--table-header)' }}>
+              <td style={{ fontWeight: 700 }}>TOTALS</td>
+              <td></td>
+              <td className="num" style={{ fontWeight: 700 }}>{team.totals.points}</td>
+              <td className="num" style={{ color: 'var(--muted)' }}>{team.totals.fieldGoalsMade}-{team.totals.fieldGoalsAttempted}</td>
+              <td className="num" style={{ color: 'var(--muted)' }}>{team.totals.threePointersMade}-{team.totals.threePointersAttempted}</td>
+              <td className="num" style={{ color: 'var(--muted)' }}>{team.totals.freeThrowsMade}-{team.totals.freeThrowsAttempted}</td>
+              <td className="num">{team.totals.rebounds}</td>
+              <td className="num">{team.totals.assists}</td>
+              <td className="num">{team.totals.steals}</td>
+              <td className="num">{team.totals.blocks}</td>
+              <td className="num">{team.totals.turnovers}</td>
+              <td></td>
             </tr>
           </tbody>
         </table>

@@ -125,20 +125,19 @@ export default function SchedulePage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Schedule &amp; Standings</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold tracking-tight">Standings &amp; Leaders</h1>
         <button
           onClick={simulate}
           disabled={loading || teams.length < 2}
-          className="rounded px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-50"
-          style={{ background: 'var(--accent)', color: '#0f1117' }}
+          className="ootp-btn ootp-btn-primary"
         >
-          {loading ? 'Simulating…' : season ? 'Re-Simulate Season' : 'Simulate Season'}
+          {loading ? 'Simulating…' : season ? '↻ Re-Sim Season' : '▶ Simulate Season'}
         </button>
       </div>
 
       {!season && !loading && (
-        <div className="rounded-lg p-8 text-center" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+        <div className="ootp-panel p-8 text-center">
           <p style={{ color: 'var(--muted)' }}>
             Simulate a full regular season (86 games per team) to generate standings and league leaders.
           </p>
@@ -146,7 +145,7 @@ export default function SchedulePage() {
       )}
 
       {loading && (
-        <div className="rounded-lg p-8 text-center" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+        <div className="ootp-panel p-8 text-center">
           <p style={{ color: 'var(--muted)' }}>Simulating ~1,290 games…</p>
         </div>
       )}
@@ -196,11 +195,13 @@ function TabButton({ active, onClick, children, small }: { active: boolean; onCl
   return (
     <button
       onClick={onClick}
-      className={`rounded ${small ? 'px-3 py-1 text-xs' : 'px-4 py-1.5 text-sm'} font-medium transition-colors`}
+      className={`${small ? 'px-3 py-1 text-[11px]' : 'px-4 py-1.5 text-xs'} font-semibold uppercase tracking-wider transition-colors`}
       style={{
-        background: active ? 'var(--accent)' : 'var(--card-bg)',
-        color: active ? '#0f1117' : 'var(--muted)',
+        background: active ? 'linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom))' : 'var(--card-bg)',
+        color: active ? '#fff' : 'var(--muted)',
         border: '1px solid var(--card-border)',
+        borderRadius: '3px',
+        borderBottom: active ? '2px solid var(--accent)' : '1px solid var(--card-border)',
       }}
     >
       {children}
@@ -217,21 +218,21 @@ function StandingsTable({ title, standings, teamById }: {
   const leaderLosses = standings[0]?.losses ?? 0;
 
   return (
-    <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-      <div className="px-4 py-3 font-semibold" style={{ background: 'var(--table-header)' }}>{title}</div>
+    <div className="ootp-panel">
+      <div className="ootp-panel-header">{title}</div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="ootp-table">
           <thead>
-            <tr style={{ background: 'var(--table-header)' }}>
-              <th className="px-3 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Team</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>W</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>L</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>PCT</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>GB</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>PF</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>PA</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Strk</th>
-              <th className="px-2 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>L10</th>
+            <tr>
+              <th style={{ textAlign: 'left' }}>Team</th>
+              <th style={{ textAlign: 'right' }}>W</th>
+              <th style={{ textAlign: 'right' }}>L</th>
+              <th style={{ textAlign: 'right' }}>PCT</th>
+              <th style={{ textAlign: 'right' }}>GB</th>
+              <th style={{ textAlign: 'right' }}>PF</th>
+              <th style={{ textAlign: 'right' }}>PA</th>
+              <th style={{ textAlign: 'right' }}>Strk</th>
+              <th style={{ textAlign: 'left' }}>L10</th>
             </tr>
           </thead>
           <tbody>
@@ -242,23 +243,23 @@ function StandingsTable({ title, standings, teamById }: {
               const l10w = s.lastTen.filter((x) => x === 'W').length;
               const isPlayoff = i < 8;
               return (
-                <tr key={s.teamId} style={{ borderBottom: '1px solid var(--card-border)' }}>
-                  <td className="px-3 py-1.5 whitespace-nowrap">
-                    <span className="text-xs mr-2 inline-block w-4 text-right" style={{ color: isPlayoff ? 'var(--accent)' : 'var(--muted)' }}>{i + 1}</span>
+                <tr key={s.teamId} style={isPlayoff ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}>
+                  <td className="whitespace-nowrap">
+                    <span className="mr-2 inline-block w-4 text-right num" style={{ color: isPlayoff ? 'var(--accent)' : 'var(--muted-dim)', fontWeight: isPlayoff ? 700 : 400 }}>{i + 1}</span>
                     <Link href={`/roster?team=${s.teamId}`} className="hover:underline" style={{ color: 'var(--foreground)' }}>
-                      <span style={{ color: 'var(--accent)' }}>{team?.abbreviation}</span> {team?.name}
+                      <span className="font-bold" style={{ color: 'var(--accent)' }}>{team?.abbreviation}</span> {team?.name}
                     </Link>
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono font-bold">{s.wins}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{s.losses}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{winPct(s).toFixed(3).replace(/^0/, '')}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{gb === 0 ? '-' : gb.toFixed(1)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{(s.pointsFor / Math.max(1, gp)).toFixed(1)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{(s.pointsAgainst / Math.max(1, gp)).toFixed(1)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: s.streak > 0 ? 'var(--success)' : 'var(--danger)' }}>
+                  <td className="num" style={{ fontWeight: 700 }}>{s.wins}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{s.losses}</td>
+                  <td className="num">{winPct(s).toFixed(3).replace(/^0/, '')}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{gb === 0 ? '-' : gb.toFixed(1)}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{(s.pointsFor / Math.max(1, gp)).toFixed(1)}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{(s.pointsAgainst / Math.max(1, gp)).toFixed(1)}</td>
+                  <td className="num" style={{ color: s.streak > 0 ? 'var(--success)' : 'var(--danger)' }}>
                     {s.streak > 0 ? `W${s.streak}` : `L${-s.streak}`}
                   </td>
-                  <td className="px-2 py-1.5 text-left font-mono text-xs" style={{ color: 'var(--muted)' }}>{l10w}-{s.lastTen.length - l10w}</td>
+                  <td style={{ textAlign: 'left', color: 'var(--muted)' }}>{l10w}-{s.lastTen.length - l10w}</td>
                 </tr>
               );
             })}
@@ -277,18 +278,20 @@ function LeadersTable({ stats, statKey, isPct, playerById, teamById }: {
   teamById: (id: string) => Team | undefined;
 }) {
   const fmt = (v: number) => (isPct ? `${(v * 100).toFixed(1)}%` : v.toFixed(1));
+  const label = LEADER_TABS.find((t) => t.key === statKey)?.label;
   return (
-    <div className="rounded-lg overflow-hidden" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+    <div className="ootp-panel">
+      <div className="ootp-panel-header">League Leaders · {label}</div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="ootp-table">
           <thead>
-            <tr style={{ background: 'var(--table-header)' }}>
-              <th className="px-3 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>#</th>
-              <th className="px-3 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Player</th>
-              <th className="px-2 py-2 text-left text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>Team</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>GP</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--muted)' }}>MPG</th>
-              <th className="px-2 py-2 text-right text-xs font-medium uppercase" style={{ color: 'var(--accent)' }}>{LEADER_TABS.find((t) => t.key === statKey)?.label}</th>
+            <tr>
+              <th style={{ textAlign: 'left' }}>#</th>
+              <th style={{ textAlign: 'left' }}>Player</th>
+              <th style={{ textAlign: 'left' }}>Team</th>
+              <th style={{ textAlign: 'right' }}>GP</th>
+              <th style={{ textAlign: 'right' }}>MPG</th>
+              <th style={{ textAlign: 'right', color: 'var(--accent)' }}>{label}</th>
             </tr>
           </thead>
           <tbody>
@@ -296,17 +299,17 @@ function LeadersTable({ stats, statKey, isPct, playerById, teamById }: {
               const player = playerById(p.playerId);
               const team = teamById(p.teamId);
               return (
-                <tr key={p.playerId} style={{ borderBottom: '1px solid var(--card-border)' }}>
-                  <td className="px-3 py-1.5 font-mono" style={{ color: 'var(--muted)' }}>{i + 1}</td>
-                  <td className="px-3 py-1.5">
+                <tr key={p.playerId}>
+                  <td className="num" style={{ color: 'var(--muted-dim)', textAlign: 'left' }}>{i + 1}</td>
+                  <td>
                     <Link href={`/player/${p.playerId}`} className="hover:underline" style={{ color: 'var(--accent)' }}>
                       {player ? `${player.firstName} ${player.lastName}` : p.playerId}
                     </Link>
                   </td>
-                  <td className="px-2 py-1.5 text-xs" style={{ color: 'var(--muted)' }}>{team?.abbreviation}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{p.gamesPlayed}</td>
-                  <td className="px-2 py-1.5 text-right font-mono" style={{ color: 'var(--muted)' }}>{p.mpg.toFixed(1)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono font-bold">{fmt(p[statKey])}</td>
+                  <td style={{ color: 'var(--muted)' }}>{team?.abbreviation}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{p.gamesPlayed}</td>
+                  <td className="num" style={{ color: 'var(--muted)' }}>{p.mpg.toFixed(1)}</td>
+                  <td className="num" style={{ fontWeight: 700, color: 'var(--accent)' }}>{fmt(p[statKey])}</td>
                 </tr>
               );
             })}

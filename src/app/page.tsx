@@ -55,18 +55,12 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <Link
-          href="/game/sim"
-          className="px-4 py-2 rounded font-medium text-sm text-white"
-          style={{ background: 'var(--accent)' }}
-        >
-          Quick Sim
-        </Link>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold tracking-tight">League Office</h1>
+        <Link href="/schedule" className="ootp-btn">Sim Full Season →</Link>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ConferencePanel title="Eastern Conference" teams={eastTeams} />
         <ConferencePanel title="Western Conference" teams={westTeams} />
       </div>
@@ -78,36 +72,37 @@ function ConferencePanel({ title, teams }: { title: string; teams: Team[] }) {
   const divisions = [...new Set(teams.map((t) => t.division))].sort();
 
   return (
-    <div className="rounded-lg p-4" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-      <h2 className="text-lg font-semibold mb-4">{title}</h2>
-      {divisions.map((div) => (
-        <div key={div} className="mb-4 last:mb-0">
-          <h3 className="text-xs font-medium uppercase tracking-wider mb-2" style={{ color: 'var(--muted)' }}>
-            {div}
-          </h3>
-          <div className="space-y-1">
-            {teams
-              .filter((t) => t.division === div)
-              .map((team) => (
-                <Link
-                  key={team.id}
-                  href={`/roster?team=${team.id}`}
-                  className="flex items-center justify-between px-3 py-2 rounded text-sm transition-colors"
-                  style={{ background: 'transparent' }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--table-row-hover)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  <span>
-                    <span className="font-medium" style={{ color: 'var(--accent)' }}>{team.abbreviation}</span>
-                    {' '}
-                    <span>{team.city} {team.name}</span>
-                  </span>
-                  <span style={{ color: 'var(--muted)' }}>{team.roster.length} players</span>
-                </Link>
-              ))}
+    <div className="ootp-panel">
+      <div className="ootp-panel-header">{title}</div>
+      <div className="p-2">
+        {divisions.map((div) => (
+          <div key={div} className="mb-2 last:mb-0">
+            <h3 className="text-[10.5px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: 'var(--muted)', background: 'var(--table-header)' }}>
+              {div}
+            </h3>
+            <div>
+              {teams
+                .filter((t) => t.division === div)
+                .map((team) => (
+                  <Link
+                    key={team.id}
+                    href={`/roster?team=${team.id}`}
+                    className="flex items-center justify-between px-2 py-1.5 text-[13px] transition-colors"
+                    style={{ borderBottom: '1px solid rgba(40,50,66,0.4)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--table-row-hover)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span>
+                      <span className="font-bold inline-block w-9" style={{ color: 'var(--accent)' }}>{team.abbreviation}</span>
+                      <span>{team.city} {team.name}</span>
+                    </span>
+                    <span className="text-[11px]" style={{ color: 'var(--muted)' }}>{team.roster.length} players</span>
+                  </Link>
+                ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
