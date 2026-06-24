@@ -4,6 +4,7 @@ import path from 'path';
 import { Player } from '@/models/player';
 import { Team } from '@/models/team';
 import { Game } from '@/models/game';
+import { SeasonState } from '@/models/season';
 import { GameStore } from './types';
 
 export class JsonStore implements GameStore {
@@ -87,5 +88,13 @@ export class JsonStore implements GameStore {
   async loadPlayersByTeam(teamId: string): Promise<Player[]> {
     const players = await this.loadPlayers();
     return players.filter((p) => p.teamId === teamId);
+  }
+
+  async loadSeason(): Promise<SeasonState | null> {
+    return this.readJson<SeasonState>(path.join(this.dataDir, 'season.json'));
+  }
+
+  async saveSeason(state: SeasonState): Promise<void> {
+    await this.writeJson(path.join(this.dataDir, 'season.json'), state);
   }
 }

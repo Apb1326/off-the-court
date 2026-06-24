@@ -35,21 +35,28 @@ export function generateSchedule(teams: Team[], rng: SeededRNG): ScheduledGame[]
   // Shuffle, then greedily pack into days so a team never appears twice per day.
   const shuffled = rng.shuffle(matchups);
   const games: ScheduledGame[] = [];
+  // Soft cap on games per night so the slate spreads across a realistic ~160
+  // game-days (~8 games a night) instead of cramming all 15 into one slot.
+  const GAMES_PER_DAY = 8;
   const dayUsage: Map<number, Set<string>> = new Map();
+  const dayCount: Map<number, number> = new Map();
   let counter = 0;
 
   for (const m of shuffled) {
     let day = 0;
-    // Find the earliest day where neither team is already scheduled.
+    // Find the earliest day that has room and where neither team already plays.
     while (true) {
       const used = dayUsage.get(day);
-      if (!used || (!used.has(m.home) && !used.has(m.away))) break;
+      const count = dayCount.get(day) ?? 0;
+      const teamsFree = !used || (!used.has(m.home) && !used.has(m.away));
+      if (teamsFree && count < GAMES_PER_DAY) break;
       day++;
     }
     if (!dayUsage.has(day)) dayUsage.set(day, new Set());
     const used = dayUsage.get(day)!;
     used.add(m.home);
     used.add(m.away);
+    dayCount.set(day, (dayCount.get(day) ?? 0) + 1);
 
     games.push({
       id: `g${counter++}`,
