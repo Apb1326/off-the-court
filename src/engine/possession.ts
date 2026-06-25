@@ -10,7 +10,8 @@ import { resolveRebound } from './rebound';
 import { checkTurnover } from './turnover';
 import { buildContext, clockUsageMultiplier, threePointBias, shouldIntentionalFoul } from './tactics';
 import { rimProtection, defensivePressure, shouldDoubleTeam } from './defense';
-import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX, NON_SHOOTING_FOUL_RATE, TEAM_FOUL_BONUS_THRESHOLD } from './constants';
+import { computeSpacing } from './spacing';
+import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX, NON_SHOOTING_FOUL_RATE, TEAM_FOUL_BONUS_THRESHOLD, SPACING_OPENNESS_COEF } from './constants';
 
 export interface GameState {
   clock: ClockState;
@@ -173,6 +174,13 @@ export function simulatePossession(
   const primaryFatigue = state.fatigue.get(primaryPlayer.id) ?? 0;
   const defFatigue = state.fatigue.get(defender.id) ?? 0;
 
+  // Lineup spacing from the four OFF-BALL players (everyone except the finisher,
+  // who is already fixed here). Centered on a league-average off-ball four, so
+  // an average lineup nets zero. offPlayers is iterated in lineup order with the
+  // finisher filtered out — deterministic, no RNG.
+  const offBallFour = offPlayers.filter((p) => p.id !== primaryPlayer.id);
+  const spacing = computeSpacing(offBallFour);
+
   // The defense may send a second man at an elite scorer.
   const doubleTeamed = (playType === 'isolation' || playType === 'post_up' || playType === 'pick_and_roll')
     && shouldDoubleTeam(primaryPlayer, defensiveSystem, state.rng);
@@ -204,18 +212,25 @@ export function simulatePossession(
     return { state: newState, switchPossession: true, isDeadBall: false };
   }
 
-  // Shot attempt — shaped by rim protection and late-game three-point chasing.
+  // Shot attempt — shaped by rim protection, late-game three-point chasing, and
+  // lineup spacing (good spacing opens the rim, mid-range donates, threes flat-
+  // to-up).
   const shotZone = selectShotZone(primaryPlayer, playType, state.rng, {
     threePointBias: threePointBias(ctx),
     rimDeterrence,
+    spacing,
   });
+  // More spacing → the on-ball defender gets less help → a softer contest,
+  // routed through the existing contest/contestBonus path as a centered
+  // subtraction from the effective pressure bonus. Poor spacing → tougher.
+  const spacingPressureBonus = pressure.contestBonus - SPACING_OPENNESS_COEF * spacing;
   const shotResult = resolveShot(
     primaryPlayer, primaryFatigue,
     defender, defFatigue,
     shotZone, playType, state.rng,
     state.shootingForm.get(primaryPlayer.id) ?? 0,
     {
-      pressureBonus: pressure.contestBonus,
+      pressureBonus: spacingPressureBonus,
       foulMult: pressure.foulMult,
       doubleTeamed,
       momentum: offMomentum,
