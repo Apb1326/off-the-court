@@ -2,7 +2,15 @@ import { Player, Position } from '@/models/player';
 import { PlayType, ShotZone } from '@/models/game';
 import { OffensiveSystem } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
-import { PLAY_TYPE_SHOT_ZONES } from './constants';
+import {
+  PLAY_TYPE_SHOT_ZONES,
+  SPACING_RIM_FREQ_COEF,
+  SPACING_MID_FREQ_COEF,
+  SPACING_THREE_FREQ_COEF,
+  SPACING_RIM_DETER_RELIEF_COEF,
+  VERSATILITY_HUNT_COEF,
+} from './constants';
+import { computeVersatility } from './spacing';
 
 const POSITION_PLAY_WEIGHTS: Record<Position, Partial<Record<PlayType, number>>> = {
   PG: { isolation: 1.2, pick_and_roll: 1.5, spot_up: 0.8, transition: 1.3, off_screen: 0.6, handoff: 1.0 },
@@ -92,6 +100,8 @@ export interface ShotZoneContext {
   threePointBias?: number;
   /** 0-1 rim deterrence from a shot-blocker — pushes shots away from the rim. */
   rimDeterrence?: number;
+  /** Centered lineup spacing z-score (engine/spacing.ts); 0 = league average. */
+  spacing?: number;
 }
 
 export function selectShotZone(
@@ -105,6 +115,14 @@ export function selectShotZone(
   const outside = shooter.ratings.outsideShooting / 80;
   const threeBias = ctx.threePointBias ?? 1;
   const rimDeterrence = ctx.rimDeterrence ?? 0;
+  // Centered spacing reshapes the shot mix on the real Moreyball pattern: good
+  // spacing opens driving lanes (rim↑) and the deterred mid-range is the donor
+  // (mid↓), threes flat-to-up (drive-and-kick). Poor spacing packs the paint
+  // (rim↓) and forces settle-for pull-ups (mid↑, three↓). All three are ADDITIVE
+  // offsets scaled by the centered z, so an average lineup (spacing 0) is a
+  // no-op. NOTE: this only moves FREQUENCY between zones; three-shot QUALITY is
+  // handled separately via the openness term in resolveShot.
+  const spacing = ctx.spacing ?? 0;
   const weights = zoneOptions.map((z) => {
     let w = z.weight;
     // Modify based on player shot tendencies and ability. A poor outside shooter
@@ -113,11 +131,17 @@ export function selectShotZone(
       // Global dampener pulls the league's three-point share down to ~40% of
       // attempts (real ~35 3PA on ~88 FGA).
       w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5) * threeBias * 0.62;
+      w += SPACING_THREE_FREQ_COEF * spacing; // flat-to-up: small, not the donor
     } else if (z.zone === 'short_midrange' || z.zone === 'long_midrange') {
       w *= 0.5 + shooter.tendencies.midrangeRate * 2.0;
+      w -= SPACING_MID_FREQ_COEF * spacing; // donor zone: shrinks when spacing is good
     } else if (z.zone === 'rim') {
       // Elite rim protection deters attacks at the basket.
       w *= (0.5 + shooter.tendencies.rimRate * 2.0) * (1 - rimDeterrence * 0.2);
+      // Good spacing opens the rim AND additively relieves rim-protection
+      // deterrence (the help defender is occupied), scaled by how much
+      // deterrence is present.
+      w += (SPACING_RIM_FREQ_COEF + SPACING_RIM_DETER_RELIEF_COEF * rimDeterrence) * spacing;
     }
     return Math.max(0.01, w);
   });
@@ -177,9 +201,16 @@ export function selectDefender(
   playType: PlayType = 'isolation',
 ): Player {
   // On isolation and post-ups the offense actively hunts the weakest defender
-  // (a classic switch-and-attack), so the primary defender skews softer.
+  // (a classic switch-and-attack), so the primary defender skews softer. A
+  // genuinely switchable defense (high perimeter-D FLOOR, low mobility/size
+  // spread) finds that soft target LESS often: an additive, centered offset to
+  // the hunt rate driven by the WEAK LINK, not the mean — so four studs and one
+  // sieve (high mean, low floor) still get hunted. An average defense (z≈0)
+  // leaves the 0.45 base rate unchanged.
   const huntsMismatch = playType === 'isolation' || playType === 'post_up';
-  if (huntsMismatch && rng.nextBool(0.45)) {
+  const versatility = computeVersatility(defensivePlayers);
+  const huntRate = Math.max(0.15, Math.min(0.6, 0.45 - VERSATILITY_HUNT_COEF * versatility));
+  if (huntsMismatch && rng.nextBool(huntRate)) {
     const weakWeights = defensivePlayers.map((d) => {
       const defRating = (d.ratings.perimeterDefense + d.ratings.interiorDefense + d.ratings.defensiveIQ) / 3;
       return Math.max(1, 85 - defRating); // invert: weaker defenders weighted higher
