@@ -7,7 +7,7 @@
  * Run `npm run download-history` first to fetch the source CSVs.
  */
 import { readFile, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { Team } from '../src/models/team';
 import { Player } from '../src/models/player';
@@ -47,7 +47,7 @@ interface EraBenchmark {
 }
 
 function analyzeGames(): { eras: EraBenchmark[]; raw: { header: string[]; rows: string[][] } } {
-  const text = require('fs').readFileSync(path.join(HISTORY_DIR, 'nbaallelo.csv'), 'utf-8');
+  const text = readFileSync(path.join(HISTORY_DIR, 'nbaallelo.csv'), 'utf-8');
   const { header, rows } = parseCsv(text);
   const idx = (name: string) => header.indexOf(name);
   const iCopy = idx('_iscopy');
@@ -124,7 +124,7 @@ function analyzeGames(): { eras: EraBenchmark[]; raw: { header: string[]; rows: 
 
 function analyzeRaptor() {
   const file = path.join(HISTORY_DIR, 'historical_RAPTOR_by_player.csv');
-  const text = require('fs').readFileSync(file, 'utf-8');
+  const text = readFileSync(file, 'utf-8');
   const { header, rows } = parseCsv(text);
   const idx = (n: string) => header.indexOf(n);
   const iSeason = idx('season');

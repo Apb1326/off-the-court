@@ -43,9 +43,10 @@ function RosterContent() {
   const teamIdParam = searchParams.get('team');
 
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string>(teamIdParam ?? '');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [playersTeamId, setPlayersTeamId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<string>('overall');
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -57,20 +58,22 @@ function RosterContent() {
         if (!selectedTeamId && data.length > 0) {
           setSelectedTeamId(data[0].id);
         }
-        setLoading(false);
+        setTeamsLoaded(true);
       });
   }, []);
 
   useEffect(() => {
     if (!selectedTeamId) return;
-    setLoading(true);
     fetch(`/api/players?teamId=${selectedTeamId}`)
       .then((r) => r.json())
       .then((data: Player[]) => {
         setPlayers(data);
-        setLoading(false);
+        setPlayersTeamId(selectedTeamId);
       });
   }, [selectedTeamId]);
+
+  // Loading until teams are fetched and the players for the selected team have arrived.
+  const loading = !teamsLoaded || playersTeamId !== selectedTeamId;
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId);
 
@@ -105,15 +108,7 @@ function RosterContent() {
     }
   };
 
-  const SortHeader = ({ col, label, align = 'left' }: { col: string; label: string; align?: 'left' | 'right' | 'center' }) => (
-    <th
-      className="cursor-pointer"
-      style={{ color: sortBy === col ? 'var(--accent)' : undefined, textAlign: align }}
-      onClick={() => handleSort(col)}
-    >
-      {label}{sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : ''}
-    </th>
-  );
+  const sortProps = { sortBy, sortAsc, onSort: handleSort };
 
   return (
     <div>
@@ -155,20 +150,20 @@ function RosterContent() {
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left' }}>#</th>
-                  <SortHeader col="name" label="Name" />
+                  <SortHeader col="name" label="Name" {...sortProps} />
                   <th style={{ textAlign: 'left' }}>Pos</th>
-                  <SortHeader col="age" label="Age" align="right" />
+                  <SortHeader col="age" label="Age" align="right" {...sortProps} />
                   <th style={{ textAlign: 'left' }}>Ht</th>
-                  <SortHeader col="overall" label="OVR" align="center" />
-                  <SortHeader col="outsideShooting" label="3PT" align="center" />
-                  <SortHeader col="midrangeShooting" label="MID" align="center" />
-                  <SortHeader col="interiorScoring" label="INT" align="center" />
-                  <SortHeader col="passing" label="PAS" align="center" />
-                  <SortHeader col="perimeterDefense" label="P.DEF" align="center" />
-                  <SortHeader col="interiorDefense" label="I.DEF" align="center" />
-                  <SortHeader col="athleticism" label="ATH" align="center" />
-                  <SortHeader col="rebounding" label="REB" align="center" />
-                  <SortHeader col="ppg" label="PPG" align="right" />
+                  <SortHeader col="overall" label="OVR" align="center" {...sortProps} />
+                  <SortHeader col="outsideShooting" label="3PT" align="center" {...sortProps} />
+                  <SortHeader col="midrangeShooting" label="MID" align="center" {...sortProps} />
+                  <SortHeader col="interiorScoring" label="INT" align="center" {...sortProps} />
+                  <SortHeader col="passing" label="PAS" align="center" {...sortProps} />
+                  <SortHeader col="perimeterDefense" label="P.DEF" align="center" {...sortProps} />
+                  <SortHeader col="interiorDefense" label="I.DEF" align="center" {...sortProps} />
+                  <SortHeader col="athleticism" label="ATH" align="center" {...sortProps} />
+                  <SortHeader col="rebounding" label="REB" align="center" {...sortProps} />
+                  <SortHeader col="ppg" label="PPG" align="right" {...sortProps} />
                 </tr>
               </thead>
               <tbody>
@@ -212,6 +207,32 @@ function RosterContent() {
 
 function RatingCell({ value }: { value: number }) {
   return <td style={ratingCell(value)}>{value}</td>;
+}
+
+function SortHeader({
+  col,
+  label,
+  align = 'left',
+  sortBy,
+  sortAsc,
+  onSort,
+}: {
+  col: string;
+  label: string;
+  align?: 'left' | 'right' | 'center';
+  sortBy: string;
+  sortAsc: boolean;
+  onSort: (col: string) => void;
+}) {
+  return (
+    <th
+      className="cursor-pointer"
+      style={{ color: sortBy === col ? 'var(--accent)' : undefined, textAlign: align }}
+      onClick={() => onSort(col)}
+    >
+      {label}{sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
 }
 
 export default function RosterPage() {
