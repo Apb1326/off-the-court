@@ -104,6 +104,21 @@ export interface ShotContext {
   momentum?: number;
   /** Multiplier on shooting-foul rate from defensive aggressiveness. */
   foulMult?: number;
+  /**
+   * Shot-quality bonus from a possession that developed and CASHED an advantage
+   * (a kick-out off a double-team, a drive-and-kick off a collapsed defense).
+   * Additive to make probability, already capped by the chain. On perimeter
+   * shots it is scaled by the finisher's own shooting so an "open" look only
+   * helps a shooter who can punish it — an open three for a non-shooter is not a
+   * good shot.
+   */
+  advantageBonus?: number;
+  /**
+   * Late-shot-clock rush: the shot is forced under the shot-clock pressure
+   * threshold (the alternative is a violation), so it is a worse look. Additive,
+   * negative.
+   */
+  rushPenalty?: number;
 }
 
 export function resolveShot(
@@ -132,9 +147,22 @@ export function resolveShot(
   // A double-team meaningfully lowers shot quality; momentum nudges it.
   const doubleMod = ctx.doubleTeamed ? -0.08 : 0;
   const momentumMod = (ctx.momentum ?? 0) * formScale;
+  // Advantage cashed by ball movement. On a three the "open" value is gated on
+  // the finisher's outside shooting (an open look only helps a shooter who can
+  // punish it); twos take it closer to full since a collapsed defense yields a
+  // genuine layup/short look for anyone.
+  const advRaw = ctx.advantageBonus ?? 0;
+  const isThree = POINTS_BY_ZONE[zone] === 3;
+  const advScale = isThree
+    ? 0.35 + 0.65 * (getEffectiveRating(getShooterRating(shooter, zone), shooterFatigue) / 80)
+    : 1.0;
+  const advantageMod = advRaw * advScale;
+  // Forced shot under the shot-clock floor.
+  const rushMod = ctx.rushPenalty ?? 0;
 
   const finalProbability = Math.max(0.05, Math.min(0.95,
-    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod + formMod + doubleMod + momentumMod
+    basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod +
+    formMod + doubleMod + momentumMod + advantageMod + rushMod
   ));
 
   // Block check (before shot)

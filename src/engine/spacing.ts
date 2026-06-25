@@ -37,6 +37,24 @@ import {
  * positive.
  */
 
+/**
+ * Per-player weight as a KICK-OUT / relocation target when a possession develops
+ * an advantage and the ball moves. Built from the same spacing primitives as the
+ * gravity model: a player earns the pass to the extent he is a catch-and-shoot
+ * threat the defense must close out on (outside ability × three-point tendency),
+ * with a smaller rim-finishing term for the cutter/roll man. This is what "weight
+ * toward the open shooter via the spacing model" means — it favors players whose
+ * shot is worth creating, so a non-shooter is not preferentially fed an open look
+ * the engine would then mis-score. Pure arithmetic; no RNG. Always > 0 so every
+ * teammate remains a possible receiver.
+ */
+export function openManWeight(p: Player): number {
+  const outNorm = p.ratings.outsideShooting / 80;
+  const catchAndShoot = outNorm * (0.4 + p.tendencies.threePointRate); // shooter gravity
+  const rimFinish = (p.ratings.interiorScoring / 80) * p.tendencies.cutFreq; // cutter/roll
+  return Math.max(0.05, catchAndShoot + 0.5 * rimFinish);
+}
+
 /** Per-player off-ball gravity contribution (raw, uncentered). */
 function playerGravity(p: Player): number {
   const outNorm = p.ratings.outsideShooting / 80;

@@ -1,17 +1,28 @@
 import { Player } from '@/models/player';
-import { PlayByPlayEvent, PossessionOutcome, PlayType, ShotZone } from '@/models/game';
+import { PlayByPlayEvent, PossessionOutcome, PlayType, ShotZone, TurnoverType } from '@/models/game';
 import { OffensiveSystem, DefensiveSystem } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
 import { ClockState, advanceClock, resetShotClock, isShotClockViolation } from './clock';
-import { accumulateFatigue } from './fatigue';
+import { accumulateFatigue, getEffectiveRating } from './fatigue';
 import { resolveShot, resolveFreeThrows } from './shot';
 import { selectPlayType, selectShotZone, selectPrimaryPlayer, selectDefender, checkTransitionOpportunity } from './play-types';
 import { resolveRebound } from './rebound';
 import { checkTurnover } from './turnover';
 import { buildContext, clockUsageMultiplier, threePointBias, shouldIntentionalFoul } from './tactics';
 import { rimProtection, defensivePressure, shouldDoubleTeam } from './defense';
-import { computeSpacing } from './spacing';
-import { PLAY_TYPE_ASSIST_RATE, POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX, TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX, NON_SHOOTING_FOUL_RATE, TEAM_FOUL_BONUS_THRESHOLD, SPACING_OPENNESS_COEF } from './constants';
+import { computeSpacing, openManWeight } from './spacing';
+import {
+  POINTS_BY_ZONE, BASE_POSSESSION_TIME_MIN, BASE_POSSESSION_TIME_MAX,
+  TRANSITION_POSSESSION_TIME_MIN, TRANSITION_POSSESSION_TIME_MAX,
+  NON_SHOOTING_FOUL_RATE, TEAM_FOUL_BONUS_THRESHOLD, SPACING_OPENNESS_COEF,
+  MAX_EXTRA_PASSES, PLAY_TYPE_PASS_RATE, PASS_PROB_PASSING_COEF, PASS_PROB_SPACING_COEF,
+  PASS_PROB_PRESSURE_COEF, DOUBLE_TEAM_PASS_PROB, PASS_TIME_MIN, PASS_TIME_MAX, MIN_CREATE_TIME,
+  PASS_TURNOVER_BASE, PASS_TURNOVER_SKILL_COEF, PASS_TURNOVER_STEAL_COEF, PASS_TURNOVER_DT_MULT,
+  PASS_TURNOVER_MIN, PASS_TURNOVER_MAX, ADVANTAGE_DRIVE_PROB, ADVANTAGE_NONDRIVE_PROB,
+  ADVANTAGE_CREATE_PROB, ADVANTAGE_PERSIST_PROB, ADVANTAGE_SHOT_BONUS, ADVANTAGE_BONUS_DIMINISH,
+  ADVANTAGE_BONUS_CEIL, SHOT_CLOCK_PRESSURE_THRESHOLD, SHOT_CLOCK_RUSH_PENALTY,
+  SPACING_ADVANTAGE_COEF, SPACING_ADVANTAGE_MIN, SPACING_ADVANTAGE_MAX,
+} from './constants';
 
 export interface GameState {
   clock: ClockState;
@@ -212,10 +223,138 @@ export function simulatePossession(
     return { state: newState, switchPossession: true, isDeadBall: false };
   }
 
+  // --- Ball-movement chain --------------------------------------------------
+  // The possession can now DEVELOP. The initial action above creates (or fails
+  // to create) an advantage; if it does, the offense relocates the ball to a
+  // teammate to exploit it before the defense recovers. Quality is keyed to the
+  // ADVANTAGE STATE, never the raw pass count: a pass that cashes a live
+  // advantage (kick-out off a double-team, drive-and-kick off a collapsed
+  // defense) earns a bonus with diminishing returns and a hard ceiling; a
+  // no-advantage reset/swing earns nothing but still costs clock and carries
+  // bad-pass risk. Hard bound: initial + up to MAX_EXTRA_PASSES actions.
+  let finisher = primaryPlayer;
+  let finisherDefender = defender;
+  let finisherFatigue = primaryFatigue;
+  let finisherDefFatigue = defFatigue;
+  let finisherPlayType = playType;
+  let finisherDoubled = doubleTeamed;
+  let assister: Player | undefined; // the player who threw the pass into the shot
+  let advantageBonus = 0;           // accumulated, advantage-driven shot-quality bonus
+  let passSeconds = 0;              // shot-clock burned by the extra passes
+
+  // A double-team is two-on-the-ball, so it IS a live advantage; otherwise a real
+  // drive (rim pressure that collapses the help) creates one more often than a
+  // stationary action.
+  let advantageActive = doubleTeamed;
+  if (!advantageActive) {
+    const driveType = playType === 'isolation' || playType === 'pick_and_roll'
+      || playType === 'post_up' || playType === 'cut' || playType === 'transition';
+    advantageActive = state.rng.nextBool(driveType ? ADVANTAGE_DRIVE_PROB : ADVANTAGE_NONDRIVE_PROB);
+  }
+
+  for (let pass = 0; pass < MAX_EXTRA_PASSES; pass++) {
+    const candidates = offPlayers.filter((p) => p.id !== finisher.id);
+    if (candidates.length === 0) break;
+
+    // Pass probability: passing/IQ, spacing (open lanes), and a pressured/doubled
+    // primary giving it up, all CENTERED on the play-type base. A double-team on
+    // the FIRST decision almost always forces the kick-out.
+    let passProb: number;
+    if (pass === 0 && doubleTeamed) {
+      passProb = DOUBLE_TEAM_PASS_PROB;
+    } else {
+      const skill = (finisher.ratings.passing + finisher.ratings.offensiveIQ) / 2 - 40;
+      passProb = PLAY_TYPE_PASS_RATE[finisherPlayType]
+        + PASS_PROB_PASSING_COEF * skill
+        + PASS_PROB_SPACING_COEF * spacing
+        + PASS_PROB_PRESSURE_COEF * pressure.contestBonus;
+      passProb = Math.max(0.02, Math.min(0.97, passProb));
+    }
+    if (!state.rng.nextBool(passProb)) break;
+
+    // Each extra pass burns a couple seconds of shot clock.
+    passSeconds += state.rng.nextInt(PASS_TIME_MIN, PASS_TIME_MAX);
+
+    // Bad-pass / steal risk on the pass itself — small, centered on passer skill
+    // and the best defender's hands; a kick-out out of a double-team is riskier.
+    const skillNorm = (finisher.ratings.passing + finisher.ratings.offensiveIQ) / 2 / 80;
+    const stealer = bestStealer(defPlayers, state.fatigue);
+    const stealNorm = getEffectiveRating(stealer.ratings.steal, state.fatigue.get(stealer.id) ?? 0) / 80;
+    let toRisk = PASS_TURNOVER_BASE
+      - PASS_TURNOVER_SKILL_COEF * (skillNorm - 0.5)
+      + PASS_TURNOVER_STEAL_COEF * (stealNorm - 0.5);
+    if (pass === 0 && doubleTeamed) toRisk *= PASS_TURNOVER_DT_MULT;
+    toRisk = Math.max(PASS_TURNOVER_MIN, Math.min(PASS_TURNOVER_MAX, toRisk * pressure.stealMult));
+
+    if (state.rng.nextBool(toRisk)) {
+      // The pass is lost. Half-ish of forced giveaways are steals (the defender's
+      // hands), the rest a bad pass out of bounds.
+      const stolen = state.rng.nextBool(Math.min(0.78, 0.20 + stealNorm * 0.45));
+      const toClock = advanceClock(state.clock, Math.min(state.clock.shotClock - 1, possTime));
+      const toType: TurnoverType = stolen ? 'steal' : 'bad_pass';
+      const desc = stolen
+        ? `${stealer.firstName} ${stealer.lastName} steals the pass from ${finisher.firstName} ${finisher.lastName}`
+        : `Bad pass by ${finisher.firstName} ${finisher.lastName} (turnover)`;
+      const event = createEvent(state, toClock, finisherPlayType, finisher, 'turnover', desc);
+      event.turnoverType = toType;
+      if (stolen) event.stealPlayerId = stealer.id;
+      const ns = updateState(state, toClock, event);
+      addTurnoverStats(ns, finisher.id, stolen ? stealer.id : undefined);
+      ns.previousPossessionTurnover = true;
+      ns.previousPossessionLongRebound = false;
+      return { state: ns, switchPossession: true, isDeadBall: false };
+    }
+
+    // The ball moves to a teammate, weighted toward the open shooter via the
+    // spacing model (openManWeight). When a live advantage is being exploited the
+    // weighting sharpens toward the shot worth creating.
+    const receiver = selectReceiver(candidates, advantageActive, state.rng);
+
+    // Cash the advantage (if any) into shot quality, with diminishing returns and
+    // a hard ceiling, then let the defense (usually) recover. A no-advantage swing
+    // earns nothing but can occasionally manufacture a fresh advantage.
+    if (advantageActive) {
+      const inc = ADVANTAGE_SHOT_BONUS * (pass === 0 ? 1 : ADVANTAGE_BONUS_DIMINISH);
+      advantageBonus = Math.min(ADVANTAGE_BONUS_CEIL, advantageBonus + inc);
+      advantageActive = state.rng.nextBool(ADVANTAGE_PERSIST_PROB);
+    } else {
+      advantageActive = state.rng.nextBool(ADVANTAGE_CREATE_PROB);
+    }
+
+    assister = finisher; // the thrower of THIS pass; overwritten only if a later pass lands the shot
+    finisher = receiver;
+    finisherDefender = selectDefender(defPlayers, receiver, state.rng, 'spot_up');
+    finisherFatigue = state.fatigue.get(receiver.id) ?? 0;
+    finisherDefFatigue = state.fatigue.get(finisherDefender.id) ?? 0;
+    finisherPlayType = selectReceiverPlayType(receiver, state.rng);
+    finisherDoubled = false; // only the initial primary was the doubled man
+  }
+
+  // The shot is taken when the chain ends. Pass time is absorbed into the
+  // possession's create window (mean possession length is unchanged for the
+  // common case), and only extends a short possession into late clock — exactly
+  // the tension the per-pass cost is meant to create. Capped at the shot clock.
+  const shotElapsed = Math.min(
+    Math.max(1, state.clock.shotClock - 1),
+    Math.max(possTime, MIN_CREATE_TIME + passSeconds),
+  );
+  const shotClockState = advanceClock(state.clock, shotElapsed);
+
+  // Late-shot-clock floor: under the pressure threshold the offense is forced
+  // into a worse look because the alternative is a violation.
+  const rushPenalty = shotClockState.shotClock < SHOT_CLOCK_PRESSURE_THRESHOLD
+    ? SHOT_CLOCK_RUSH_PENALTY : 0;
+
+  // A cashed advantage only becomes a clean look on a spaced floor; in a packed
+  // paint the help recovers. Centered on league-average spacing, so net-neutral.
+  const advSpacingFactor = Math.max(SPACING_ADVANTAGE_MIN,
+    Math.min(SPACING_ADVANTAGE_MAX, 1 + SPACING_ADVANTAGE_COEF * spacing));
+  const realizedAdvantageBonus = advantageBonus * advSpacingFactor;
+
   // Shot attempt — shaped by rim protection, late-game three-point chasing, and
   // lineup spacing (good spacing opens the rim, mid-range donates, threes flat-
   // to-up).
-  const shotZone = selectShotZone(primaryPlayer, playType, state.rng, {
+  const shotZone = selectShotZone(finisher, finisherPlayType, state.rng, {
     threePointBias: threePointBias(ctx),
     rimDeterrence,
     spacing,
@@ -225,31 +364,33 @@ export function simulatePossession(
   // subtraction from the effective pressure bonus. Poor spacing → tougher.
   const spacingPressureBonus = pressure.contestBonus - SPACING_OPENNESS_COEF * spacing;
   const shotResult = resolveShot(
-    primaryPlayer, primaryFatigue,
-    defender, defFatigue,
-    shotZone, playType, state.rng,
-    state.shootingForm.get(primaryPlayer.id) ?? 0,
+    finisher, finisherFatigue,
+    finisherDefender, finisherDefFatigue,
+    shotZone, finisherPlayType, state.rng,
+    state.shootingForm.get(finisher.id) ?? 0,
     {
       pressureBonus: spacingPressureBonus,
       foulMult: pressure.foulMult,
-      doubleTeamed,
+      doubleTeamed: finisherDoubled,
       momentum: offMomentum,
+      advantageBonus: realizedAdvantageBonus,
+      rushPenalty,
     },
   );
 
   // Record FGA
-  const newState: GameState = { ...state, clock: newClock };
+  const newState: GameState = { ...state, clock: shotClockState };
 
   if (shotResult.blocked) {
-    const desc = `${primaryPlayer.firstName} ${primaryPlayer.lastName}'s shot blocked by ${defender.firstName} ${defender.lastName}`;
-    const event = createEvent(state, newClock, playType, primaryPlayer, 'missed_shot', desc);
+    const desc = `${finisher.firstName} ${finisher.lastName}'s shot blocked by ${finisherDefender.firstName} ${finisherDefender.lastName}`;
+    const event = createEvent(state, shotClockState, finisherPlayType, finisher, 'missed_shot', desc);
     event.shotZone = shotZone;
     event.shotMade = false;
-    event.blockPlayerId = defender.id;
+    event.blockPlayerId = finisherDefender.id;
 
-    const updatedState = updateState(newState, newClock, event);
-    addShotStats(updatedState, primaryPlayer.id, shotZone, false, false);
-    addBlockStat(updatedState, defender.id);
+    const updatedState = updateState(newState, shotClockState, event);
+    addShotStats(updatedState, finisher.id, shotZone, false, false);
+    addBlockStat(updatedState, finisherDefender.id);
 
     // Rebound
     const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
@@ -272,20 +413,20 @@ export function simulatePossession(
   if (shotResult.fouled && !shotResult.made) {
     // Shooting foul, missed shot
     const ftAttempts = POINTS_BY_ZONE[shotZone] === 3 ? 3 : 2;
-    const ftResult = resolveFreeThrows(primaryPlayer, primaryFatigue, ftAttempts, state.rng);
+    const ftResult = resolveFreeThrows(finisher, finisherFatigue, ftAttempts, state.rng);
 
-    const desc = `${primaryPlayer.firstName} ${primaryPlayer.lastName} fouled on ${shotZone === 'rim' ? 'drive' : 'jumper'} by ${defender.firstName} ${defender.lastName}. FT: ${ftResult.made}/${ftResult.attempted}`;
-    const event = createEvent(state, newClock, playType, primaryPlayer, 'foul', desc);
+    const desc = `${finisher.firstName} ${finisher.lastName} fouled on ${shotZone === 'rim' ? 'drive' : 'jumper'} by ${finisherDefender.firstName} ${finisherDefender.lastName}. FT: ${ftResult.made}/${ftResult.attempted}`;
+    const event = createEvent(state, shotClockState, finisherPlayType, finisher, 'foul', desc);
     event.shotZone = shotZone;
-    event.foulPlayerId = defender.id;
+    event.foulPlayerId = finisherDefender.id;
     event.freeThrowsMade = ftResult.made;
     event.freeThrowsAttempted = ftResult.attempted;
     event.points = ftResult.made;
 
-    const updatedState = updateState(newState, newClock, event);
+    const updatedState = updateState(newState, shotClockState, event);
     addScore(updatedState, isHome, ftResult.made);
-    addFoulStat(updatedState, defender.id);
-    addFreeThrowStats(updatedState, primaryPlayer.id, ftResult.made, ftResult.attempted);
+    addFoulStat(updatedState, finisherDefender.id);
+    addFreeThrowStats(updatedState, finisher.id, ftResult.made, ftResult.attempted);
     addTeamFoul(updatedState, !isHome, state.clock.quarter);
 
     updatedState.previousPossessionTurnover = false;
@@ -296,53 +437,35 @@ export function simulatePossession(
 
   if (shotResult.made) {
     let totalPoints = shotResult.points;
-    let desc = `${primaryPlayer.firstName} ${primaryPlayer.lastName} makes ${describeShotZone(shotZone)}`;
+    let desc = `${finisher.firstName} ${finisher.lastName} makes ${describeShotZone(shotZone)}`;
 
-    // Check for assist. A double-team forces a kick-out, so the shot is more
-    // likely to be set up by a teammate.
-    const assistChance = Math.min(0.97, PLAY_TYPE_ASSIST_RATE[playType] * (doubleTeamed ? 1.4 : 1));
-    const initiator = offPlayers[0];
-    let assister: Player | undefined;
-    if (state.rng.nextBool(assistChance)) {
-      const otherPlayers = offPlayers.filter((p) => p.id !== primaryPlayer.id);
-      if (otherPlayers.length > 0) {
-        // Weight strongly toward the best distributor on the floor, and credit
-        // the player who actually ran the action (the on-ball initiator) — so
-        // the pass that created the shot is recorded the way it happens in real
-        // life. Squaring the skill term lets lead guards and point-centers rack
-        // up double-digit assists instead of the floor spreading them evenly.
-        const assistWeights = otherPlayers.map((p) => {
-          const skill = p.ratings.passing + p.ratings.offensiveIQ * 0.3;
-          const tendency = 1 + p.tendencies.assistRate * 3;
-          const initiatorBonus = p.id === initiator.id ? 2.4 : 1;
-          return Math.max(1, Math.pow(skill, 2.6) * tendency * initiatorBonus);
-        });
-        assister = state.rng.weightedChoice(otherPlayers, assistWeights);
-        desc += ` (assist: ${assister.firstName} ${assister.lastName})`;
-      }
+    // The ONLY assist source is the chain: the player who threw the pass into
+    // this make is credited. No pass → no assist (a self-created shot).
+    if (assister) {
+      desc += ` (assist: ${assister.firstName} ${assister.lastName})`;
     }
 
-    const event = createEvent(state, newClock, playType, primaryPlayer,
+    const event = createEvent(state, shotClockState, finisherPlayType, finisher,
       shotResult.fouled ? 'and_one' : 'made_shot', desc);
     event.shotZone = shotZone;
     event.shotMade = true;
     event.points = shotResult.points;
     if (assister) event.assistPlayerId = assister.id;
 
-    const updatedState = updateState(newState, newClock, event);
-    addShotStats(updatedState, primaryPlayer.id, shotZone, true, false);
+    const updatedState = updateState(newState, shotClockState, event);
+    addShotStats(updatedState, finisher.id, shotZone, true, false);
     addScore(updatedState, isHome, shotResult.points);
     if (assister) addAssistStat(updatedState, assister.id);
 
     // And-one
     if (shotResult.fouled) {
-      const ftResult = resolveFreeThrows(primaryPlayer, primaryFatigue, 1, state.rng);
-      addFreeThrowStats(updatedState, primaryPlayer.id, ftResult.made, ftResult.attempted);
-      addFoulStat(updatedState, defender.id);
+      const ftResult = resolveFreeThrows(finisher, finisherFatigue, 1, state.rng);
+      addFreeThrowStats(updatedState, finisher.id, ftResult.made, ftResult.attempted);
+      addFoulStat(updatedState, finisherDefender.id);
       addTeamFoul(updatedState, !isHome, state.clock.quarter);
       addScore(updatedState, isHome, ftResult.made);
       totalPoints += ftResult.made;
-      event.foulPlayerId = defender.id;
+      event.foulPlayerId = finisherDefender.id;
       event.freeThrowsMade = ftResult.made;
       event.freeThrowsAttempted = ftResult.attempted;
       event.points = totalPoints;
@@ -355,13 +478,13 @@ export function simulatePossession(
   }
 
   // Missed shot
-  const desc = `${primaryPlayer.firstName} ${primaryPlayer.lastName} misses ${describeShotZone(shotZone)}`;
-  const event = createEvent(state, newClock, playType, primaryPlayer, 'missed_shot', desc);
+  const desc = `${finisher.firstName} ${finisher.lastName} misses ${describeShotZone(shotZone)}`;
+  const event = createEvent(state, shotClockState, finisherPlayType, finisher, 'missed_shot', desc);
   event.shotZone = shotZone;
   event.shotMade = false;
 
-  const updatedState = updateState(newState, newClock, event);
-  addShotStats(updatedState, primaryPlayer.id, shotZone, false, false);
+  const updatedState = updateState(newState, shotClockState, event);
+  addShotStats(updatedState, finisher.id, shotZone, false, false);
 
   // Rebound
   const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
@@ -382,6 +505,49 @@ export function simulatePossession(
     return { state: updatedState, switchPossession: false, isDeadBall: false };
   }
   return { state: updatedState, switchPossession: true, isDeadBall: false };
+}
+
+// --- Ball-movement chain helpers -------------------------------------------
+
+// The best ball-hawk on the floor, used to attribute steals on a stolen pass and
+// to scale per-pass bad-pass risk. Mirrors the read in turnover.ts.
+function bestStealer(defenders: Player[], fatigue: Map<string, number>): Player {
+  return defenders.reduce((best, d) => {
+    const f = fatigue.get(d.id) ?? 0;
+    const fb = fatigue.get(best.id) ?? 0;
+    const r = getEffectiveRating(d.ratings.steal, f) + getEffectiveRating(d.ratings.defensiveIQ, f);
+    const rb = getEffectiveRating(best.ratings.steal, fb) + getEffectiveRating(best.ratings.defensiveIQ, fb);
+    return r > rb ? d : best;
+  });
+}
+
+// Choose the teammate the ball moves to, weighted toward the open shooter via the
+// spacing model's openManWeight. When a live advantage is being exploited the
+// weighting sharpens (squared) toward the shot most worth creating — but the shot
+// is still resolved from the receiver's own ratings, so a non-shooter is never
+// fed an "open three" the engine would mis-score as a quality look.
+function selectReceiver(candidates: Player[], advantageActive: boolean, rng: SeededRNG): Player {
+  const weights = candidates.map((p) => {
+    const w = openManWeight(p);
+    return advantageActive ? w * w : w;
+  });
+  return rng.weightedChoice(candidates, weights);
+}
+
+// The action the receiver finishes with, in character: a shooter spots up, a big
+// cuts to the rim, a driver attacks the closeout (a drive or a pull-up), a
+// connector takes the handoff. The blend is tuned so the post-pass shot mix
+// mirrors the league rim/mid/three shares instead of funneling every kick-out
+// into a catch-and-shoot three.
+function selectReceiverPlayType(receiver: Player, rng: SeededRNG): PlayType {
+  const types: PlayType[] = ['spot_up', 'cut', 'isolation', 'handoff'];
+  const weights = [
+    0.24 + receiver.tendencies.spotUpFreq * 2.0 + receiver.ratings.outsideShooting / 80,
+    0.38 + receiver.tendencies.cutFreq * 2.0 + receiver.ratings.interiorScoring / 80,
+    0.66 + receiver.tendencies.isolationFreq * 1.5 + receiver.ratings.ballHandling / 80, // attack the closeout
+    0.30 + receiver.tendencies.handoffFreq * 2.0,
+  ];
+  return rng.weightedChoice(types, weights);
 }
 
 // Helper functions for updating game state

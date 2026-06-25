@@ -36,18 +36,6 @@ export const PLAY_TYPE_EFFICIENCY_MOD: Record<PlayType, number> = {
   putback: 0.10,
 };
 
-export const PLAY_TYPE_ASSIST_RATE: Record<PlayType, number> = {
-  isolation: 0.12,
-  pick_and_roll: 0.52,
-  post_up: 0.18,
-  spot_up: 0.93,
-  transition: 0.58,
-  cut: 0.97,
-  off_screen: 0.90,
-  handoff: 0.86,
-  putback: 0.06,
-};
-
 // Shot zone probabilities by play type
 export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
   isolation: [
@@ -264,6 +252,103 @@ export const VERSATILITY_CLAMP = 2.2;
 // rate unchanged. Kept light. The hunt base rate is 0.45; this is bounded so the
 // rate stays in a sane band.
 export const VERSATILITY_HUNT_COEF = 0.085;
+
+// ---------------------------------------------------------------------------
+// Possession ball-movement chain.
+//
+// A possession can develop through additional actions before it ends: an initial
+// action creates an advantage (a beaten/pressured primary, a committed help
+// defender, a double-team) and the offense relocates the ball to exploit it.
+// Quality is keyed to the ADVANTAGE STATE, never the raw pass count.
+// ---------------------------------------------------------------------------
+
+// Hard bound on EXTRA actions after the initial one (initial + up to 2 = 3 total
+// actions). Never exceed.
+export const MAX_EXTRA_PASSES = 2;
+
+// Base probability the ball moves to a teammate after an action of this type,
+// i.e. how much this action tends to generate a pass-to-a-finisher rather than a
+// self-created shot. Seeded from realistic assisted-make rates; the league
+// assist total (~26/team/game) is the binding constraint that pins these. 0-1.
+export const PLAY_TYPE_PASS_RATE: Record<PlayType, number> = {
+  isolation: 0.22,
+  pick_and_roll: 0.74,
+  post_up: 0.34,
+  spot_up: 0.40,    // a spot-up that re-swings; lower than the assisted-make rate
+  transition: 0.62,
+  cut: 0.45,
+  off_screen: 0.74,
+  handoff: 0.70,
+  putback: 0.05,
+};
+
+// Pass-probability modulation, all CENTERED so an average possession lands on the
+// play-type base above. Passing/IQ above the ~40 average raises it; better
+// spacing opens passing lanes; a pressured or doubled primary gives it up more.
+export const PASS_PROB_PASSING_COEF = 0.0045; // per rating-point of (passing+offIQ)/2 above 40
+export const PASS_PROB_SPACING_COEF = 0.05;   // per unit of centered spacing z-score
+export const PASS_PROB_PRESSURE_COEF = 0.9;   // per unit of (contestBonus) pressure
+// A double-team is, by definition, two-on-the-ball — it almost always forces the
+// kick-out. This is the real-kick-out replacement for the old assist-rate fudge.
+export const DOUBLE_TEAM_PASS_PROB = 0.90;
+
+// Per-pass shot-clock cost (a couple of seconds each) and the floor on the
+// initial create segment, so a chain can't claim zero time up front. Seconds.
+export const PASS_TIME_MIN = 2;
+export const PASS_TIME_MAX = 3;
+export const MIN_CREATE_TIME = 2;
+
+// Per-pass bad-pass turnover risk. Deliberately SMALL: it is the per-pass cost
+// that (with the clock cost) keeps mildly-+EV ball movement net-neutral, but it
+// must not be cranked to chase the efficiency target. Centered on passer skill
+// and the best defender's hands. Realistic per-pass bad-pass/steal risk ~1-3%.
+export const PASS_TURNOVER_BASE = 0.003;
+export const PASS_TURNOVER_SKILL_COEF = 0.05; // per (passing+offIQ)/2 normalized about 0.5
+export const PASS_TURNOVER_STEAL_COEF = 0.05; // per best-defender steal normalized about 0.5
+export const PASS_TURNOVER_DT_MULT = 1.7;     // a kick-out out of a double-team is riskier
+export const PASS_TURNOVER_MIN = 0.002;
+export const PASS_TURNOVER_MAX = 0.03;
+
+// Advantage creation. Absent a double-team, a drive-type initial action (rim
+// pressure / collapsing the defense) creates an exploitable advantage more often
+// than a stationary one. Probabilities.
+export const ADVANTAGE_DRIVE_PROB = 0.45;     // iso/PnR/post/cut/transition: a real drive draws help
+export const ADVANTAGE_NONDRIVE_PROB = 0.15;  // spot_up/off_screen/handoff: less collapse
+// A no-advantage reset/swing pass occasionally manufactures a fresh advantage
+// (the extra ball-reversal beats a rotating defense).
+export const ADVANTAGE_CREATE_PROB = 0.10;
+// After an advantage is cashed the defense usually recovers; only sometimes does
+// it persist into a second exploit (a genuine drive-and-kick-and-swing).
+export const ADVANTAGE_PERSIST_PROB = 0.30;
+
+// Shot-quality bonus (additive to make probability) for a pass that CASHES an
+// advantage. Diminishing returns and a hard ceiling, so exploiting an advantage
+// twice does not stack into an unrealistically perfect look. A no-advantage pass
+// gets NONE of this. On perimeter shots the bonus is further scaled by the
+// finisher's shooting (an open look is only good if he can punish it). ~0.03-0.07
+// is the realistic swing in make probability from a clean advantage.
+export const ADVANTAGE_SHOT_BONUS = 0.072;     // first cash
+export const ADVANTAGE_BONUS_DIMINISH = 0.45;  // multiplier on a second cash
+export const ADVANTAGE_BONUS_CEIL = 0.090;     // hard ceiling on the accumulated bonus
+
+// The advantage a pass cashes is only a genuinely OPEN look if the floor is
+// spaced: a kick-out into a packed paint finds a help defender already recovering,
+// while the same pass with shooters spotting the floor is a clean catch. So the
+// realized advantage bonus is scaled by centered lineup spacing — positive
+// (well-spaced) amplifies it, negative (clogged) damps it. CENTERED on league-
+// average spacing (z≈0 ⇒ factor 1), so it is net-neutral on league efficiency;
+// its job is to keep the spacing→efficiency link concentrated where it belongs
+// (good spacing makes ball movement pay off) rather than letting a lone shooter
+// in a non-spaced lineup vacuum up clean kick-outs. Factor clamped to a sane band.
+export const SPACING_ADVANTAGE_COEF = 0.40;
+export const SPACING_ADVANTAGE_MIN = 0.25;
+export const SPACING_ADVANTAGE_MAX = 1.6;
+
+// Late-shot-clock floor: under this many seconds the offense is forced into a
+// worse look because the alternative is a 24-second violation. The penalty is an
+// additive hit to make probability. Threshold ~4s; penalty a few points.
+export const SHOT_CLOCK_PRESSURE_THRESHOLD = 4;
+export const SHOT_CLOCK_RUSH_PENALTY = -0.04;
 
 // League averages for calibration
 export const LEAGUE_AVG = {
