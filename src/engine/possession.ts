@@ -575,18 +575,13 @@ function createEvent(
 }
 
 function updateState(state: GameState, clock: ClockState, event: PlayByPlayEvent): GameState {
-  const newState = { ...state, clock };
-
-  // Update fatigue for all on-court players
-  const allOnCourt = [...state.homeLineup, ...state.awayLineup];
-  const newFatigue = new Map(state.fatigue);
-  for (const id of allOnCourt) {
-    // Fatigue is updated in the main game loop
-  }
-  newState.fatigue = newFatigue;
-  newState.playByPlay = [...state.playByPlay, event];
-
-  return newState;
+  // Fatigue is mutated in place by the main game loop, so the shared map carries
+  // through unchanged — no per-event copy needed. The play-by-play is only ever
+  // read forward (and discarded with its predecessor state each possession), so
+  // append in place instead of rebuilding the array every event (was O(n^2) over
+  // a game).
+  state.playByPlay.push(event);
+  return { ...state, clock };
 }
 
 function addScore(state: GameState, isHome: boolean, points: number): void {
