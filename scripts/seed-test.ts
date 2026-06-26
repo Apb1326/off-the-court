@@ -1,5 +1,6 @@
 import { Player, Position, PlayerRatings, PlayerTendencies, PerGameStats } from '../src/models/player';
 import { Team, NBA_TEAMS } from '../src/models/team';
+import { derivePotential } from '../src/ratings';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -396,7 +397,7 @@ function generatePlayerFromArchetype(
 ): Player {
   const ratings = generateRatings(data);
   const tendencies = generateTendencies(data);
-  const potential = generatePotential(ratings, data.age);
+  const potential = derivePotential(ratings, data.age, data.exp);
   const stats = generateCareerStats(data);
 
   return {
@@ -461,21 +462,6 @@ function generateRatings(data: typeof TEAM_ROSTERS['BOS'][0]): PlayerRatings {
     stamina: scale(Math.min(8, data.ppg / 3)),
     durability: scale(0),
   };
-}
-
-function generatePotential(current: PlayerRatings, age: number): PlayerRatings {
-  const pot = { ...current };
-  let mult = 1.0;
-  if (age <= 22) mult = 1.20;
-  else if (age <= 25) mult = 1.10;
-  else if (age <= 28) mult = 1.03;
-  else if (age <= 32) mult = 0.98;
-  else mult = 0.93;
-
-  for (const key of Object.keys(pot) as (keyof PlayerRatings)[]) {
-    pot[key] = Math.max(1, Math.min(80, Math.round(pot[key] * mult)));
-  }
-  return pot;
 }
 
 function generateTendencies(data: typeof TEAM_ROSTERS['BOS'][0]): PlayerTendencies {

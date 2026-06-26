@@ -66,27 +66,64 @@ export function deriveTendencies(raw: RawPlayerStats): PlayerTendencies {
   };
 }
 
+// Age brackets: [<=22, <=25, <=28, <=32, >32]
+// Skills are learnable and decline slowly; physical attributes peak earlier
+// and decline faster; athleticism is the most age-sensitive of all.
+const SKILL_MULT       = [1.30, 1.15, 1.05, 0.98, 0.92];
+const PHYSICAL_MULT    = [1.15, 1.08, 1.02, 0.93, 0.82];
+const ATHLETICISM_MULT = [1.10, 1.05, 1.00, 0.90, 0.78];
+const DURABILITY_MULT  = [1.05, 1.03, 1.00, 0.97, 0.93];
+
+function ageBracket(age: number): number {
+  if (age <= 22) return 0;
+  if (age <= 25) return 1;
+  if (age <= 28) return 2;
+  if (age <= 32) return 3;
+  return 4;
+}
+
+/**
+ * Derive a player's potential (ceiling) ratings from their current ratings and age.
+ *
+ * Different rating categories age along different curves: learnable skills
+ * (shooting, passing, IQ, defensive instincts) keep improving into the late 20s
+ * and decline slowly; physical attributes peak in the mid-20s and fall off
+ * faster; raw athleticism is the most age-sensitive of all; durability tracks a
+ * player's record and barely moves. Applying one uniform multiplier to every
+ * rating — the old behavior — wrongly gave a young rim-runner the same
+ * athleticism ceiling as his interior-scoring ceiling, and let an aging veteran's
+ * athleticism stay as high as his passing.
+ *
+ * Archetype-specific upside is implicit: a high current rating produces a high
+ * ceiling and a low one a low ceiling, so no archetype parameter is needed.
+ *
+ * `experience` is accepted for forward compatibility but is currently unused.
+ */
 export function derivePotential(
   currentRatings: PlayerRatings,
   age: number,
-  experience: number,
+  _experience: number,
 ): PlayerRatings {
-  const potential: PlayerRatings = { ...currentRatings };
-
-  // Young players have more upside
-  let upsideMultiplier: number;
-  if (age <= 22) upsideMultiplier = 1.25;
-  else if (age <= 25) upsideMultiplier = 1.12;
-  else if (age <= 28) upsideMultiplier = 1.03;
-  else if (age <= 32) upsideMultiplier = 0.97;
-  else upsideMultiplier = 0.90;
-
-  for (const key of Object.keys(potential) as (keyof PlayerRatings)[]) {
-    const current = potential[key];
-    potential[key] = clampRating(Math.round(current * upsideMultiplier));
-  }
-
-  return potential;
+  const b = ageBracket(age);
+  return {
+    outsideShooting:   clampRating(Math.round(currentRatings.outsideShooting   * SKILL_MULT[b])),
+    midrangeShooting:  clampRating(Math.round(currentRatings.midrangeShooting  * SKILL_MULT[b])),
+    interiorScoring:   clampRating(Math.round(currentRatings.interiorScoring   * SKILL_MULT[b])),
+    freeThrowShooting: clampRating(Math.round(currentRatings.freeThrowShooting * SKILL_MULT[b])),
+    ballHandling:      clampRating(Math.round(currentRatings.ballHandling      * SKILL_MULT[b])),
+    passing:           clampRating(Math.round(currentRatings.passing           * SKILL_MULT[b])),
+    offensiveIQ:       clampRating(Math.round(currentRatings.offensiveIQ       * SKILL_MULT[b])),
+    perimeterDefense:  clampRating(Math.round(currentRatings.perimeterDefense  * SKILL_MULT[b])),
+    interiorDefense:   clampRating(Math.round(currentRatings.interiorDefense   * SKILL_MULT[b])),
+    defensiveIQ:       clampRating(Math.round(currentRatings.defensiveIQ       * SKILL_MULT[b])),
+    steal:             clampRating(Math.round(currentRatings.steal             * SKILL_MULT[b])),
+    block:             clampRating(Math.round(currentRatings.block             * SKILL_MULT[b])),
+    strength:          clampRating(Math.round(currentRatings.strength          * PHYSICAL_MULT[b])),
+    rebounding:        clampRating(Math.round(currentRatings.rebounding        * PHYSICAL_MULT[b])),
+    stamina:           clampRating(Math.round(currentRatings.stamina           * PHYSICAL_MULT[b])),
+    athleticism:       clampRating(Math.round(currentRatings.athleticism       * ATHLETICISM_MULT[b])),
+    durability:        clampRating(Math.round(currentRatings.durability         * DURABILITY_MULT[b])),
+  };
 }
 
 // Individual rating derivation functions
