@@ -33,6 +33,53 @@ export interface GameSummary {
   winnerId: string;
 }
 
+/**
+ * A temporal, season-level injury record. Injuries are not permanent player
+ * attributes — they live on the SeasonState (out from one game through a later
+ * one), so `player.health` is never mutated by the season loop.
+ */
+export interface PlayerInjury {
+  playerId: string;
+  teamId: string;
+  injuryType: string;        // human-readable: 'ankle sprain', 'hamstring', etc.
+  severity: 'day_to_day' | 'out' | 'season_ending';
+  gamesRemaining: number;    // counts down by team-games-played, not calendar days
+  startDate: string;         // YYYY-MM-DD when the injury occurred
+}
+
+/**
+ * A short post-recovery vulnerability window. After an injury heals, the player
+ * is back on the floor but carries elevated re-injury risk for a few games,
+ * biased toward the same body region (soft-tissue injuries especially recur).
+ * This is separate from `injuries` — a player with a recovery is healthy and
+ * available, just fragile.
+ */
+export interface PlayerRecovery {
+  playerId: string;
+  teamId: string;
+  region: string;      // body region still vulnerable (from the healed injury)
+  gamesLeft: number;   // games remaining in the heightened-risk window
+}
+
+/**
+ * An immutable, append-only record of one injury that occurred. Stored per season
+ * on SeasonState.injuryHistory. Designed to roll up into a career history later:
+ * each entry is fully self-contained — it carries its own `season` and a finalized
+ * `gamesMissed` — so a multi-season/career log is just these entries concatenated
+ * across seasons, with no dependency on any season's live schedule to interpret.
+ */
+export interface InjuryHistoryEntry {
+  id: string;            // unique within a season: `${playerId}|${startDate}`
+  season: string;        // seasonId — the key that makes multi-season aggregation trivial
+  playerId: string;
+  teamId: string;
+  injuryType: string;
+  region: string;
+  severity: PlayerInjury['severity'];
+  startDate: string;     // YYYY-MM-DD the injury occurred
+  gamesMissed: number;   // finalized games missed, capped by season length
+}
+
 /** A persisted, in-progress season the user advances through day by day. */
 export interface SeasonState {
   seasonId: string;
@@ -45,6 +92,9 @@ export interface SeasonState {
   standings: TeamStanding[];
   playerStats: PlayerSeasonStats[];
   results: GameSummary[];
+  injuries: PlayerInjury[];
+  recoveries: PlayerRecovery[];
+  injuryHistory: InjuryHistoryEntry[];
   gamesPlayed: number;
   totalGames: number;
 }

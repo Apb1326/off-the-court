@@ -133,7 +133,7 @@ function getPlayerOverall(player: Player | undefined): number {
   return Object.values(player.ratings).reduce((a, b) => a + b, 0) / 17;
 }
 
-function findBestReplacement(
+export function findBestReplacement(
   playerOutId: string,
   available: string[],
   players: Map<string, Player>,
