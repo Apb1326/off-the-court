@@ -145,6 +145,11 @@ export function createSeasonState(
  * Simulates every unplayed game dated after `currentDate` and on/before
  * `targetDate`, folding results into the standings and player stats in place.
  * Returns just the games played in this advance (for the day's recap).
+ *
+ * Advancement is monotonic and idempotent: `currentDate` never moves backward,
+ * and a game whose ID already appears in `state.results` is never re-simulated —
+ * so even if persisted state is inconsistent (a stale `currentDate`, a replayed
+ * request), completed games cannot be played twice.
  */
 export function advanceSeason(
   state: SeasonState,
@@ -153,6 +158,10 @@ export function advanceSeason(
   players: Player[],
 ): GameSummary[] {
   const target = targetDate > state.endDate ? state.endDate : targetDate;
+
+  // Second line of defense against replay: the set of already-recorded game IDs.
+  // A game in here is never simulated again, regardless of dates.
+  const completed = new Set(state.results.map((r) => r.id));
 
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const playersByTeam = new Map<string, Player[]>();
@@ -201,6 +210,9 @@ export function advanceSeason(
   for (const sg of state.schedule) {
     const date = sg.date!;
     if (date <= state.currentDate || date > target) continue;
+    // Idempotency: never replay a game we've already recorded, even if the date
+    // window above would otherwise admit it (e.g. a rewound currentDate).
+    if (completed.has(sg.id)) continue;
 
     const home = teamById.get(sg.homeTeamId);
     const away = teamById.get(sg.awayTeamId);
@@ -302,11 +314,14 @@ export function advanceSeason(
     // otherwise back-to-back/dense-stretch risk would depend on how far the user
     // advances at once, breaking injury determinism.
     state.results.push(summary);
+    completed.add(sg.id);
     played.push(summary);
   }
 
   state.gamesPlayed += played.length;
-  state.currentDate = target;
+  // Monotonic: only ever move the clock forward. A backward target leaves the
+  // season date (and everything else) untouched.
+  if (target > state.currentDate) state.currentDate = target;
   return played;
 }
 
