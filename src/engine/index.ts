@@ -5,7 +5,7 @@ import { SeededRNG } from '@/lib/rng';
 import { ClockState, initClock, isEndOfPeriod, nextPeriod, isRegulationOver, resetShotClock } from './clock';
 import { accumulateFatigue, recoverFatigue } from './fatigue';
 import { GameState, simulatePossession } from './possession';
-import { checkSubstitutions } from './substitution';
+import { checkSubstitutions, findBestReplacement } from './substitution';
 import { StatsAccumulator } from './stats-accumulator';
 import { POINTS_BY_ZONE } from './constants';
 
@@ -25,9 +25,16 @@ export function simulateGame(
   seasonId: string,
   date: string,
   seed?: number,
+  // Optional forced mid-game exits: playerId -> elapsed game seconds at which the
+  // player leaves and does not return (used for in-game injuries). Empty by
+  // default, so callers that don't pass it (calibration, determinism) get the
+  // exact same game as before.
+  inGameExits: Map<string, number> = new Map(),
 ): SimulationResult {
   const rng = new SeededRNG(seed ?? Date.now());
   const stats = new StatsAccumulator();
+  // Players removed from the game by a forced exit — never re-enter.
+  const disabledPlayers = new Set<string>();
 
   const playerMap = new Map<string, Player>();
   for (const p of [...homePlayers, ...awayPlayers]) {
@@ -162,6 +169,7 @@ export function simulateGame(
       processSubstitutions(
         gameState, homeTeam, awayTeam, playerMap,
         homeBench, awayBench, stats, totalGameSeconds,
+        inGameExits, disabledPlayers,
       );
     }
 
@@ -304,8 +312,17 @@ function processSubstitutions(
   homeBench: string[],
   awayBench: string[],
   stats: StatsAccumulator,
-  _gameSeconds: number,
+  gameSeconds: number,
+  inGameExits: Map<string, number>,
+  disabled: Set<string>,
 ): void {
+  // Forced mid-game exits (injuries) first, so the player is gone before the
+  // fatigue/foul rotation runs. Only does work when inGameExits is non-empty.
+  if (inGameExits.size > 0) {
+    forceExits(state, homeTeam, state.homeLineup, homeBench, playerMap, stats, gameSeconds, inGameExits, disabled);
+    forceExits(state, awayTeam, state.awayLineup, awayBench, playerMap, stats, gameSeconds, inGameExits, disabled);
+  }
+
   const margin = Math.abs(state.homeScore - state.awayScore);
 
   // Home subs
@@ -341,6 +358,47 @@ function processSubstitutions(
       const benchIdx = awayBench.indexOf(sub.playerIn);
       if (benchIdx >= 0) awayBench.splice(benchIdx, 1);
       stats.recordEntry(sub.playerIn, state.homeScore, state.awayScore);
+    }
+  }
+}
+
+// Pulls any player whose forced-exit time has passed. If they're on the floor,
+// the best available bench player replaces them; either way they're added to
+// `disabled` and removed from the rotation so they can't return this game.
+function forceExits(
+  state: GameState,
+  team: Team,
+  lineup: string[],
+  bench: string[],
+  playerMap: Map<string, Player>,
+  stats: StatsAccumulator,
+  gameSeconds: number,
+  inGameExits: Map<string, number>,
+  disabled: Set<string>,
+): void {
+  // Snapshot, since we mutate lineup/bench below.
+  for (const id of [...lineup, ...bench]) {
+    const exitAt = inGameExits.get(id);
+    if (exitAt === undefined || disabled.has(id) || gameSeconds < exitAt) continue;
+
+    disabled.add(id);
+    const lineupIdx = lineup.indexOf(id);
+    if (lineupIdx >= 0) {
+      stats.recordExit(id, state.homeScore, state.awayScore, state.homeTeamId);
+      const candidates = bench.filter((b) => !disabled.has(b));
+      const replacement = findBestReplacement(id, candidates, playerMap, state.fatigue, state.fouls, team.rotation);
+      if (replacement) {
+        lineup[lineupIdx] = replacement;
+        const benchIdx = bench.indexOf(replacement);
+        if (benchIdx >= 0) bench.splice(benchIdx, 1);
+        stats.recordEntry(replacement, state.homeScore, state.awayScore);
+      } else {
+        lineup.splice(lineupIdx, 1); // no one available — team plays a man down (rare)
+      }
+    } else {
+      // On the bench at exit time: just make them unavailable.
+      const benchIdx = bench.indexOf(id);
+      if (benchIdx >= 0) bench.splice(benchIdx, 1);
     }
   }
 }

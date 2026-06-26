@@ -130,6 +130,78 @@ export const FATIGUE_PERFORMANCE_PENALTY = 0.15;
 export const FATIGUE_SUB_THRESHOLD = 0.40;
 export const FATIGUE_FORCE_SUB_THRESHOLD = 0.70;
 
+// Injury system. Base per-game injury probability for a player with durability=40
+// (league average). Tuned so an average player misses ~8-10 games per 82-game season:
+// ~1.25 injury events × ~7 games average recovery = ~8.75 games missed.
+export const INJURY_BASE_RATE = 0.0152;
+
+// Durability modifies the base rate: rate = INJURY_BASE_RATE * (40 / durability).
+// A durability-70 player gets ~57% of the base rate; durability-20 gets 200%.
+// Clamped to [0.004, 0.055] so pathological ratings don't produce impossible outcomes.
+export const INJURY_RATE_MIN = 0.004;
+export const INJURY_RATE_MAX = 0.055;
+
+// Age modifier: players 30+ are more fragile. Applied as a multiplier on top of
+// the durability-adjusted rate. Under 30: 1.0. Ages 30-33: 1.15. Ages 34+: 1.35.
+export const INJURY_AGE_30_MULT = 1.15;
+export const INJURY_AGE_34_MULT = 1.35;
+
+// Back-to-back multiplier: playing on consecutive calendar days raises injury risk.
+export const INJURY_BACK_TO_BACK_MULT = 1.18;
+
+// Dense-stretch multiplier: schedule congestion (e.g. 4 games in 5 nights) is a
+// bigger real injury driver than a lone back-to-back. If a team has played
+// INJURY_DENSE_STRETCH_GAMES or more games in the trailing
+// INJURY_DENSE_STRETCH_WINDOW_DAYS calendar days, risk is bumped on top of any
+// back-to-back multiplier. 3 games in the prior 4 days = this is the 4th in 5
+// nights.
+export const INJURY_DENSE_STRETCH_MULT = 1.15;
+export const INJURY_DENSE_STRETCH_WINDOW_DAYS = 4;
+export const INJURY_DENSE_STRETCH_GAMES = 3;
+
+// Workload: players who log heavy minutes carry modestly more injury risk. Risk
+// scales with planned minutes (the rotation's minuteTargets) on a diminishing
+// (square-root) curve relative to a league-average load, clamped tight so it stays
+// a secondary factor — a max-minutes star is only ~20% riskier than an
+// average-minutes player, NOT injured constantly, and durability still dominates.
+// Centered on the league-average minute load so the league-wide rate is unchanged.
+export const INJURY_WORKLOAD_REF_MINUTES = 20; // ~league-average rotation minutes; multiplier = 1.0 here
+export const INJURY_WORKLOAD_EXP = 0.5;        // diminishing returns on minutes
+export const INJURY_WORKLOAD_MULT_MIN = 0.8;
+export const INJURY_WORKLOAD_MULT_MAX = 1.2;
+
+// Injury clustering: beyond static durability, some players have a fragile season
+// where injuries pile up ("snakebit"). Each player gets a hidden, season-stable
+// fragility multiplier on their injury rate, drawn deterministically from the
+// season seed. This spread controls how strong that clustering is; the multiplier
+// is normalized so the league-wide rate is unchanged (it redistributes, not
+// inflates). exp(±spread) ≈ ±35% at the tails for spread 0.35.
+export const INJURY_FRAGILITY_SPREAD = 0.35;
+
+// Re-injury / recurrence: for a few games after returning from an injury, a
+// player carries elevated risk (deconditioned, compensating, not fully healed),
+// concentrated on the same body region — soft-tissue injuries especially recur.
+// The rate bump peaks on the first game back and decays linearly to none over the
+// window. The region bias multiplies the selection weight of same-region injury
+// types so a recurrence tends to be the same injury (a hamstring re-pulls).
+export const INJURY_RECURRENCE_WINDOW = 5;        // games of heightened risk after returning
+export const INJURY_RECURRENCE_MULT = 1.6;        // peak rate multiplier (first game back)
+export const INJURY_RECURRENCE_REGION_BIAS = 3.0; // weight bias toward re-injuring the same region
+
+// In-game injuries: acute injuries (sprains, strains, etc.) happen during play —
+// the player exits partway through the game rather than sitting it out entirely.
+// The exit moment is drawn uniformly in this elapsed-game-time window (seconds;
+// regulation is 2880s). ~6 to ~44 minutes in, so they always log some minutes.
+export const INJURY_INGAME_EXIT_MIN_SEC = 360;
+export const INJURY_INGAME_EXIT_MAX_SEC = 2640;
+
+// Minimum available players required per team before a game. If injuries reduce a
+// team below this, the least-severe injured players are returned to play (emergency
+// hardship — mirrors the real NBA's minimum of 8 dressed players). 8 (not 5) also
+// keeps the substitution/fatigue rotation working: with only 5 available the bench is
+// empty, checkSubstitutions no-ops, and those 5 would play all 48 minutes.
+export const INJURY_MIN_HEALTHY_ROSTER = 8;
+
 // Rebounding. Real offensive-rebound rate is ~25%, but the per-miss live-ball
 // share that turns into a *player* rebound is lower, so 0.22 lands team OREB
 // near the real ~10/game (vs ~24% true rate including tip-outs).
