@@ -266,6 +266,11 @@ export const VERSATILITY_HUNT_COEF = 0.085;
 // actions). Never exceed.
 export const MAX_EXTRA_PASSES = 2;
 
+// Minimum per-player base weight in selectPrimaryPlayer. estimateUsageRate
+// already floors usageRate at 0.10, so this only fires on pathological
+// posWeight * skillFit combinations. Must be > 0 to keep weightedChoice sane.
+export const PRIMARY_PLAYER_MIN_WEIGHT = 0.01;
+
 // Base probability the ball moves to a teammate after an action of this type,
 // i.e. how much this action tends to generate a pass-to-a-finisher rather than a
 // self-created shot. Seeded from realistic assisted-make rates; the league
