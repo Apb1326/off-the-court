@@ -9,6 +9,7 @@ import {
   SPACING_THREE_FREQ_COEF,
   SPACING_RIM_DETER_RELIEF_COEF,
   VERSATILITY_HUNT_COEF,
+  PRIMARY_PLAYER_MIN_WEIGHT,
 } from './constants';
 import { computeVersatility } from './spacing';
 
@@ -155,15 +156,20 @@ export function selectPrimaryPlayer(
   rng: SeededRNG,
 ): Player {
   const weights = onCourt.map((p) => {
-    // Compress usage range: sqrt flattens the curve so stars don't dominate
-    let w = Math.sqrt(p.tendencies.usageRate) * 50;
+    // Base weight is the player's usage rate — the fraction of possessions he
+    // consumes. This preserves the real proportional distribution: a 35% usage
+    // star gets ~35% of possessions on a balanced lineup, and on a star-heavy
+    // lineup where rates sum above 1.0, each player's share is compressed
+    // proportionally (the one-ball constraint). posWeight and skillFit then
+    // tune the distribution by play type on top.
+    let w = p.tendencies.usageRate;
     const posWeight = POSITION_PLAY_WEIGHTS[p.position]?.[playType] ?? 0.8;
     w *= posWeight;
     // Skill fit: the player finishing a play should be suited to it. This keeps
     // shooters taking spot-up/off-screen threes and bigs taking post-ups,
     // instead of a center launching catch-and-shoot threes.
     w *= playTypeSkillFit(p, playType);
-    return Math.max(1, w);
+    return Math.max(PRIMARY_PLAYER_MIN_WEIGHT, w);
   });
 
   return rng.weightedChoice(onCourt, weights);
