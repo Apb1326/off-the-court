@@ -162,6 +162,16 @@ export function simulateGame(
     if (lastEvent) {
       updateMomentum(gameState, isHome, lastEvent);
       recordEventStats(stats, lastEvent);
+      // Mirror the foul into the live foul map so checkSubstitutions can foul a
+      // player out. Box-score fouls are still derived from the event stream in
+      // recordEventStats above; this is the in-game state, not a second stats
+      // system. Keyed on foulPlayerId so every foul-bearing outcome (shooting,
+      // and-one, intentional, penalty, non-shooting) counts exactly once — each
+      // possession emits a single event, so this runs once per emitted foul.
+      if (lastEvent.foulPlayerId) {
+        const foulerId = lastEvent.foulPlayerId;
+        gameState.fouls.set(foulerId, (gameState.fouls.get(foulerId) ?? 0) + 1);
+      }
     }
 
     // Substitutions on dead balls

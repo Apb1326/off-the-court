@@ -74,7 +74,12 @@ export function checkSubstitutions(
   // Check if any starters are on the bench and rested — bring them back
   const startersOnBench = rotation.starters.filter((id) => benchSet.has(id));
   if (startersOnBench.length > 0) {
-    const restedStarters = startersOnBench.filter((id) => (fatigue.get(id) ?? 0) < 0.25);
+    // A rested starter can return — but never one who has fouled out. Without
+    // this foul guard a disqualified starter would be re-inserted and could
+    // exceed MAX_FOULS, defeating the foul-out the mandatory-sub loop just made.
+    const restedStarters = startersOnBench.filter(
+      (id) => (fatigue.get(id) ?? 0) < 0.25 && (fouls.get(id) ?? 0) < MAX_FOULS,
+    );
 
     if (restedStarters.length > 0) {
       // Find the most fatigued/lowest-rated on-court players to swap out
