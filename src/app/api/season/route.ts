@@ -110,11 +110,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ state: clientState(state), advanced: 0 });
   }
 
-  const target = resolveTarget(state, body?.mode ?? 'day', body?.date);
+  const mode: string = body?.mode ?? 'day';
+
+  // Explicit dates are the only client-supplied target; validate their shape.
+  if (mode === 'date' && !isValidDate(body?.date)) {
+    return NextResponse.json(
+      { error: 'mode "date" requires a valid date in YYYY-MM-DD format' },
+      { status: 400 },
+    );
+  }
+
+  const target = resolveTarget(state, mode, body?.date);
+
+  // Monotonic advancement: refuse to rewind the season. Replaying completed
+  // games by advancing to an earlier date is the bug this guards against.
+  if (target < state.currentDate) {
+    return NextResponse.json(
+      {
+        error: `Cannot advance to ${target}: it is before the current season date ${state.currentDate}. Season advancement only moves forward.`,
+      },
+      { status: 400 },
+    );
+  }
+
   const played = advanceSeason(state, target, teams, players);
   await store.saveSeason(state);
 
   return NextResponse.json({ state: clientState(state), advanced: played.length });
+}
+
+/** True only for a real calendar date in strict YYYY-MM-DD form. */
+function isValidDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(value + 'T00:00:00Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
 
 function resolveTarget(state: SeasonState, mode: string, date?: string): string {
