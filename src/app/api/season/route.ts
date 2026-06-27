@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStore } from '@/data/store';
+import { getSaveStore } from '@/data/saves';
 import { createSeasonState, advanceSeason } from '@/engine/season';
 import { addDays } from '@/engine/calendar';
 import { SeasonState } from '@/models/season';
+import { Team } from '@/models/team';
+import { Player } from '@/models/player';
+import { SaveFile, derivePhase } from '@/models/save';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -24,6 +28,7 @@ function clientState(state: SeasonState) {
     startDate: state.startDate,
     endDate: state.endDate,
     currentDate: state.currentDate,
+    phase: derivePhase(state),
     gamesPlayed: state.gamesPlayed,
     totalGames: state.totalGames,
     seasonOver: state.gamesPlayed >= state.totalGames,
@@ -79,32 +84,78 @@ function nextGameDate(state: SeasonState): string | null {
   return min;
 }
 
-export async function GET() {
+/** Wrap a season + its rosters into a fresh SaveFile (timestamps set by the store on write). */
+function toSaveFile(season: SeasonState, teams: Team[], players: Player[]): SaveFile {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 0, // set by the store on write
+    phase: derivePhase(season),
+    season,
+    teams,
+    players,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Resolve the live working save. If none exists yet but a legacy `data/season.json`
+ * is present (single-save era), import it once into the auto-save slot — wrapping it
+ * with the current global rosters — so existing progress isn't lost.
+ */
+async function loadOrImportActive(): Promise<SaveFile | null> {
+  const saves = getSaveStore();
+  const active = await saves.loadActiveSave();
+  if (active) return active;
+
   const store = getStore();
-  const state = await store.loadSeason();
-  if (!state) return NextResponse.json({ state: null });
-  return NextResponse.json({ state: clientState(state) });
+  const legacy = await store.loadSeason();
+  if (!legacy) return null;
+
+  const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
+  const file = toSaveFile(legacy, teams, players);
+  await saves.autoSave(file);
+  return file;
+}
+
+export async function GET() {
+  const file = await loadOrImportActive();
+  if (!file) return NextResponse.json({ state: null });
+  return NextResponse.json({ state: clientState(file.season) });
 }
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const action: string = body?.action ?? 'advance';
-  const store = getStore();
-
-  const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
-  if (teams.length < 2) {
-    return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
-  }
+  const saves = getSaveStore();
 
   if (action === 'new') {
-    const state = createSeasonState(teams, players, { seed: body?.seed });
-    await store.saveSeason(state);
-    return NextResponse.json({ state: clientState(state), advanced: 0 });
+    const start: string = body?.start ?? 'season';
+    if (start === 'offseason') {
+      return NextResponse.json(
+        { error: 'Offseason start not yet implemented' },
+        { status: 501 },
+      );
+    }
+
+    // Snapshot the global roster template into a fresh, independent save.
+    const store = getStore();
+    const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
+    if (teams.length < 2) {
+      return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
+    }
+
+    const season = createSeasonState(teams, players, { seed: body?.seed });
+    const file = toSaveFile(season, teams, players);
+    await saves.autoSave(file);
+    return NextResponse.json({ state: clientState(season), advanced: 0 });
   }
 
-  // advance
-  const state = await store.loadSeason();
-  if (!state) return NextResponse.json({ error: 'No season in progress' }, { status: 400 });
+  // advance — operate on the active save's own state + snapshotted rosters.
+  const file = await loadOrImportActive();
+  if (!file) return NextResponse.json({ error: 'No season in progress' }, { status: 400 });
+
+  const state = file.season;
 
   if (state.gamesPlayed >= state.totalGames) {
     return NextResponse.json({ state: clientState(state), advanced: 0 });
@@ -133,8 +184,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const played = advanceSeason(state, target, teams, players);
-  await store.saveSeason(state);
+  const played = advanceSeason(state, target, file.teams, file.players);
+  // Auto-save after every advance: covers the per-day cadence and any phase
+  // transition (the metadata phase/summary are recomputed on write).
+  await saves.autoSave(file);
 
   return NextResponse.json({ state: clientState(state), advanced: played.length });
 }
