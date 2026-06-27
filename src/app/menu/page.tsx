@@ -12,6 +12,11 @@ interface ActiveState {
   seasonOver: boolean;
 }
 
+interface MenuData {
+  active: ActiveState | null;
+  saves: SaveMetadata[];
+}
+
 const PHASE_LABEL: Record<GamePhase, string> = {
   preseason: 'Preseason',
   regular_season: 'Regular Season',
@@ -54,6 +59,16 @@ function relTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+async function fetchMenuData(): Promise<MenuData> {
+  const seasonRes = await fetch('/api/season').then((r) => r.json()).catch(() => ({ state: null }));
+  const savesRes = await fetch('/api/saves').then((r) => r.json()).catch(() => ({ saves: [] }));
+
+  return {
+    active: seasonRes?.state ?? null,
+    saves: Array.isArray(savesRes?.saves) ? savesRes.saves : [],
+  };
+}
+
 export default function MenuPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -73,15 +88,28 @@ export default function MenuPage() {
   // Sequence season → saves: the season GET imports any legacy save into the
   // autosave slot before we list, so a migrated game shows up immediately.
   const refresh = useCallback(async () => {
-    const seasonRes = await fetch('/api/season').then((r) => r.json()).catch(() => ({ state: null }));
-    const savesRes = await fetch('/api/saves').then((r) => r.json()).catch(() => ({ saves: [] }));
-    setActive(seasonRes?.state ?? null);
-    setSaves(Array.isArray(savesRes?.saves) ? savesRes.saves : []);
+    const data = await fetchMenuData();
+    setActive(data.active);
+    setSaves(data.saves);
   }, []);
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
-  }, [refresh]);
+    let ignore = false;
+
+    fetchMenuData()
+      .then((data) => {
+        if (ignore) return;
+        setActive(data.active);
+        setSaves(data.saves);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const post = async (body: object): Promise<{ ok: boolean; data: Record<string, unknown> }> => {
     const res = await fetch('/api/saves', {
