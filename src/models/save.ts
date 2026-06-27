@@ -4,10 +4,13 @@ import { SeasonState } from './season';
 
 /**
  * Bump when the on-disk shape of a SaveFile changes in a way that older files
- * can't be read as-is. `loadSave` gates on this so a future format can migrate
- * (or reject) old saves instead of silently misreading them.
+ * can't be read as-is. `loadSave` runs `migrateSaveFile` (see data/saves/migrations.ts)
+ * so older saves are upgraded on load rather than silently misread or rejected.
+ *
+ * v1 -> v2 (transactions Phase 1): SeasonState gains `freeAgentPool` and
+ * `transactionLog`; the migration empty-inits both on pre-v2 saves.
  */
-export const SAVE_SCHEMA_VERSION = 1;
+export const SAVE_SCHEMA_VERSION = 2;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star

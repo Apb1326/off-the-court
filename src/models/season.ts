@@ -1,4 +1,5 @@
 import { StatLine } from './game';
+import { TransactionEntry } from './transaction';
 
 export interface ScheduledGame {
   id: string;
@@ -95,6 +96,17 @@ export interface SeasonState {
   injuries: PlayerInjury[];
   recoveries: PlayerRecovery[];
   injuryHistory: InjuryHistoryEntry[];
+  /**
+   * The canonical home for every unsigned player (player ids), established in
+   * transactions Phase 1. A real collection — not a flag on the player. Everything that
+   * releases a player adds them here; signing draws from here.
+   */
+  freeAgentPool: string[];
+  /**
+   * Append-only roster-transaction history (trades, signings, cuts). Entries are
+   * immutable once written; never rewrite one. See `TransactionEntry`.
+   */
+  transactionLog: TransactionEntry[];
   gamesPlayed: number;
   totalGames: number;
 }

@@ -8,6 +8,7 @@ import {
   derivePhase,
   metadataFor,
 } from '@/models/save';
+import { migrateSaveFile } from './migrations';
 
 /** Reserved slot id for the auto-save. Lives alongside manual slots but is never a manual name. */
 export const AUTOSAVE_ID = '__autosave__';
@@ -150,17 +151,18 @@ export class SaveStore {
     return { saves, errors };
   }
 
-  /** Load a full save. Never throws: missing, unparseable, or wrong-version all return ok:false. */
+  /**
+   * Load a full save. Never throws: missing or unparseable returns ok:false. An older save
+   * is migrated up to the current schema on read (see `migrateSaveFile`); only a save from a
+   * *newer*, unknown build is rejected. The migrated file is returned in memory — it is
+   * persisted as the current version on the next write (writeSave stamps SAVE_SCHEMA_VERSION).
+   */
   async loadSave(saveId: string): Promise<LoadResult> {
-    const file = await this.readJson<SaveFile>(this.savePath(saveId));
-    if (!file) return { ok: false, reason: 'missing or unparseable save.json' };
-    if (file.schemaVersion !== SAVE_SCHEMA_VERSION) {
-      return {
-        ok: false,
-        reason: `unsupported save schema version ${file.schemaVersion} (expected ${SAVE_SCHEMA_VERSION})`,
-      };
-    }
-    return { ok: true, file };
+    const raw = await this.readJson<SaveFile>(this.savePath(saveId));
+    if (!raw) return { ok: false, reason: 'missing or unparseable save.json' };
+    const migration = migrateSaveFile(raw);
+    if (!migration.ok) return { ok: false, reason: migration.reason };
+    return { ok: true, file: migration.file };
   }
 
   /** Create a brand-new manual slot from the given state. Returns the new slot's metadata. */
