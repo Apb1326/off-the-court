@@ -12,10 +12,12 @@ Rules for anyone, human or AI, working on the simulation. They exist because the
 
 > AI coding assistants: treat these as hard constraints. When a task appears to require violating one, stop and surface the conflict instead of working around it. Work in small, reviewable diffs, and after any engine change report what you changed, the before/after `npm run profile` deltas, and the A/B result.
 
+> **Scope.** The golden rules and simulation invariants below govern `src/engine` and anything that affects a single game's outcome. Work on the **transactions / GM layer** (trades, contracts, cap, draft) is a separate surface with its own hard rules — see *Transaction-layer rules* near the end of this file and `docs/TRANSACTIONS_ROADMAP.md` for phase sequencing and scope. The determinism rule (#2) applies to **both** surfaces.
+
 ## Golden rules
 
 1. **Simulate from true ratings, never scouted.** The sim resolves from `player.ratings`. The scouted view (`ratings/scouting.ts`) is for the GM-facing UI and AI only. Any simulation path that reads scouted values to decide an outcome is a bug.
-2. **All randomness goes through `SeededRNG`.** Never call `Math.random()` in simulation code. Determinism — same seed → byte-identical box score *and* play-by-play — is load-bearing for calibration and testing.
+2. **All randomness goes through `SeededRNG`.** Never call `Math.random()` in simulation code. Determinism — same seed → byte-identical box score *and* play-by-play — is load-bearing for calibration and testing. This extends beyond the sim: any deterministic generation outside it (migration-time contract/prospect generation, AI tie-breaks) also goes through `SeededRNG`, seeded from a **stable key** (see *Transaction-layer rules*), never `Math.random()`.
 3. **Stats are derived from the `PlayByPlayEvent` stream, never assigned directly.** Emit the event; `recordEventStats` in `engine/index.ts` drives the `StatsAccumulator`. The `addXStats` functions in `possession.ts` are intentional no-op stubs — do not "implement" them or hand-increment a stat line.
 4. **Tunable numbers live in `engine/constants.ts`, annotated.** No magic numbers in engine logic. A new knob goes there with a comment on what it does and its sane range.
 5. **Calibration is the acceptance test.** After any engine change, `npm run profile` must bring every tracked stat back within its tolerance band. A change that "works" but breaks calibration is not done.
@@ -51,6 +53,22 @@ This layer already exists. **Do not rebuild it.**
 - Both are pure arithmetic and centered so a league-average lineup nets ~zero. When adding lineup-level effects, extend this model — don't introduce a parallel additive sum of ratings.
 - Baselines/spreads (`SPACING_BASELINE_OFFBALL_FOUR`, `SPACING_SPREAD`, the versatility params) are derived from the real player pool by `tsx scripts/calibrate-spacing.ts`. Re-derive there rather than hand-editing if the player pool changes materially.
 
+## Transaction-layer rules (`src/transactions`, GM/franchise layer)
+
+These govern the **state-mutation layer on top of `SeasonState`** — trades, signings, cuts, contracts, cap, draft. The sim is untouched by this layer, so the sim-engine acceptance test changes: see the calibration note below. Full phase sequencing and per-phase scope live in `docs/TRANSACTIONS_ROADMAP.md`; read it before starting any transaction-layer phase, and **do not build a later phase's mechanics early.**
+
+- **The validate-then-mutate gate is the only path.** Every transaction passes through one atomic chokepoint: validators run first and **compose** (each an independent predicate returning a unified reason — not nested conditionals); mutation happens only if all pass; nothing is ever half-applied.
+- **Legality ≠ desirability, permanently.** Deterministic, *shared* legality (roster → cap → apron → temporal/NTC) lives in the gate and applies to every trade regardless of proposer. The CPU's valuation judgment lives in `evaluateTradeForCpu` and is desirability-only — it may assume legality already passed. Do not move legality inside the CPU acceptance function.
+- **Derive, don't store.** Payroll derives from contracts; cap status derives from payroll; dead money derives from (original contract + immutable cut event). Never persist a derived number you have to keep in sync. **Documented exceptions are event-set state** — hard-cap status (triggered by a transaction, not computable from payroll) and injuries. Store those, and label them so no one "fixes" them into getters.
+- **The transaction log is append-only.** Never rewrite a log entry. When a later phase makes a past action consequential (e.g. dead money on an earlier cut), derive the consequence from the original immutable event — don't patch the entry.
+- **The free-agent pool is the canonical home for unsigned players** — a real pool in `SeasonState`, not a flag on the player. Everything that releases a player puts them there; everything that signs draws from there.
+- **Trades carry typed assets.** The payload is `TradeAsset[]` per side (players now; picks, cash, pick-swaps later). Keep the shape isolated behind one constructor so adding asset types doesn't rip up the engine.
+- **Deterministic, idempotent migrations.** Every phase that adds persisted state ships a **schema-version bump + migration** from the prior version, plus a `scripts/` round-trip check (load old → migrate → assert invariants → re-serialize). Migration run twice must be a **no-op**. Migration-time generation seeds from a **stable per-player key** (a pure, platform-stable string hash of the id — e.g. FNV-1a; not engine string-hash internals, not key-order-dependent, not folding in mutable fields) on a **dedicated RNG stream**, so it's order-independent and reproducible.
+- **CBA numbers are tunable constants, sourced at implementation.** Matching bands, apron/tax thresholds, exception amounts → named constants in `constants.ts`, taken from the *current* CBA when written, never hardcoded from memory.
+- **No value-pump loops.** Executed trades must be Pareto-sane under a **single shared valuation function** (no net league value created). A pairwise reversal check is insufficient — it misses cyclic (A→B→C→A) and slow-bleed laundering. Per-team desirability may differ; sanity is judged by the shared model.
+
+**Calibration for this layer.** No transaction phase touches the sim, so `npm run profile` and `npm run calibrate` must come back **unchanged** — a diff there is a bug, not a side effect. The transaction layer's real acceptance test is the **multi-season league-balance harness** (`scripts/league-balance.ts`, built in roadmap Phase 5c): from the trade-AI phases on, assert talent dispersion stays bounded, championship distribution stays non-degenerate, and no net league-value creation / oscillating-trade loops appear, all within tolerance of the trade-free baseline.
+
 ## Verification checklist
 
 Run after any engine change and report results:
@@ -59,6 +77,15 @@ Run after any engine change and report results:
 - [ ] `npm run profile` — all tracked stats within tolerance of `LEAGUE_AVG` / the targets. Report before/after deltas; watch assists and turnovers when chain logic changed.
 - [ ] `tsx scripts/test-determinism.ts` — same seed → identical game.
 - [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect.
+
+**For transaction-layer changes, additionally:**
+
+- [ ] `npm run profile` / `npm run calibrate` — **unchanged** vs. an unmodified league (the sim is untouched; any diff is a bug).
+- [ ] Schema bump + migration shipped; `scripts/` round-trip check passes and migration run twice is a no-op.
+- [ ] New validators are composable predicates returning a unified reason; legality stays out of `evaluateTradeForCpu`.
+- [ ] No derived value stored as an independent source of truth (event-set exceptions documented).
+- [ ] (Trade-AI phases) `scripts/league-balance.ts` within tolerance of the trade-free baseline; no value-pump loops.
+- [ ] Scope guard: nothing from a later roadmap phase was built early.
 
 ## What not to do
 
@@ -71,6 +98,10 @@ Run after any engine change and report results:
 - Don't add RNG to `spacing.ts`.
 - Don't scatter tuning numbers through the code — they go in `constants.ts`.
 - Don't ship an engine change without re-running calibration.
+- Don't store a derived value (payroll, cap status, dead money) as its own source of truth — derive it; only documented event-set state (hard-cap status, injuries) is persisted.
+- Don't put legality logic inside `evaluateTradeForCpu`, or rewrite an append-only transaction-log entry.
+- Don't use `Math.random()` or a platform-dependent hash in migrations or AI tie-breaks — `SeededRNG` from a stable key.
+- Don't build a later roadmap phase's mechanics early.
 
 ## Known cleanups
 
