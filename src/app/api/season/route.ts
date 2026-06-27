@@ -3,15 +3,25 @@ import { getStore } from '@/data/store';
 import { getSaveStore } from '@/data/saves';
 import { createSeasonState, advanceSeason } from '@/engine/season';
 import { addDays } from '@/engine/calendar';
-import { SeasonState } from '@/models/season';
+import { SeasonState, getControlledTeamId, normalizeSeasonState } from '@/models/season';
 import { Team } from '@/models/team';
 import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
 
-/** The lean view of a season the calendar UI needs (omits the full schedule). */
-function clientState(state: SeasonState) {
+/**
+ * The lean view of a season the calendar UI needs (omits the full schedule).
+ * `teams` is supplied so the controlled-team id can be validated against the
+ * live roster: a stored id that no longer resolves (a corrupt/edited save) is
+ * reported via `controlledTeamMissing` and reflected as null rather than handed
+ * to the UI as a phantom team.
+ */
+function clientState(state: SeasonState, teams: Team[]) {
   const lastDate = state.results.length ? state.results[state.results.length - 1].date : null;
   const recent = lastDate ? state.results.filter((g) => g.date === lastDate) : [];
+
+  const storedControlledId = getControlledTeamId(state);
+  const controlledTeamMissing = storedControlledId != null && !teams.some((t) => t.id === storedControlledId);
+  const controlledTeamId = controlledTeamMissing ? null : storedControlledId;
 
   const upcomingDate = nextGameDate(state);
   const upcoming = upcomingDate
@@ -29,6 +39,8 @@ function clientState(state: SeasonState) {
     endDate: state.endDate,
     currentDate: state.currentDate,
     phase: derivePhase(state),
+    controlledTeamId,
+    controlledTeamMissing,
     gamesPlayed: state.gamesPlayed,
     totalGames: state.totalGames,
     seasonOver: state.gamesPlayed >= state.totalGames,
@@ -112,6 +124,10 @@ async function loadOrImportActive(): Promise<SaveFile | null> {
   const legacy = await store.loadSeason();
   if (!legacy) return null;
 
+  // A single-save-era season.json predates `controlledTeamId`; bring it up to the
+  // current shape (defaults to no controlled team) before it becomes a save file.
+  normalizeSeasonState(legacy);
+
   const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
   const file = toSaveFile(legacy, teams, players);
   await saves.autoSave(file);
@@ -121,7 +137,7 @@ async function loadOrImportActive(): Promise<SaveFile | null> {
 export async function GET() {
   const file = await loadOrImportActive();
   if (!file) return NextResponse.json({ state: null });
-  return NextResponse.json({ state: clientState(file.season) });
+  return NextResponse.json({ state: clientState(file.season, file.teams) });
 }
 
 export async function POST(request: NextRequest) {
@@ -131,12 +147,6 @@ export async function POST(request: NextRequest) {
 
   if (action === 'new') {
     const start: string = body?.start ?? 'season';
-    if (start === 'offseason') {
-      return NextResponse.json(
-        { error: 'Offseason start not yet implemented' },
-        { status: 501 },
-      );
-    }
 
     // Snapshot the global roster template into a fresh, independent save.
     const store = getStore();
@@ -145,10 +155,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
     }
 
-    const season = createSeasonState(teams, players, { seed: body?.seed });
+    // Resolve the player's controlled team once, before the start-point branch, so
+    // both the season-start and (future) offseason-start paths share the exact same
+    // selection + validation. A request may omit it (null = spectate); an id that
+    // isn't a real team in this league is rejected rather than silently dropped.
+    const requested = body?.controlledTeamId;
+    let controlledTeamId: string | null = null;
+    if (requested != null && requested !== '') {
+      if (typeof requested !== 'string' || !teams.some((t) => t.id === requested)) {
+        return NextResponse.json(
+          { error: `Invalid controlledTeamId "${requested}": not a team in this league.` },
+          { status: 400 },
+        );
+      }
+      controlledTeamId = requested;
+    }
+
+    if (start === 'offseason') {
+      // Offseason creation isn't built yet; when it lands it will pass the same
+      // `controlledTeamId` into its season-builder exactly as the season path does.
+      return NextResponse.json(
+        { error: 'Offseason start not yet implemented' },
+        { status: 501 },
+      );
+    }
+
+    const season = createSeasonState(teams, players, { seed: body?.seed, controlledTeamId });
     const file = toSaveFile(season, teams, players);
     await saves.autoSave(file);
-    return NextResponse.json({ state: clientState(season), advanced: 0 });
+    return NextResponse.json({ state: clientState(season, teams), advanced: 0 });
   }
 
   // advance — operate on the active save's own state + snapshotted rosters.
@@ -158,7 +193,7 @@ export async function POST(request: NextRequest) {
   const state = file.season;
 
   if (state.gamesPlayed >= state.totalGames) {
-    return NextResponse.json({ state: clientState(state), advanced: 0 });
+    return NextResponse.json({ state: clientState(state, file.teams), advanced: 0 });
   }
 
   const mode: string = body?.mode ?? 'day';
@@ -189,7 +224,7 @@ export async function POST(request: NextRequest) {
   // transition (the metadata phase/summary are recomputed on write).
   await saves.autoSave(file);
 
-  return NextResponse.json({ state: clientState(state), advanced: played.length });
+  return NextResponse.json({ state: clientState(state, file.teams), advanced: played.length });
 }
 
 /** True only for a real calendar date in strict YYYY-MM-DD form. */

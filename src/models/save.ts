@@ -1,13 +1,18 @@
 import { Player } from './player';
 import { Team } from './team';
-import { SeasonState } from './season';
+import { SeasonState, isControlledTeam, getControlledTeamId, normalizeSeasonState } from './season';
 
 /**
  * Bump when the on-disk shape of a SaveFile changes in a way that older files
- * can't be read as-is. `loadSave` gates on this so a future format can migrate
- * (or reject) old saves instead of silently misreading them.
+ * can't be read as-is. `loadSave` runs `migrateSave` against this so older files
+ * are brought forward (and truly unknown/newer ones rejected) instead of being
+ * silently misread.
+ *
+ * History:
+ *   1 — initial multi-save format.
+ *   2 — added `season.controlledTeamId` (player's franchise team).
  */
-export const SAVE_SCHEMA_VERSION = 1;
+export const SAVE_SCHEMA_VERSION = 2;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star
@@ -55,6 +60,31 @@ export interface SaveMetadata {
   summary: string; // human-readable one-liner, e.g. "Day 34 · 210/1230 games · Leader BOS 24-6"
 }
 
+/**
+ * Bring a loaded SaveFile up to `SAVE_SCHEMA_VERSION`, or return null if it can't
+ * be (an unknown or newer-than-supported version). Migrations are applied step by
+ * step so a save several versions old still arrives at the current shape:
+ *
+ *   1 → 2: `season.controlledTeamId` did not exist; default it to null
+ *          (no controlled team) via `normalizeSeasonState`.
+ *
+ * Never throws and never mutates the input — callers (`loadSave`) get back a fresh
+ * object they can treat as current, or null to reject gracefully.
+ */
+export function migrateSave(file: SaveFile): SaveFile | null {
+  let version = file.schemaVersion;
+  let season = file.season;
+
+  if (version === 1) {
+    season = normalizeSeasonState({ ...season });
+    version = 2;
+  }
+
+  // Only accept a file we managed to bring exactly to the current version.
+  if (version !== SAVE_SCHEMA_VERSION) return null;
+  return { ...file, schemaVersion: version, season };
+}
+
 /** Derive the phase from the season cursor. Recomputed on every write so it can't drift. */
 export function derivePhase(season: SeasonState): GamePhase {
   if (season.gamesPlayed >= season.totalGames) return 'offseason';
@@ -63,18 +93,30 @@ export function derivePhase(season: SeasonState): GamePhase {
 }
 
 /**
- * A short, human-readable summary for the save list. No franchise team exists
- * yet, so this summarizes league-wide: progress through the slate plus the
- * current leader by win percentage.
+ * A short, human-readable summary for the save list. When the player controls a
+ * team, the summary is written from that franchise's perspective (its record);
+ * otherwise it falls back to a league-wide view (the current leader by win pct).
  */
 export function buildSummary(season: SeasonState, teams: Team[]): string {
+  const abbrev = new Map(teams.map((t) => [t.id, t.abbreviation]));
+  const controlledId = getControlledTeamId(season);
+  const tagFor = (teamId: string) => abbrev.get(teamId) ?? teamId;
+
   if (season.gamesPlayed === 0) {
-    return season.gamesPlayed >= season.totalGames
-      ? 'Offseason'
-      : 'Preseason · not started';
+    const phase = season.gamesPlayed >= season.totalGames ? 'Offseason' : 'Preseason · not started';
+    // Surface the franchise even before tip-off so the save list identifies it.
+    return controlledId ? `${phase} · ${tagFor(controlledId)}` : phase;
   }
 
-  const abbrev = new Map(teams.map((t) => [t.id, t.abbreviation]));
+  const progress = `${season.gamesPlayed}/${season.totalGames} games`;
+
+  // Controlled-team perspective: lead with the franchise's own record.
+  if (controlledId) {
+    const mine = season.standings.find((s) => isControlledTeam(season, s.teamId));
+    if (mine) return `${season.currentDate} · ${progress} · ${tagFor(controlledId)} ${mine.wins}-${mine.losses}`;
+  }
+
+  // League-wide fallback: the current leader by win percentage.
   const leader = [...season.standings]
     .filter((s) => s.wins + s.losses > 0)
     .sort((a, b) => {
@@ -84,11 +126,8 @@ export function buildSummary(season: SeasonState, teams: Team[]): string {
       return b.wins - a.wins;
     })[0];
 
-  const progress = `${season.gamesPlayed}/${season.totalGames} games`;
   if (!leader) return progress;
-  const tag = abbrev.get(leader.teamId) ?? leader.teamId;
-  const lead = `Leader ${tag} ${leader.wins}-${leader.losses}`;
-  return `${season.currentDate} · ${progress} · ${lead}`;
+  return `${season.currentDate} · ${progress} · Leader ${tagFor(leader.teamId)} ${leader.wins}-${leader.losses}`;
 }
 
 /** Build the metadata header for a save from its full file. */

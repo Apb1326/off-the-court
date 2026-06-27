@@ -15,7 +15,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
-import { SeasonState } from '../src/models/season';
+import { SeasonState, isControlledTeam } from '../src/models/season';
 import { SaveFile, SAVE_SCHEMA_VERSION, derivePhase } from '../src/models/save';
 import { SaveStore } from '../src/data/saves/save-store';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
@@ -134,6 +134,28 @@ async function main() {
   await store.deleteSave(checkpointMeta.saveId);
   const afterDelete = await store.listSaves();
   check('delete removes the slot', !afterDelete.saves.some((s) => s.saveId === checkpointMeta.saveId));
+
+  // --- Controlled team: selection persists across a save/load round trip. ---
+  const myTeamId = teams[0].id;
+  const withTeam = createSeasonState(teams, players, { seed: SEED, controlledTeamId: myTeamId });
+  check('createSeasonState records the controlled team', withTeam.controlledTeamId === myTeamId);
+  const teamSlot = await store.createSave('with team', buildSaveFile(withTeam, teams, players));
+  const teamReload = await store.loadSave(teamSlot.saveId);
+  check('controlled team survives save/load', teamReload.ok && teamReload.file.season.controlledTeamId === myTeamId);
+  check('isControlledTeam accessor distinguishes my team from CPU teams',
+    teamReload.ok && isControlledTeam(teamReload.file.season, myTeamId) && !isControlledTeam(teamReload.file.season, teams[1].id));
+
+  // --- Legacy v1 save (pre-controlledTeamId) migrates forward, not rejected. ---
+  const legacySlot = await store.createSave('legacy v1', buildSaveFile(withTeam, teams, players));
+  const legacyPath = path.join(tmp, 'saves', legacySlot.saveId, 'save.json');
+  const legacyRaw = JSON.parse(await readFile(legacyPath, 'utf-8'));
+  delete legacyRaw.season.controlledTeamId; // v1 seasons had no such field
+  legacyRaw.schemaVersion = 1;
+  await writeFile(legacyPath, JSON.stringify(legacyRaw), 'utf-8');
+  const migrated = await store.loadSave(legacySlot.saveId);
+  check('v1 save loads (migrated forward, not rejected)', migrated.ok);
+  check('migration bumps schemaVersion to current', migrated.ok && migrated.file.schemaVersion === SAVE_SCHEMA_VERSION);
+  check('migration defaults a missing controlledTeamId to null', migrated.ok && migrated.file.season.controlledTeamId === null);
 
   await rm(tmp, { recursive: true, force: true });
 
