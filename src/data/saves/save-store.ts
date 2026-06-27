@@ -7,6 +7,7 @@ import {
   SAVE_SCHEMA_VERSION,
   derivePhase,
   metadataFor,
+  migrateSave,
 } from '@/models/save';
 
 /** Reserved slot id for the auto-save. Lives alongside manual slots but is never a manual name. */
@@ -150,14 +151,19 @@ export class SaveStore {
     return { saves, errors };
   }
 
-  /** Load a full save. Never throws: missing, unparseable, or wrong-version all return ok:false. */
+  /**
+   * Load a full save. Never throws: missing or unparseable returns ok:false, an
+   * older but known version is migrated forward (see `migrateSave`), and only an
+   * unknown/newer-than-supported version is rejected.
+   */
   async loadSave(saveId: string): Promise<LoadResult> {
-    const file = await this.readJson<SaveFile>(this.savePath(saveId));
-    if (!file) return { ok: false, reason: 'missing or unparseable save.json' };
-    if (file.schemaVersion !== SAVE_SCHEMA_VERSION) {
+    const raw = await this.readJson<SaveFile>(this.savePath(saveId));
+    if (!raw) return { ok: false, reason: 'missing or unparseable save.json' };
+    const file = migrateSave(raw);
+    if (!file) {
       return {
         ok: false,
-        reason: `unsupported save schema version ${file.schemaVersion} (expected ${SAVE_SCHEMA_VERSION})`,
+        reason: `unsupported save schema version ${raw.schemaVersion} (expected ${SAVE_SCHEMA_VERSION})`,
       };
     }
     return { ok: true, file };

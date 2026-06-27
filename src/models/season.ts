@@ -84,6 +84,15 @@ export interface InjuryHistoryEntry {
 export interface SeasonState {
   seasonId: string;
   seed: number;
+  /**
+   * The team id the player controls (their GM franchise). `null` means no team is
+   * controlled — a league-wide/spectator perspective, and the value legacy saves
+   * (created before team selection existed) normalize to. This is purely a
+   * perspective marker: the simulation never reads it, so it cannot change any
+   * outcome. Use `isControlledTeam` / `getControlledTeamId` to query it rather
+   * than comparing the field directly.
+   */
+  controlledTeamId: string | null;
   startDate: string;
   endDate: string;
   currentDate: string; // last date simulated through (games on/before this are played)
@@ -131,6 +140,34 @@ export interface SeasonResult {
   gamesPlayed: number;
   standings: TeamStanding[];
   playerStats: PlayerSeasonStats[];
+}
+
+/**
+ * The single source of truth for "is this the player's team or a CPU team."
+ * Returns true only when a team is controlled and its id matches. Later GM
+ * features (transactions, AI-GM behavior) should branch on this accessor rather
+ * than re-implementing the comparison.
+ */
+export function isControlledTeam(state: SeasonState, teamId: string): boolean {
+  return state.controlledTeamId != null && state.controlledTeamId === teamId;
+}
+
+/** The controlled team id, or null for a league-wide/spectator perspective. */
+export function getControlledTeamId(state: SeasonState): string | null {
+  return state.controlledTeamId ?? null;
+}
+
+/**
+ * Bring a possibly-legacy SeasonState up to the current shape in place. Older
+ * persisted states predate `controlledTeamId`; default it to null (no controlled
+ * team) so every loaded state satisfies the type and the accessors above. Add new
+ * field back-fills here as the shape grows.
+ */
+export function normalizeSeasonState(state: SeasonState): SeasonState {
+  if (state.controlledTeamId === undefined) {
+    state.controlledTeamId = null;
+  }
+  return state;
 }
 
 export function emptyStanding(teamId: string): TeamStanding {

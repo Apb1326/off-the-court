@@ -94,6 +94,8 @@ export interface CreateSeasonOptions {
   seasonId?: string;
   seed?: number;
   startDate?: string;
+  /** Team id the player controls. Omitted/null = no controlled team (spectator). */
+  controlledTeamId?: string | null;
 }
 
 /**
@@ -118,6 +120,7 @@ export function createSeasonState(
   return {
     seasonId,
     seed,
+    controlledTeamId: options.controlledTeamId ?? null,
     startDate,
     endDate,
     currentDate: addDays(startDate, -1),

@@ -18,6 +18,7 @@ interface Player {
   lastName: string;
   position: string;
   teamId: string;
+  ratings?: Record<string, number>;
 }
 
 interface Standing {
@@ -72,6 +73,8 @@ interface SeasonData {
   startDate: string;
   endDate: string;
   currentDate: string;
+  controlledTeamId: string | null;
+  controlledTeamMissing?: boolean;
   gamesPlayed: number;
   totalGames: number;
   seasonOver: boolean;
@@ -109,6 +112,40 @@ function winPct(s: Standing): number {
   return s.wins / Math.max(1, s.wins + s.losses);
 }
 
+/** A player's overall: the mean of their rating values (mirrors calculateOverall). */
+function playerOverall(ratings?: Record<string, number>): number {
+  if (!ratings) return 0;
+  const vals = Object.values(ratings);
+  return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+}
+
+/**
+ * A rough roster-strength read for the team picker: the average overall of a
+ * team's top eight players. Display-only — the simulation never values a lineup
+ * this way (it's relational; see AGENTS.md), so this is purely to keep the player
+ * from choosing blind.
+ */
+function rosterStrength(teamId: string, players: Player[]): number | null {
+  const ovrs = players
+    .filter((p) => p.teamId === teamId)
+    .map((p) => playerOverall(p.ratings))
+    .filter((x) => x > 0)
+    .sort((a, b) => b - a)
+    .slice(0, 8);
+  if (!ovrs.length) return null;
+  return Math.round(ovrs.reduce((a, b) => a + b, 0) / ovrs.length);
+}
+
+/** Color a strength/overall value on the same scale the rest of the app uses. */
+function strengthColor(value: number): string {
+  if (value >= 70) return '#22c55e';
+  if (value >= 60) return '#3b82f6';
+  if (value >= 50) return '#8b5cf6';
+  if (value >= 40) return '#f59e0b';
+  if (value >= 30) return '#f97316';
+  return '#ef4444';
+}
+
 type AdvanceMode = 'day' | 'week' | 'marker' | 'rest';
 
 export default function SchedulePage() {
@@ -119,6 +156,9 @@ export default function SchedulePage() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<'standings' | 'leaders'>('standings');
   const [leaderTab, setLeaderTab] = useState<LeaderKey>('ppg');
+  // New-game team-selection screen. Opens automatically when there's no season,
+  // or on demand via the "New" button when one is in progress.
+  const [setupOpen, setSetupOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -148,9 +188,11 @@ export default function SchedulePage() {
     setBusy(false);
   };
 
-  const newSeason = () => {
-    if (season && !confirm('Start a new season? This replaces the current one.')) return;
-    post({ action: 'new', seed: Math.floor(Math.random() * 1_000_000) });
+  // Start a new game with the chosen franchise. The controlled team is persisted
+  // as part of SeasonState, so it survives the save/load round trip.
+  const startNewGame = async (controlledTeamId: string) => {
+    await post({ action: 'new', start: 'season', seed: Math.floor(Math.random() * 1_000_000), controlledTeamId });
+    setSetupOpen(false);
   };
   const advance = (mode: AdvanceMode) => post({ action: 'advance', mode });
 
@@ -179,19 +221,18 @@ export default function SchedulePage() {
     return <div className="ootp-panel p-8 text-center" style={{ color: 'var(--muted)' }}>Loading…</div>;
   }
 
-  if (!season) {
+  // The new-game setup takes over the page when there's no season yet, or when
+  // the player opens it via "New" on an in-progress season.
+  if (!season || setupOpen) {
     return (
-      <div>
-        <h1 className="text-xl font-bold tracking-tight mb-4">Season</h1>
-        <div className="ootp-panel p-10 text-center">
-          <p className="mb-4" style={{ color: 'var(--muted)' }}>
-            No season in progress. Start a fresh 82-game regular season and advance it day by day.
-          </p>
-          <button onClick={newSeason} disabled={busy || teams.length < 2} className="ootp-btn ootp-btn-primary">
-            {busy ? 'Setting up…' : '▶ Start New Season'}
-          </button>
-        </div>
-      </div>
+      <NewGameSetup
+        teams={teams}
+        players={players}
+        busy={busy}
+        existingSeason={!!season}
+        onStart={startNewGame}
+        onCancel={season ? () => setSetupOpen(false) : undefined}
+      />
     );
   }
 
@@ -200,10 +241,21 @@ export default function SchedulePage() {
       <ControlBar
         season={season}
         nextMarker={nextMarker}
+        teamById={teamById}
         busy={busy}
         onAdvance={advance}
-        onNew={newSeason}
+        onNew={() => setSetupOpen(true)}
       />
+
+      {season.controlledTeamMissing && (
+        <div
+          className="ootp-panel mt-4 px-4 py-3 text-[13px]"
+          style={{ borderLeft: '3px solid var(--danger)', color: 'var(--foreground)' }}
+        >
+          Your controlled team is no longer in this league&apos;s rosters — continuing in a
+          league-wide spectator view. Start a new game to pick a franchise.
+        </div>
+      )}
 
       <MarkersTimeline season={season} />
 
@@ -219,8 +271,8 @@ export default function SchedulePage() {
 
       {view === 'standings' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <StandingsTable title="Eastern Conference" standings={conferenceStandings('East')} teamById={teamById} />
-          <StandingsTable title="Western Conference" standings={conferenceStandings('West')} teamById={teamById} />
+          <StandingsTable title="Eastern Conference" standings={conferenceStandings('East')} teamById={teamById} controlledTeamId={season.controlledTeamId} />
+          <StandingsTable title="Western Conference" standings={conferenceStandings('West')} teamById={teamById} controlledTeamId={season.controlledTeamId} />
         </div>
       )}
 
@@ -246,14 +298,16 @@ export default function SchedulePage() {
   );
 }
 
-function ControlBar({ season, nextMarker, busy, onAdvance, onNew }: {
+function ControlBar({ season, nextMarker, teamById, busy, onAdvance, onNew }: {
   season: SeasonData;
   nextMarker?: Marker;
+  teamById: (id: string) => Team | undefined;
   busy: boolean;
   onAdvance: (m: AdvanceMode) => void;
   onNew: () => void;
 }) {
   const pct = Math.round((season.gamesPlayed / season.totalGames) * 100);
+  const myTeam = season.controlledTeamId ? teamById(season.controlledTeamId) : undefined;
   return (
     <div className="ootp-panel">
       <div className="ootp-statusbar flex flex-wrap items-center gap-4 px-4 py-3">
@@ -262,6 +316,7 @@ function ControlBar({ season, nextMarker, busy, onAdvance, onNew }: {
             {season.seasonOver ? 'Regular Season Complete' : fmtDate(season.currentDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </div>
           <div className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--chrome-text)', opacity: 0.8 }}>
+            {myTeam && <span style={{ color: 'var(--accent)', fontWeight: 700 }}>GM · {myTeam.city} {myTeam.name} · </span>}
             Game {season.gamesPlayed.toLocaleString()} of {season.totalGames.toLocaleString()} · {pct}%
             {nextMarker && !season.seasonOver && (
               <span> · {nextMarker.label} in {Math.max(0, daysBetween(season.currentDate, nextMarker.date))}d</span>
@@ -416,10 +471,11 @@ function TabButton({ active, onClick, children, small }: { active: boolean; onCl
   );
 }
 
-function StandingsTable({ title, standings, teamById }: {
+function StandingsTable({ title, standings, teamById, controlledTeamId }: {
   title: string;
   standings: Standing[];
   teamById: (id: string) => Team | undefined;
+  controlledTeamId: string | null;
 }) {
   const leaderWins = standings[0]?.wins ?? 0;
   const leaderLosses = standings[0]?.losses ?? 0;
@@ -449,13 +505,28 @@ function StandingsTable({ title, standings, teamById }: {
               const gb = ((leaderWins - s.wins) + (s.losses - leaderLosses)) / 2;
               const l10w = s.lastTen.filter((x) => x === 'W').length;
               const isPlayoff = i < 8;
+              const isMine = controlledTeamId != null && s.teamId === controlledTeamId;
               return (
-                <tr key={s.teamId} style={isPlayoff ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}>
+                <tr
+                  key={s.teamId}
+                  style={{
+                    ...(isPlayoff ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined),
+                    ...(isMine ? { background: 'var(--table-row-hover)' } : undefined),
+                  }}
+                >
                   <td className="whitespace-nowrap">
                     <span className="mr-2 inline-block w-4 text-right num" style={{ color: isPlayoff ? 'var(--accent)' : 'var(--muted-dim)', fontWeight: isPlayoff ? 700 : 400 }}>{i + 1}</span>
                     <Link href={`/roster?team=${s.teamId}`} className="hover:underline" style={{ color: 'var(--foreground)' }}>
                       <span className="font-bold" style={{ color: 'var(--accent)' }}>{team?.abbreviation}</span> {team?.name}
                     </Link>
+                    {isMine && (
+                      <span
+                        className="ml-2 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider rounded"
+                        style={{ background: 'var(--accent)', color: 'var(--background)' }}
+                      >
+                        My Team
+                      </span>
+                    )}
                   </td>
                   <td className="num" style={{ fontWeight: 700 }}>{s.wins}</td>
                   <td className="num" style={{ color: 'var(--muted)' }}>{s.losses}</td>
@@ -522,6 +593,135 @@ function LeadersTable({ stats, statKey, isPct, playerById, teamById }: {
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * New-game setup. The player picks the one franchise they'll control; every other
+ * team is CPU-run. Each team shows a quick roster-strength read so the choice
+ * isn't blind. The selected id is sent to the API, which persists it on
+ * SeasonState — the season-start path today, and the offseason-start path once
+ * that lands (the API validates the selection the same way for both).
+ */
+function NewGameSetup({ teams, players, busy, existingSeason, onStart, onCancel }: {
+  teams: Team[];
+  players: Player[];
+  busy: boolean;
+  existingSeason: boolean;
+  onStart: (teamId: string) => void;
+  onCancel?: () => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId ? teams.find((t) => t.id === selectedId) : undefined;
+
+  if (teams.length < 2) {
+    return (
+      <div className="ootp-panel p-10 text-center" style={{ color: 'var(--muted)' }}>
+        No team data found. Run the data ingestion script first.
+      </div>
+    );
+  }
+
+  const playerCount = (teamId: string) => players.filter((p) => p.teamId === teamId).length;
+
+  const renderConf = (conf: 'East' | 'West', title: string) => {
+    const confTeams = teams.filter((t) => t.conference === conf);
+    const divisions = [...new Set(confTeams.map((t) => t.division))].sort();
+    return (
+      <div className="ootp-panel">
+        <div className="ootp-panel-header">{title}</div>
+        <div className="p-2">
+          {divisions.map((div) => (
+            <div key={div} className="mb-2 last:mb-0">
+              <h3 className="text-[10.5px] font-semibold uppercase tracking-wider px-2 py-1" style={{ color: 'var(--muted)', background: 'var(--table-header)' }}>
+                {div}
+              </h3>
+              <div>
+                {confTeams
+                  .filter((t) => t.division === div)
+                  .map((team) => {
+                    const strength = rosterStrength(team.id, players);
+                    const isSel = team.id === selectedId;
+                    return (
+                      <button
+                        key={team.id}
+                        onClick={() => setSelectedId(team.id)}
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-[13px] text-left transition-colors"
+                        style={{
+                          borderBottom: '1px solid rgba(40,50,66,0.4)',
+                          background: isSel ? 'var(--table-row-hover)' : 'transparent',
+                          boxShadow: isSel ? 'inset 3px 0 0 var(--accent)' : undefined,
+                        }}
+                      >
+                        <span>
+                          <span className="font-bold inline-block w-9" style={{ color: 'var(--accent)' }}>{team.abbreviation}</span>
+                          <span>{team.city} {team.name}</span>
+                        </span>
+                        <span className="flex items-center gap-3">
+                          <span className="text-[11px]" style={{ color: 'var(--muted)' }}>{playerCount(team.id)} players</span>
+                          {strength != null && (
+                            <span
+                              className="num font-bold tabular-nums w-6 text-right"
+                              style={{ color: strengthColor(strength) }}
+                              title="Roster strength — average overall of the top 8 players"
+                            >
+                              {strength}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold tracking-tight">New Game · Choose Your Team</h1>
+        {onCancel && (
+          <button onClick={onCancel} disabled={busy} className="ootp-btn">Cancel</button>
+        )}
+      </div>
+
+      <p className="mb-4 text-[13px]" style={{ color: 'var(--muted)' }}>
+        Pick the franchise you&apos;ll control — every other team is run by the CPU. The number beside
+        each team is a quick roster-strength read (average overall of its top eight players).
+        {existingSeason && (
+          <span style={{ color: 'var(--danger)' }}> Starting a new game replaces your current one.</span>
+        )}
+      </p>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {renderConf('East', 'Eastern Conference')}
+        {renderConf('West', 'Western Conference')}
+      </div>
+
+      <div className="ootp-panel mt-4 flex flex-wrap items-center gap-4 px-4 py-3">
+        <div className="text-[13px]">
+          {selected ? (
+            <span>
+              Controlling{' '}
+              <span className="font-bold" style={{ color: 'var(--accent)' }}>{selected.city} {selected.name}</span>
+            </span>
+          ) : (
+            <span style={{ color: 'var(--muted)' }}>Select a team to begin.</span>
+          )}
+        </div>
+        <button
+          onClick={() => selectedId && onStart(selectedId)}
+          disabled={busy || !selectedId}
+          className="ootp-btn ootp-btn-primary ml-auto"
+        >
+          {busy ? 'Setting up…' : '▶ Start Season'}
+        </button>
       </div>
     </div>
   );
