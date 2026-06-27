@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
-  { href: '/', label: 'Home', match: (p) => p === '/' },
+  { href: '/league', label: 'Home', match: (p) => p.startsWith('/league') },
   { href: '/roster', label: 'Roster', match: (p) => p.startsWith('/roster') || p.startsWith('/player') },
   { href: '/game/sim', label: 'Game', match: (p) => p.startsWith('/game') },
   { href: '/schedule', label: 'Standings', match: (p) => p.startsWith('/schedule') },
@@ -18,7 +18,7 @@ export default function TopChrome() {
       {/* Status bar */}
       <div className="ootp-statusbar">
         <div className="max-w-[1700px] mx-auto px-4 h-12 flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2.5 group">
+          <Link href="/league" className="flex items-center gap-2.5 group">
             <span
               className="flex items-center justify-center w-7 h-7 rounded-sm font-black text-sm"
               style={{ background: 'var(--accent)', color: '#1a1206' }}
@@ -28,6 +28,16 @@ export default function TopChrome() {
             <span className="font-bold tracking-wide text-[15px] text-white">
               OFF THE COURT
             </span>
+          </Link>
+
+          <span className="hidden sm:block h-5 w-px" style={{ background: 'rgba(255,255,255,0.15)' }} />
+
+          <Link
+            href="/menu"
+            className="text-[11px] uppercase tracking-wider transition-opacity hover:opacity-100"
+            style={{ color: 'var(--chrome-text)', opacity: 0.8 }}
+          >
+            ← Main Menu
           </Link>
 
           <span className="hidden sm:block h-5 w-px" style={{ background: 'rgba(255,255,255,0.15)' }} />
