@@ -76,6 +76,10 @@ function commitSeason(
  * Execute a trade between two teams. Supports uneven counts (e.g. 2-for-1). Both rosters
  * must remain within size bounds afterward; every traded player must be on the giving team's
  * roster; no player may appear twice.
+ *
+ * Phase 1 allows zero-asset sides (including 0-for-0). This is intentional — roster-legality
+ * is the only constraint here. Salary-matching (Phase 4) will naturally require non-trivial
+ * compensation once it exists. A 0-for-0 trade is a harmless no-op that appends a log entry.
  */
 export function applyTrade(world: RosterWorld, proposal: TradeProposal): TransactionResult {
   const { teamA, teamB } = proposal;
@@ -112,12 +116,22 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
     }
     return t;
   });
+  // NOTE (downstream, not Phase 1 scope): a traded player remains in the old team's
+  // rotation.starters / rotationOrder and is absent from the new team's. The existing
+  // adjustRotation in engine/injury.ts handles this gracefully (treats a missing player
+  // like an injured one), but a traded-in star won't start until someone goes down.
+  // When trades become user-facing, reconcile rotation settings as part of the mutation
+  // or as a post-trade caller responsibility.
 
   const players = world.players.map((p) => {
     if (leavingA.has(p.id)) return { ...p, teamId: teamB };
     if (leavingB.has(p.id)) return { ...p, teamId: teamA };
     return p;
   });
+  // NOTE (downstream, not Phase 1 scope): PlayerSeasonStats.teamId in
+  // SeasonState.playerStats is not updated here — stats continue accumulating under
+  // the old team's id. The real NBA tracks split stats (separate lines per team per
+  // season). Address when trades become user-facing; not this phase's concern.
 
   const entry: TradeEntry = {
     ...entryBase(world.season),
