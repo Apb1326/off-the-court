@@ -212,6 +212,90 @@ function testCut() {
   }
 }
 
+function testSequentialTransactions() {
+  // Chain: trade → sign → cut, each op feeding the previous result's world.
+  // Proves immutable-return composes correctly across multiple operations and
+  // that seq values monotonically increment from the shared append-only log.
+  const { world, aId, bId, aRoster, bRoster, faIds } = scenario(ROSTER_MAX, ROSTER_MIN, 2);
+  const before = snap(world);
+
+  // Step 1: trade 1 player from A to B (A: 15→14, B: 14→15)
+  const tradedPlayer = aRoster[0];
+  const res1 = applyTrade(world, buildPlayerTrade(aId, bId, [tradedPlayer], []));
+  check('chain step 1 (trade) is legal', res1.ok);
+  if (!res1.ok) return;
+  const world1 = res1.world;
+  check('chain step 1: A roster is 14', rosterOf(world1, aId).length === ROSTER_MIN);
+  check('chain step 1: B roster is 15', rosterOf(world1, bId).length === ROSTER_MAX);
+  check('chain step 1: traded player now on B', teamIdOf(world1, tradedPlayer) === bId);
+  check('chain step 1: log has 1 entry, seq 0',
+    world1.season.transactionLog.length === 1 && world1.season.transactionLog[0].seq === 0);
+
+  // Step 2: sign a FA onto A (A: 14→15), using the world from step 1
+  const signedPlayer = faIds[0];
+  const res2 = applySignFreeAgent(world1, { teamId: aId, playerId: signedPlayer });
+  check('chain step 2 (sign) is legal', res2.ok);
+  if (!res2.ok) return;
+  const world2 = res2.world;
+  check('chain step 2: A roster is 15', rosterOf(world2, aId).length === ROSTER_MAX);
+  check('chain step 2: FA pool shrunk by 1', world2.season.freeAgentPool.length === 1);
+  check('chain step 2: signed player now on A', teamIdOf(world2, signedPlayer) === aId);
+  check('chain step 2: log has 2 entries, entry 1 seq 1',
+    world2.season.transactionLog.length === 2 && world2.season.transactionLog[1].seq === 1);
+
+  // Step 3: cut a player from B (B: 15→14), using the world from step 2
+  const cutPlayer = bRoster[0]; // original B player, still on B after step 1
+  const res3 = applyCut(world2, { teamId: bId, playerId: cutPlayer });
+  check('chain step 3 (cut) is legal', res3.ok);
+  if (!res3.ok) return;
+  const world3 = res3.world;
+  check('chain step 3: B roster is 14', rosterOf(world3, bId).length === ROSTER_MIN);
+  check('chain step 3: FA pool grew by 1', world3.season.freeAgentPool.length === 2);
+  check('chain step 3: cut player is FREE_AGENT', teamIdOf(world3, cutPlayer) === FREE_AGENT_TEAM_ID);
+
+  // Full-chain assertions
+  const log = world3.season.transactionLog;
+  check('chain: 3 log entries total', log.length === 3);
+  check('chain: seq values are 0, 1, 2 (monotonic)',
+    log[0].seq === 0 && log[1].seq === 1 && log[2].seq === 2);
+  check('chain: original world byte-identical (immutability holds across full chain)',
+    snap(world) === before);
+}
+
+function testZeroAssetTrade() {
+  // Phase 1 deliberately allows zero-asset sides — roster-legality is the only constraint.
+  // Phase 4 salary-matching will naturally block these unless an exception applies.
+
+  // Gift trade: A sends nothing, B sends 1 player (A: 14→15, B: 15→14).
+  {
+    const { world, aId, bId, bRoster } = scenario(ROSTER_MIN, ROSTER_MAX);
+    const movedPlayer = bRoster[0];
+    const res = applyTrade(world, buildPlayerTrade(aId, bId, [], [movedPlayer]));
+    check('zero-asset A side (gift trade) is legal', res.ok);
+    if (res.ok) {
+      check('gift trade: A roster is 15', rosterOf(res.world, aId).length === ROSTER_MAX);
+      check('gift trade: B roster is 14', rosterOf(res.world, bId).length === ROSTER_MIN);
+      check('gift trade: player now on A', teamIdOf(res.world, movedPlayer) === aId);
+      const entry = res.world.season.transactionLog[0];
+      check('gift trade: log records empty assetsFromA and one assetsFromB',
+        entry.type === 'trade' && entry.assetsFromA.length === 0 && entry.assetsFromB.length === 1);
+    }
+  }
+  // Degenerate 0-for-0: both sides send nothing — legal no-op that appends a log entry.
+  {
+    const { world, aId, bId } = scenario(ROSTER_MIN, ROSTER_MAX);
+    const res = applyTrade(world, buildPlayerTrade(aId, bId, [], []));
+    check('0-for-0 trade is legal (no-op)', res.ok);
+    if (res.ok) {
+      check('0-for-0: A roster unchanged (14)', rosterOf(res.world, aId).length === ROSTER_MIN);
+      check('0-for-0: B roster unchanged (15)', rosterOf(res.world, bId).length === ROSTER_MAX);
+      const entry = res.world.season.transactionLog[0];
+      check('0-for-0: log entry created with empty asset lists on both sides',
+        entry?.type === 'trade' && entry.assetsFromA.length === 0 && entry.assetsFromB.length === 0);
+    }
+  }
+}
+
 function testDesirabilitySeam() {
   // evaluateTradeForCpu accepts even an ILLEGAL trade — proving legality is NOT inside it.
   const { world, aId, bId, aRoster, bRoster } = scenario(ROSTER_MAX, ROSTER_MAX);
@@ -244,6 +328,8 @@ async function main() {
   testSign();
   testCut();
   testDesirabilitySeam();
+  testSequentialTransactions();
+  testZeroAssetTrade();
 
   console.log(`\n${failures === 0 ? 'PASS — all checks green' : `FAIL — ${failures} check(s) failed`}`);
   process.exit(failures === 0 ? 0 : 1);
