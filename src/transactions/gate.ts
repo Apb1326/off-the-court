@@ -6,7 +6,12 @@ import {
   SignEntry,
   CutEntry,
 } from '@/models/transaction';
-import { RosterWorld, getTeam } from './world';
+import {
+  RosterWorld,
+  getPlayer,
+  projectStandardRosterCount,
+  projectStandardRosterCountForSigning,
+} from './world';
 import { playerIdsOf } from './assets';
 import { FREE_AGENT_TEAM_ID } from './constants';
 import { generateDesiredContract, instantiateContract } from './contracts';
@@ -17,6 +22,9 @@ import {
   teamsDistinct,
   playerOnRoster,
   playerInFreeAgentPool,
+  playerHasTeamId,
+  playerAbsentFromAllRosters,
+  playerHasValidDesiredContract,
   noDuplicatePlayers,
   rosterWithinBounds,
 } from './validators';
@@ -63,11 +71,19 @@ function commitSeason(
   season: SeasonState,
   entry: TransactionEntry,
   freeAgentPool?: string[],
-): SeasonState {
+): { season: SeasonState; entry: TransactionEntry } {
+  const storedEntry = structuredClone(entry);
   return {
-    ...season,
-    freeAgentPool: freeAgentPool ?? season.freeAgentPool,
-    transactionLog: [...season.transactionLog, entry],
+    season: {
+      ...season,
+      freeAgentPool: [...(freeAgentPool ?? season.freeAgentPool)],
+      transactionLog: [
+        ...season.transactionLog.map((priorEntry) => structuredClone(priorEntry)),
+        storedEntry,
+      ],
+    },
+    // Callers may mutate their result object; never expose the append-only stored object.
+    entry: structuredClone(storedEntry),
   };
 }
 
@@ -87,20 +103,23 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
   const idsFromA = playerIdsOf(proposal.assetsFromA);
   const idsFromB = playerIdsOf(proposal.assetsFromB);
 
-  const a = getTeam(world, teamA);
-  const b = getTeam(world, teamB);
-  const projectedA = a ? a.roster.length - idsFromA.length + idsFromB.length : 0;
-  const projectedB = b ? b.roster.length - idsFromB.length + idsFromA.length : 0;
-
   const check = runValidators([
     () => teamExists(world, teamA),
     () => teamExists(world, teamB),
     () => teamsDistinct(teamA, teamB),
     () => noDuplicatePlayers([...idsFromA, ...idsFromB]),
+    ...idsFromA.map((id) => () => playerExists(world, id)),
+    ...idsFromB.map((id) => () => playerExists(world, id)),
     ...idsFromA.map((id) => () => playerOnRoster(world, teamA, id)),
     ...idsFromB.map((id) => () => playerOnRoster(world, teamB, id)),
-    () => rosterWithinBounds(teamA, projectedA),
-    () => rosterWithinBounds(teamB, projectedB),
+    () => rosterWithinBounds(
+      teamA,
+      projectStandardRosterCount(world, teamA, idsFromA, idsFromB),
+    ),
+    () => rosterWithinBounds(
+      teamB,
+      projectStandardRosterCount(world, teamB, idsFromB, idsFromA),
+    ),
   ]);
   if (!check.ok) return check;
 
@@ -142,8 +161,9 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
     assetsFromA: proposal.assetsFromA,
     assetsFromB: proposal.assetsFromB,
   };
+  const committed = commitSeason(world.season, entry);
 
-  return { ok: true, world: { teams, players, season: commitSeason(world.season, entry) }, entry };
+  return { ok: true, world: { teams, players, season: committed.season }, entry: committed.entry };
 }
 
 // --- sign free agent ---
@@ -154,14 +174,17 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
  */
 export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionResult {
   const { teamId, playerId } = op;
-  const team = getTeam(world, teamId);
-  const projected = team ? team.roster.length + 1 : 0;
-
   const check = runValidators([
     () => teamExists(world, teamId),
     () => playerExists(world, playerId),
     () => playerInFreeAgentPool(world, playerId),
-    () => rosterWithinBounds(teamId, projected),
+    () => playerHasTeamId(world, playerId, FREE_AGENT_TEAM_ID),
+    () => playerAbsentFromAllRosters(world, playerId),
+    () => playerHasValidDesiredContract(world, playerId),
+    () => rosterWithinBounds(
+      teamId,
+      projectStandardRosterCountForSigning(world, teamId, playerId),
+    ),
   ]);
   if (!check.ok) return check;
 
@@ -169,17 +192,15 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
     t.id === teamId ? { ...t, roster: [...t.roster, playerId] } : t,
   );
 
-  const signingPlayer = world.players.find(p => p.id === playerId);
-  const newContract = signingPlayer?.desiredContract
-    ? instantiateContract(signingPlayer.desiredContract)
-    : signingPlayer?.contract; // fallback for pre-Phase-2 signings
+  const signingPlayer = getPlayer(world, playerId)!;
+  const newContract = instantiateContract(signingPlayer.desiredContract!);
 
   const players = world.players.map((p) => {
     if (p.id === playerId) {
       return {
         ...p,
         teamId,
-        contract: newContract ?? p.contract,
+        contract: newContract,
         desiredContract: undefined,
       };
     }
@@ -191,14 +212,15 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
     type: 'sign',
     playerId,
     toTeamId: teamId,
-    contractSigned: newContract ? structuredClone(newContract) : undefined,
+    contractSigned: structuredClone(newContract),
   };
   const freeAgentPool = world.season.freeAgentPool.filter((id) => id !== playerId);
+  const committed = commitSeason(world.season, entry, freeAgentPool);
 
   return {
     ok: true,
-    world: { teams, players, season: commitSeason(world.season, entry, freeAgentPool) },
-    entry,
+    world: { teams, players, season: committed.season },
+    entry: committed.entry,
   };
 }
 
@@ -212,13 +234,14 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
  */
 export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
   const { teamId, playerId } = op;
-  const team = getTeam(world, teamId);
-  const projected = team ? team.roster.length - 1 : 0;
-
   const check = runValidators([
     () => teamExists(world, teamId),
+    () => playerExists(world, playerId),
     () => playerOnRoster(world, teamId, playerId),
-    () => rosterWithinBounds(teamId, projected),
+    () => rosterWithinBounds(
+      teamId,
+      projectStandardRosterCount(world, teamId, [playerId], []),
+    ),
   ]);
   if (!check.ok) return check;
 
@@ -247,10 +270,11 @@ export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
     contractAtCut: cutPlayer?.contract ? structuredClone(cutPlayer.contract) : undefined,
   };
   const freeAgentPool = [...world.season.freeAgentPool, playerId];
+  const committed = commitSeason(world.season, entry, freeAgentPool);
 
   return {
     ok: true,
-    world: { teams, players, season: commitSeason(world.season, entry, freeAgentPool) },
-    entry,
+    world: { teams, players, season: committed.season },
+    entry: committed.entry,
   };
 }

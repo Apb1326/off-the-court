@@ -385,7 +385,7 @@ async function main(): Promise<void> {
   const rawPlayers: Player[] = JSON.parse(
     await readFile(path.join(dataDir, 'players.json'), 'utf-8'),
   );
-  const normalized = normalizePlayersForSave(rawPlayers, []);
+  const normalized = normalizePlayersForSave(rawPlayers, [], teams);
   const season = createSeasonState(teams, normalized.players, { seed: 1 });
   season.freeAgentPool = [...normalized.freeAgentPool];
   const world: RosterWorld = { teams, players: normalized.players, season };

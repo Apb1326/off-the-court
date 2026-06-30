@@ -1,5 +1,6 @@
 import { RosterWorld, getTeam, getPlayer } from './world';
 import { ROSTER_MIN, ROSTER_MAX } from './constants';
+import { validateDesiredContract } from './contracts';
 
 /**
  * Roster-legality validators for the transaction gate.
@@ -62,6 +63,43 @@ export function playerInFreeAgentPool(world: RosterWorld, playerId: string): Val
   return world.season.freeAgentPool.includes(playerId)
     ? VALID
     : invalid(`player "${playerId}" is not in the free-agent pool`);
+}
+
+export function playerHasTeamId(
+  world: RosterWorld,
+  playerId: string,
+  expectedTeamId: string,
+): ValidationResult {
+  const player = getPlayer(world, playerId);
+  if (!player) return invalid(`player "${playerId}" does not exist`);
+  return player.teamId === expectedTeamId
+    ? VALID
+    : invalid(`player "${playerId}" has stale teamId "${player.teamId}"`);
+}
+
+export function playerAbsentFromAllRosters(
+  world: RosterWorld,
+  playerId: string,
+): ValidationResult {
+  const owner = world.teams.find((team) => team.roster.includes(playerId));
+  return owner
+    ? invalid(`player "${playerId}" is still rostered by ${owner.id}`)
+    : VALID;
+}
+
+export function playerHasValidDesiredContract(
+  world: RosterWorld,
+  playerId: string,
+): ValidationResult {
+  const player = getPlayer(world, playerId);
+  if (!player) return invalid(`player "${playerId}" does not exist`);
+  if (!player.desiredContract) {
+    return invalid(`player "${playerId}" has no desired contract`);
+  }
+  const result = validateDesiredContract(player.desiredContract);
+  return result.ok
+    ? VALID
+    : invalid(`player "${playerId}" has invalid desired contract: ${result.reason}`);
 }
 
 /** No player id may appear more than once across the assets/ids being moved. */

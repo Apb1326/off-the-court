@@ -89,7 +89,7 @@ function nextGameDate(state: SeasonState): string | null {
 function toSaveFile(season: SeasonState, teams: Team[], players: Player[]): SaveFile {
   const now = new Date().toISOString();
   const { players: normalized, freeAgentPool } =
-    normalizePlayersForSave(players, season.freeAgentPool);
+    normalizePlayersForSave(players, season.freeAgentPool, teams);
   return {
     schemaVersion: 0, // set by the store on write
     phase: derivePhase(season),

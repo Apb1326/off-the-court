@@ -21,7 +21,7 @@ import {
   SECOND_APRON,
 } from './constants';
 import { currentSalary } from './contracts';
-import { getPlayer, getTeam, RosterWorld } from './world';
+import { getPlayer, getTeam, isStandardContractPlayer, RosterWorld } from './world';
 
 type RelevantFreeAgentEntry = SignEntry | CutEntry;
 
@@ -45,7 +45,7 @@ function getRosterPlayersOrThrow(world: RosterWorld, teamId: string): Player[] {
 }
 
 function standardRosterPlayers(players: Player[]): Player[] {
-  return players.filter((player) => player.contract.type !== 'two_way');
+  return players.filter(isStandardContractPlayer);
 }
 
 function payrollFromPlayers(players: Player[]): number {

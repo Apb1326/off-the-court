@@ -28,12 +28,15 @@ import {
   buildPlayerTrade,
   evaluateTradeForCpu,
   executeCpuTrade,
-  upgradeContractShape,
+  normalizePlayersForSave,
+  generateDesiredContract,
+  isStandardContractPlayer,
+  standardRosterCount,
   FREE_AGENT_TEAM_ID,
   ROSTER_MIN,
   ROSTER_MAX,
 } from '../src/transactions';
-import { CutEntry, SignEntry } from '../src/models/transaction';
+import { CutEntry, SignEntry, TradeEntry } from '../src/models/transaction';
 
 let failures = 0;
 function check(label: string, ok: boolean) {
@@ -82,6 +85,9 @@ function scenario(aSize: number, bSize: number, faCount = 0) {
     .map((p) => {
       const c = structuredClone(p);
       c.teamId = aRoster.includes(p.id) ? aId : bRoster.includes(p.id) ? bId : FREE_AGENT_TEAM_ID;
+      c.desiredContract = faIds.includes(p.id)
+        ? generateDesiredContract(c)
+        : undefined;
       return c;
     });
 
@@ -90,6 +96,171 @@ function scenario(aSize: number, bSize: number, faCount = 0) {
 
   const world: RosterWorld = { teams: [teamA, teamB], players, season };
   return { world, aId, bId, aRoster, bRoster, faIds };
+}
+
+function liveWorld(): RosterWorld {
+  const teams = structuredClone(realTeams);
+  const players = structuredClone(realPlayers);
+  const season = createSeasonState(teams, players, { seed: 1 });
+  season.freeAgentPool = players
+    .filter((player) => player.teamId === FREE_AGENT_TEAM_ID)
+    .map((player) => player.id)
+    .sort();
+  return { teams, players, season };
+}
+
+function testStandardRosterLegality() {
+  const world = liveWorld();
+  const bos = world.teams.find((team) => team.abbreviation === 'BOS')!;
+  const gsw = world.teams.find((team) => team.abbreviation === 'GSW')!;
+  check('live BOS fixture has 15 total but 14 standard contracts',
+    bos.roster.length === 15 && standardRosterCount(world, bos.id) === 14);
+  check('live GSW fixture has 15 total but 13 standard contracts',
+    gsw.roster.length === 15 && standardRosterCount(world, gsw.id) === 13);
+
+  const standardFreeAgents = world.players.filter((player) =>
+    player.teamId === FREE_AGENT_TEAM_ID && isStandardContractPlayer(player));
+  const bosSign = applySignFreeAgent(world, {
+    teamId: bos.id,
+    playerId: standardFreeAgents[0].id,
+  });
+  check('BOS may sign a 15th standard player despite already carrying 15 total', bosSign.ok);
+  if (bosSign.ok) {
+    check('BOS signing projects 16 total / 15 standard',
+      rosterOf(bosSign.world, bos.id).length === 16 &&
+      standardRosterCount(bosSign.world, bos.id) === 15);
+  }
+
+  const gswSignOne = applySignFreeAgent(world, {
+    teamId: gsw.id,
+    playerId: standardFreeAgents[0].id,
+  });
+  const gswSignTwo = gswSignOne.ok
+    ? applySignFreeAgent(gswSignOne.world, {
+        teamId: gsw.id,
+        playerId: standardFreeAgents[1].id,
+      })
+    : gswSignOne;
+  check('GSW-style roster can fill both open standard slots',
+    gswSignTwo.ok && standardRosterCount(gswSignTwo.world, gsw.id) === 15);
+
+  const bosStandard = bos.roster.find((id) =>
+    isStandardContractPlayer(world.players.find((player) => player.id === id)!))!;
+  const beforeStandardCut = snap(world);
+  const blockedCut = applyCut(world, { teamId: bos.id, playerId: bosStandard });
+  check('team cannot cut below 14 standard contracts',
+    !blockedCut.ok && /under the 14-man/.test(blockedCut.reason));
+  check('blocked standard cut leaves live world byte-identical', snap(world) === beforeStandardCut);
+
+  const bosTwoWay = bos.roster.find((id) =>
+    !isStandardContractPlayer(world.players.find((player) => player.id === id)!))!;
+  const twoWayCut = applyCut(world, { teamId: bos.id, playerId: bosTwoWay });
+  check('cutting a two-way player leaves the projected standard count unchanged',
+    twoWayCut.ok && standardRosterCount(twoWayCut.world, bos.id) === 14);
+
+  const { world: tradeWorld, aId, bId } = scenario(ROSTER_MIN, ROSTER_MIN);
+  const liveTwoWays = realPlayers.filter((player) => !isStandardContractPlayer(player)).slice(0, 2);
+  const withTwoWays: RosterWorld = {
+    ...tradeWorld,
+    teams: tradeWorld.teams.map((team) =>
+      team.id === aId
+        ? { ...team, roster: [...team.roster, liveTwoWays[0].id] }
+        : { ...team, roster: [...team.roster, liveTwoWays[1].id] }),
+    players: [
+      ...tradeWorld.players,
+      { ...structuredClone(liveTwoWays[0]), teamId: aId },
+      { ...structuredClone(liveTwoWays[1]), teamId: bId },
+    ],
+  };
+  const twoWayTrade = applyTrade(
+    withTwoWays,
+    buildPlayerTrade(aId, bId, [liveTwoWays[0].id], []),
+  );
+  check('moving a two-way player does not change either projected standard count',
+    twoWayTrade.ok &&
+    standardRosterCount(twoWayTrade.world, aId) === ROSTER_MIN &&
+    standardRosterCount(twoWayTrade.world, bId) === ROSTER_MIN);
+
+  const fullStandard = scenario(ROSTER_MAX, ROSTER_MIN);
+  const formerTwoWay = structuredClone(liveTwoWays[0]);
+  formerTwoWay.teamId = FREE_AGENT_TEAM_ID;
+  formerTwoWay.desiredContract = {
+    type: 'veteran',
+    desiredSalary: 3,
+    desiredYears: 1,
+  };
+  const desiredTypeWorld: RosterWorld = {
+    ...fullStandard.world,
+    players: [...fullStandard.world.players, formerTwoWay],
+    season: {
+      ...fullStandard.world.season,
+      freeAgentPool: [formerTwoWay.id],
+    },
+  };
+  const blockedFormerTwoWay = applySignFreeAgent(desiredTypeWorld, {
+    teamId: fullStandard.aId,
+    playerId: formerTwoWay.id,
+  });
+  check('signing projection uses desired standard type, not a prior two-way contract',
+    !blockedFormerTwoWay.ok && /over the 15-man/.test(blockedFormerTwoWay.reason));
+}
+
+function testCanonicalSigningGuards() {
+  const { world, aId, bId, bRoster } = scenario(ROSTER_MIN, ROSTER_MIN);
+  const stalePlayerId = bRoster[0];
+  const staleWorld: RosterWorld = {
+    ...world,
+    players: world.players.map((player) => player.id === stalePlayerId
+      ? {
+          ...player,
+          teamId: FREE_AGENT_TEAM_ID,
+          desiredContract: generateDesiredContract(player),
+        }
+      : player),
+    season: {
+      ...world.season,
+      freeAgentPool: [...world.season.freeAgentPool, stalePlayerId],
+    },
+  };
+  const before = snap(staleWorld);
+  const staleSign = applySignFreeAgent(staleWorld, { teamId: aId, playerId: stalePlayerId });
+  check('stale FA-pool entry cannot duplicate a player across team rosters',
+    !staleSign.ok && /still rostered by/.test(staleSign.reason));
+  check('stale-pool signing failure leaves input byte-identical', snap(staleWorld) === before);
+  check('stale player remains only on original roster',
+    rosterOf(staleWorld, bId).includes(stalePlayerId) && !rosterOf(staleWorld, aId).includes(stalePlayerId));
+
+  const noDesired = scenario(ROSTER_MIN, ROSTER_MIN, 1);
+  const faId = noDesired.faIds[0];
+  noDesired.world.players = noDesired.world.players.map((player) =>
+    player.id === faId ? { ...player, desiredContract: undefined } : player);
+  const noDesiredBefore = snap(noDesired.world);
+  const noDesiredSign = applySignFreeAgent(noDesired.world, { teamId: noDesired.aId, playerId: faId });
+  check('signing never falls back to a previous contract when desiredContract is missing',
+    !noDesiredSign.ok && /no desired contract/.test(noDesiredSign.reason));
+  check('missing-desired signing failure leaves input byte-identical',
+    snap(noDesired.world) === noDesiredBefore);
+}
+
+function testTransactionLogIsolation() {
+  const { world, aId, bId, aRoster, bRoster } = scenario(ROSTER_MAX, ROSTER_MAX);
+  const proposal = buildPlayerTrade(aId, bId, [aRoster[0]], [bRoster[0]]);
+  const result = applyTrade(world, proposal);
+  check('log-isolation trade succeeds', result.ok);
+  if (!result.ok) return;
+
+  const storedBefore = JSON.stringify(result.world.season.transactionLog);
+  proposal.assetsFromA[0].playerId = aRoster[1];
+  proposal.assetsFromA.push({ kind: 'player', playerId: aRoster[2] });
+  const returnedEntry = result.entry as TradeEntry;
+  returnedEntry.teamA = 'caller-mutated-team';
+  returnedEntry.assetsFromB[0].playerId = bRoster[1];
+  returnedEntry.assetsFromB.push({ kind: 'player', playerId: bRoster[2] });
+
+  check('mutating original proposal leaves stored log byte-identical',
+    JSON.stringify(result.world.season.transactionLog) === storedBefore);
+  check('mutating returned entry leaves stored log byte-identical',
+    JSON.stringify(result.world.season.transactionLog) === storedBefore);
 }
 
 function testTradeLegalAtBounds() {
@@ -373,13 +544,8 @@ async function main() {
   const DATA_DIR = path.join(process.cwd(), 'data');
   realTeams = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
   const loaded: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
-  realPlayers = loaded.map(p => ({
-    ...p,
-    contract: typeof (p.contract as unknown as Record<string, unknown>).type === 'string'
-      ? p.contract
-      : upgradeContractShape(p.contract as unknown as { yearsRemaining: number; salaryPerYear: number; option?: string }),
-  }));
-  pool = realPlayers.map((p) => p.id);
+  realPlayers = normalizePlayersForSave(loaded, [], realTeams).players;
+  pool = realPlayers.filter(isStandardContractPlayer).map((p) => p.id);
 
   if (realTeams.length < 2 || pool.length < ROSTER_MAX * 2 + 4) {
     console.error('Need teams + enough players. Run data ingestion first (npm run ingest).');
@@ -387,6 +553,7 @@ async function main() {
   }
 
   testTradeLegalAtBounds();
+  testStandardRosterLegality();
   testTradeLegalUneven();
   testTradeIllegalCeiling();
   testSign();
@@ -396,6 +563,8 @@ async function main() {
   testZeroAssetTrade();
   testCutContractSnapshot();
   testSignContractInstantiation();
+  testCanonicalSigningGuards();
+  testTransactionLogIsolation();
 
   console.log(`\n${failures === 0 ? 'PASS — all checks green' : `FAIL — ${failures} check(s) failed`}`);
   process.exit(failures === 0 ? 0 : 1);

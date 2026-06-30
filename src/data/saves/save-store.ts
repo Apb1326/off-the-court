@@ -111,7 +111,7 @@ export class SaveStore {
   ): Promise<SaveMetadata> {
     const now = new Date().toISOString();
     const { players: normalizedPlayers, freeAgentPool: normalizedPool } =
-      normalizePlayersForSave(file.players, file.season.freeAgentPool);
+      normalizePlayersForSave(file.players, file.season.freeAgentPool, file.teams);
     const full: SaveFile = {
       ...file,
       players: normalizedPlayers,

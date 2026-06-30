@@ -6,7 +6,8 @@
  * cap-hold stub.
  */
 
-import { Contract, DesiredContract, Player, PlayerRatings } from '@/models/player';
+import { Contract, ContractType, DesiredContract, Player, PlayerRatings } from '@/models/player';
+import { Team } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
 import { fnv1a } from '@/lib/hash';
 import {
@@ -22,7 +23,17 @@ import {
   CONTRACT_MAX_PCT_10_PLUS,
   CONTRACT_NTC_MIN_EXPERIENCE,
   CONTRACT_NTC_SALARY_FLOOR,
+  CONTRACT_ROOKIE_SCALE_CAP_FRACTION,
+  CONTRACT_VETERAN_MAX_FRACTION,
 } from './constants';
+
+const CONTRACT_TYPES: ReadonlySet<ContractType> = new Set([
+  'rookie_scale',
+  'veteran',
+  'max',
+  'minimum',
+  'two_way',
+]);
 
 /**
  * Structural invariants every Contract must satisfy. Call this in tests and
@@ -51,6 +62,27 @@ export function validateContract(c: Contract): { ok: true } | { ok: false; reaso
   return { ok: true };
 }
 
+/** Structural invariants required before a desired deal can be instantiated. */
+export function validateDesiredContract(
+  desired: DesiredContract,
+): { ok: true } | { ok: false; reason: string } {
+  if (!CONTRACT_TYPES.has(desired.type)) {
+    return { ok: false, reason: `unknown desired contract type "${desired.type}"` };
+  }
+  if (!Number.isFinite(desired.desiredSalary) || desired.desiredSalary <= 0) {
+    return { ok: false, reason: 'desiredSalary must be finite and positive' };
+  }
+  const maxYears = desired.type === 'two_way' ? CONTRACT_TWO_WAY_MAX_YEARS : CONTRACT_MAX_YEARS;
+  if (
+    !Number.isInteger(desired.desiredYears) ||
+    desired.desiredYears < 1 ||
+    desired.desiredYears > maxYears
+  ) {
+    return { ok: false, reason: `desiredYears must be an integer in [1, ${maxYears}]` };
+  }
+  return { ok: true };
+}
+
 /** Current-year salary in millions. */
 export function currentSalary(contract: Contract): number {
   return contract.salarySchedule[0] ?? 0;
@@ -72,13 +104,16 @@ export function totalRemaining(contract: Contract): number {
  * Asserts validity before returning.
  */
 export function instantiateContract(desired: DesiredContract): Contract {
-  const maxYears = desired.type === 'two_way' ? CONTRACT_TWO_WAY_MAX_YEARS : CONTRACT_MAX_YEARS;
-  const years = Math.min(Math.max(1, Math.round(desired.desiredYears)), maxYears);
+  const desiredValidation = validateDesiredContract(desired);
+  if (!desiredValidation.ok) {
+    throw new Error(`cannot instantiate invalid desired contract: ${desiredValidation.reason}`);
+  }
+  const years = desired.desiredYears;
   const c: Contract = {
     type: desired.type,
     salarySchedule: Array.from(
       { length: years },
-      () => Math.max(0, desired.desiredSalary),
+      () => desired.desiredSalary,
     ),
     noTradeClause: false,
     option: undefined,
@@ -180,7 +215,10 @@ export function generateContractForPlayer(player: Player): Contract {
   // 2. ROOKIE-SCALE: young, inexperienced
   if (experience <= 3 && age <= 23) {
     const salary = roundSalary(
-      CONTRACT_MINIMUM_SALARY + (overall / 80) * (0.15 * CONTRACT_REFERENCE_CAP - CONTRACT_MINIMUM_SALARY),
+      CONTRACT_MINIMUM_SALARY +
+        (overall / 80) *
+          (CONTRACT_ROOKIE_SCALE_CAP_FRACTION * CONTRACT_REFERENCE_CAP -
+            CONTRACT_MINIMUM_SALARY),
     );
     const hasOption = rng.nextBool(0.5);
     const years = CONTRACT_ROOKIE_SCALE_YEARS;
@@ -228,7 +266,8 @@ export function generateContractForPlayer(player: Player): Contract {
   {
     const fraction = (overall - 35) / (60 - 35);
     const salary = roundSalary(
-      CONTRACT_MINIMUM_SALARY + fraction * (0.8 * maxEligible - CONTRACT_MINIMUM_SALARY),
+      CONTRACT_MINIMUM_SALARY +
+        fraction * (CONTRACT_VETERAN_MAX_FRACTION * maxEligible - CONTRACT_MINIMUM_SALARY),
     );
     const baseYears = rng.nextInt(1, CONTRACT_MAX_YEARS);
     const years = ageAdjustedYears(baseYears, age);
@@ -265,39 +304,69 @@ function ageAdjustedYears(years: number, age: number): number {
  * - If a player's contract already has a `type` field, it's already new-shape.
  * - Otherwise, runs the full tier-based contract generation (same logic as
  *   the v2→v3 migration) so players get plausible contracts, not generic veterans.
- * - FA-pool players get a desiredContract.
- * - Also repairs FA pool: ensures any player with teamId === '' is in the pool.
+ * - Unsigned players get a valid desiredContract; rostered players do not retain one.
+ * - Rebuilds the canonical FA pool from roster ownership and repairs teamId back-references.
+ * - Rejects missing roster players and players appearing on multiple rosters.
  */
 export function normalizePlayersForSave(
   players: Player[],
-  freeAgentPool: string[],
+  _freeAgentPool: string[],
+  teams: Team[],
 ): { players: Player[]; freeAgentPool: string[] } {
-  const poolSet = new Set(freeAgentPool);
-  const repairedPool = [...freeAgentPool];
+  const playersById = new Map(players.map((player) => [player.id, player]));
+  const ownerByPlayerId = new Map<string, string>();
+
+  for (const team of teams) {
+    for (const playerId of team.roster) {
+      if (!playersById.has(playerId)) {
+        throw new Error(`cannot normalize roster: ${team.id} references missing player "${playerId}"`);
+      }
+      const existingOwner = ownerByPlayerId.get(playerId);
+      if (existingOwner) {
+        throw new Error(
+          `cannot normalize roster: player "${playerId}" appears on multiple rosters (${existingOwner}, ${team.id})`,
+        );
+      }
+      ownerByPlayerId.set(playerId, team.id);
+    }
+  }
 
   const normalized = players.map((p) => {
-    // Repair FA pool membership
-    if (p.teamId === FREE_AGENT_TEAM_ID && !poolSet.has(p.id)) {
-      poolSet.add(p.id);
-      repairedPool.push(p.id);
+    const ownerTeamId = ownerByPlayerId.get(p.id);
+    const isFreeAgent = ownerTeamId === undefined;
+    const contract = typeof (p.contract as unknown as Record<string, unknown>).type === 'string'
+      ? p.contract
+      : generateContractForPlayer(p);
+    const contractValidation = validateContract(contract);
+    if (!contractValidation.ok) {
+      throw new Error(`cannot normalize player "${p.id}": ${contractValidation.reason}`);
     }
 
-    // Already new-shape: has a string `type` field
-    if (typeof (p.contract as unknown as Record<string, unknown>).type === 'string') {
-      return p;
-    }
-
-    // Legacy shape — run full tier-based generation
-    const contract = generateContractForPlayer(p);
-    const isFreeAgent = p.teamId === FREE_AGENT_TEAM_ID;
+    const existingDesiredValidation = p.desiredContract
+      ? validateDesiredContract(p.desiredContract)
+      : undefined;
     const desiredContract = isFreeAgent
-      ? generateDesiredContract({ contract, ratings: p.ratings })
+      ? existingDesiredValidation?.ok
+        ? p.desiredContract
+        : generateDesiredContract({ contract, ratings: p.ratings })
       : undefined;
 
-    return { ...p, contract, desiredContract };
+    return {
+      ...p,
+      teamId: ownerTeamId ?? FREE_AGENT_TEAM_ID,
+      contract,
+      desiredContract,
+    };
   });
 
-  return { players: normalized, freeAgentPool: repairedPool };
+  // Rebuild from roster ownership: this removes stale, duplicate, and missing IDs and
+  // includes every genuinely unsigned player in a deterministic order.
+  const freeAgentPool = normalized
+    .filter((player) => player.teamId === FREE_AGENT_TEAM_ID)
+    .map((player) => player.id)
+    .sort();
+
+  return { players: normalized, freeAgentPool };
 }
 
 /** Average of all rating values — for contract tier purposes only, NOT for sim. */

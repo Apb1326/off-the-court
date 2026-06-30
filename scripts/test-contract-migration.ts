@@ -25,7 +25,13 @@ import { migrateSaveFile } from '../src/data/saves/migrations';
 import { createSeasonState } from '../src/engine/season';
 import { fnv1a } from '../src/lib/hash';
 import { validateContract } from '../src/transactions/contracts';
-import { FREE_AGENT_TEAM_ID } from '../src/transactions/constants';
+import {
+  FIRST_APRON,
+  FREE_AGENT_TEAM_ID,
+  SALARY_CAP,
+  SECOND_APRON,
+} from '../src/transactions/constants';
+import { getLeagueFinancialSummary } from '../src/transactions/cap';
 
 let failures = 0;
 function check(label: string, ok: boolean) {
@@ -192,6 +198,69 @@ async function main() {
   }
   check(`validateContract passes on all ${m1.file.players.length} players (${invalidCount} invalid)`,
     allValid);
+
+  console.log('\n--- 12. League contract economy ---');
+  const financials = getLeagueFinancialSummary(m1.file);
+  const payrolls = financials.map((summary) => summary.payroll).sort((a, b) => a - b);
+  const payrollMin = payrolls[0];
+  const payrollMedian = payrolls.length % 2 === 0
+    ? (payrolls[payrolls.length / 2 - 1] + payrolls[payrolls.length / 2]) / 2
+    : payrolls[Math.floor(payrolls.length / 2)];
+  const payrollMax = payrolls[payrolls.length - 1];
+  const statusCounts = financials.reduce<Record<string, number>>((counts, summary) => {
+    counts[summary.capStatus] = (counts[summary.capStatus] ?? 0) + 1;
+    return counts;
+  }, {});
+  console.log(
+    `  payroll min/median/max: ${payrollMin.toFixed(3)} / ${payrollMedian.toFixed(3)} / ${payrollMax.toFixed(3)}`,
+  );
+  console.log(
+    `  status distribution: under_cap=${statusCounts.under_cap ?? 0}, ` +
+    `over_cap=${statusCounts.over_cap ?? 0}, over_tax=${statusCounts.over_tax ?? 0}, ` +
+    `over_first_apron=${statusCounts.over_first_apron ?? 0}, ` +
+    `over_second_apron=${statusCounts.over_second_apron ?? 0}`,
+  );
+  check('median standard payroll is between salary cap and first apron',
+    payrollMedian >= SALARY_CAP && payrollMedian <= FIRST_APRON);
+  check('at least one team is under the salary cap',
+    financials.some((summary) => summary.payroll < SALARY_CAP));
+  check('no more than eight teams exceed the second apron',
+    financials.filter((summary) => summary.payroll >= SECOND_APRON).length <= 8);
+
+  console.log('\n--- 13. Canonical free-agent normalization ---');
+  const stale = structuredClone(m1.file);
+  const rosteredPlayerId = stale.teams[0].roster[0];
+  stale.season.freeAgentPool = [rosteredPlayerId, rosteredPlayerId, 'missing-player'];
+  stale.players = stale.players.map((player) =>
+    player.id === rosteredPlayerId ? { ...player, teamId: FREE_AGENT_TEAM_ID } : player);
+  const repaired = migrateSaveFile(stale);
+  check('current-schema stale pool is normalized', repaired.ok && repaired.migrated);
+  if (repaired.ok) {
+    const repairedPool = repaired.file.season.freeAgentPool;
+    const expectedUnsigned = repaired.file.players
+      .filter((player) => !repaired.file.teams.some((team) => team.roster.includes(player.id)))
+      .map((player) => player.id)
+      .sort();
+    check('canonical pool is unique and contains only existing unsigned players',
+      new Set(repairedPool).size === repairedPool.length &&
+      JSON.stringify(repairedPool) === JSON.stringify(expectedUnsigned));
+    check('rostered stale-pool player is removed and teamId back-reference is repaired',
+      !repairedPool.includes(rosteredPlayerId) &&
+      repaired.file.players.find((player) => player.id === rosteredPlayerId)?.teamId === stale.teams[0].id);
+    check('every genuinely unsigned player has a valid desiredContract',
+      repaired.file.players
+        .filter((player) => player.teamId === FREE_AGENT_TEAM_ID)
+        .every((player) => player.desiredContract !== undefined));
+  }
+
+  const duplicateOwner = structuredClone(m1.file);
+  duplicateOwner.teams[1].roster.push(rosteredPlayerId);
+  const duplicateBefore = JSON.stringify(duplicateOwner);
+  const duplicateResult = migrateSaveFile(duplicateOwner);
+  check('player on multiple rosters is explicitly rejected',
+    !duplicateResult.ok && /multiple rosters/.test(duplicateResult.reason));
+  check('duplicate-roster rejection leaves migration input byte-identical',
+    JSON.stringify(duplicateOwner) === duplicateBefore);
 
   finish();
 }

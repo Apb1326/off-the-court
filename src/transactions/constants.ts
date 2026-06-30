@@ -11,9 +11,8 @@
  * Every roster must stay within `[ROSTER_MIN, ROSTER_MAX]` after any transaction. A team at
  * the floor cannot cut without first signing a replacement.
  *
- * IMPORTANT: these govern the STANDARD roster only. Two-way slots are a separate category
- * (roadmap Phase 2+) with their own limited slot count — never fold a two-way count into
- * these numbers.
+ * IMPORTANT: these govern the STANDARD roster only. Two-way players are excluded; their
+ * separate slot limits and roster structures remain deferred.
  */
 export const ROSTER_MIN = 14;
 export const ROSTER_MAX = 15;
@@ -58,6 +57,15 @@ export const CONTRACT_TWO_WAY_MAX_YEARS = 2;
 export const CONTRACT_NTC_MIN_EXPERIENCE = 8;
 /** Salary threshold for NTC eligibility (fraction of player's max-eligible salary). */
 export const CONTRACT_NTC_SALARY_FLOOR = 0.75;
+
+/** Top of the generated rookie-scale salary band as a fraction of the reference cap. */
+export const CONTRACT_ROOKIE_SCALE_CAP_FRACTION = 0.09;
+
+/**
+ * Top of the generated veteran salary curve as a fraction of max eligibility.
+ * Keeps ordinary rotation contracts from clustering near max money.
+ */
+export const CONTRACT_VETERAN_MAX_FRACTION = 0.5;
 
 // --- Phase 3 — salary-cap rules ---
 

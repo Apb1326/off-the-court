@@ -1,7 +1,5 @@
 import { SaveFile, SAVE_SCHEMA_VERSION } from '@/models/save';
-import { Player } from '@/models/player';
-import { generateContractForPlayer, generateDesiredContract } from '@/transactions/contracts';
-import { FREE_AGENT_TEAM_ID } from '@/transactions/constants';
+import { normalizePlayersForSave } from '@/transactions/contracts';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -49,6 +47,32 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
     migrated = true;
   }
 
+  // Normalize even current-schema saves so stale FA pools/back-references cannot
+  // survive indefinitely. This is idempotent and does not require a schema bump.
+  try {
+    const normalized = normalizePlayersForSave(
+      working.players,
+      working.season.freeAgentPool ?? [],
+      working.teams,
+    );
+    const normalizationChanged =
+      JSON.stringify(normalized.players) !== JSON.stringify(working.players) ||
+      JSON.stringify(normalized.freeAgentPool) !== JSON.stringify(working.season.freeAgentPool ?? []);
+    if (normalizationChanged) {
+      working = {
+        ...working,
+        players: normalized.players,
+        season: { ...working.season, freeAgentPool: normalized.freeAgentPool },
+      };
+      migrated = true;
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : 'save roster normalization failed',
+    };
+  }
+
   // (future steps append here, each gated on `version < N` and bumping to N)
 
   return { ok: true, file: working, migrated };
@@ -74,45 +98,13 @@ function migrateV1toV2(file: SaveFile): SaveFile {
 
 /**
  * v2 -> v3: expand Player.contract from the Phase 1 placeholder to the full model.
- * Each player's contract is generated deterministically from `fnv1a(player.id)` on a
- * per-player SeededRNG, so migration is idempotent and order-independent.
- *
- * Also repairs the FA pool: players with `teamId === ''` who are not already in
- * `season.freeAgentPool` are added.
+ * The shared post-step normalizer generates each contract deterministically from
+ * `fnv1a(player.id)` and canonicalizes roster ownership + free agency. Keeping that
+ * work in one boundary makes fresh saves and migrated saves obey identical invariants.
  */
 function migrateV2toV3(file: SaveFile): SaveFile {
-  const poolSet = new Set(file.season.freeAgentPool ?? []);
-  const repairedPool = [...(file.season.freeAgentPool ?? [])];
-
-  const players: Player[] = file.players.map((p) => {
-    // Repair FA pool: any player with the FA sentinel who isn't in the pool
-    if (p.teamId === FREE_AGENT_TEAM_ID && !poolSet.has(p.id)) {
-      poolSet.add(p.id);
-      repairedPool.push(p.id);
-    }
-
-    // Idempotency guard: if contract already has a string `type`, it's been migrated
-    if (typeof (p.contract as unknown as Record<string, unknown>).type === 'string') {
-      return p;
-    }
-
-    const contract = generateContractForPlayer(p);
-    const isFreeAgent = p.teamId === FREE_AGENT_TEAM_ID;
-    const desiredContract = isFreeAgent
-      ? generateDesiredContract({ contract, ratings: p.ratings })
-      : undefined;
-
-    return { ...p, contract, desiredContract };
-  });
-
   return {
     ...file,
     schemaVersion: 3,
-    players,
-    season: {
-      ...file.season,
-      freeAgentPool: repairedPool,
-    },
   };
 }
-

@@ -77,7 +77,7 @@ export interface PlayerTendencies {
  * - 'veteran': standard negotiated contract
  * - 'max': a designated-player or max contract
  * - 'minimum': a veteran- or league-minimum contract
- * - 'two_way': a two-way contract (type flag only in Phase 2 — no roster-slot accounting)
+ * - 'two_way': excluded from standard-roster counts; separate slot limits remain deferred
  */
 export type ContractType = 'rookie_scale' | 'veteran' | 'max' | 'minimum' | 'two_way';
 
@@ -97,7 +97,8 @@ export interface ContractOption {
  * - `salarySchedule[0]` is the current-year salary. Length = years remaining.
  * - `noTradeClause` is set here, *enforced* in Phase 4 (legality predicate).
  * - `option` is set here, *resolved* in Phase 5a (season rollover).
- * - `type: 'two_way'` is a flag only — two-way roster-slot accounting is deferred.
+ * - `type: 'two_way'` does not occupy a standard-roster slot; separate two-way slot
+ *   limits and roster structures are deferred.
  *
  * Simplification: a single `option?` cannot represent the two team options on a
  * real rookie-scale deal. Known limitation — Phase 5a may introduce `options[]`.
