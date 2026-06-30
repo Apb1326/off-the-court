@@ -1,22 +1,7 @@
 import { SaveFile, SAVE_SCHEMA_VERSION } from '@/models/save';
-import { Contract, Player, PlayerRatings } from '@/models/player';
-import { SeededRNG } from '@/lib/rng';
-import { fnv1a } from '@/lib/hash';
-import { generateDesiredContract } from '@/transactions/contracts';
-import {
-  FREE_AGENT_TEAM_ID,
-  CONTRACT_MINIMUM_SALARY,
-  CONTRACT_TWO_WAY_SALARY,
-  CONTRACT_TWO_WAY_MAX_YEARS,
-  CONTRACT_ROOKIE_SCALE_YEARS,
-  CONTRACT_MAX_YEARS,
-  CONTRACT_REFERENCE_CAP,
-  CONTRACT_MAX_PCT_0_6,
-  CONTRACT_MAX_PCT_7_9,
-  CONTRACT_MAX_PCT_10_PLUS,
-  CONTRACT_NTC_MIN_EXPERIENCE,
-  CONTRACT_NTC_SALARY_FLOOR,
-} from '@/transactions/constants';
+import { Player } from '@/models/player';
+import { generateContractForPlayer, generateDesiredContract } from '@/transactions/contracts';
+import { FREE_AGENT_TEAM_ID } from '@/transactions/constants';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -111,7 +96,7 @@ function migrateV2toV3(file: SaveFile): SaveFile {
       return p;
     }
 
-    const contract = generateContractForMigration(p);
+    const contract = generateContractForPlayer(p);
     const isFreeAgent = p.teamId === FREE_AGENT_TEAM_ID;
     const desiredContract = isFreeAgent
       ? generateDesiredContract({ contract, ratings: p.ratings })
@@ -131,115 +116,3 @@ function migrateV2toV3(file: SaveFile): SaveFile {
   };
 }
 
-/** Average of all PlayerRatings values — for contract tier logic only. */
-function migrationOverall(ratings: PlayerRatings): number {
-  const values = Object.values(ratings) as number[];
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-/** Max-eligible salary by experience bracket. */
-function maxEligibleSalary(experience: number): number {
-  if (experience >= 10) return CONTRACT_REFERENCE_CAP * CONTRACT_MAX_PCT_10_PLUS;
-  if (experience >= 7) return CONTRACT_REFERENCE_CAP * CONTRACT_MAX_PCT_7_9;
-  return CONTRACT_REFERENCE_CAP * CONTRACT_MAX_PCT_0_6;
-}
-
-/** Clamp years by age: older players get fewer remaining years. */
-function ageAdjustedYears(years: number, age: number): number {
-  return Math.min(years, Math.max(1, CONTRACT_MAX_YEARS - Math.max(0, age - 30)));
-}
-
-function roundSalary(millions: number): number {
-  return Math.round(millions * 10) / 10;
-}
-
-/**
- * Generate a plausible contract for a player at migration time.
- * Strict precedence: two-way → rookie-scale → minimum → max → veteran.
- * Seeded per-player from fnv1a(player.id) — order-independent and idempotent.
- */
-function generateContractForMigration(player: Player): Contract {
-  const rng = new SeededRNG(fnv1a(player.id));
-  const overall = migrationOverall(player.ratings);
-  const { age, experience } = player;
-  const maxEligible = maxEligibleSalary(experience);
-
-  // 1. TWO-WAY: low-rated young players
-  if (overall < 32 && experience <= 2) {
-    return {
-      type: 'two_way',
-      salarySchedule: Array.from(
-        { length: rng.nextInt(1, CONTRACT_TWO_WAY_MAX_YEARS) },
-        () => CONTRACT_TWO_WAY_SALARY,
-      ),
-      noTradeClause: false,
-    };
-  }
-
-  // 2. ROOKIE-SCALE: young, inexperienced
-  if (experience <= 3 && age <= 23) {
-    const salary = roundSalary(
-      CONTRACT_MINIMUM_SALARY + (overall / 80) * (0.15 * CONTRACT_REFERENCE_CAP - CONTRACT_MINIMUM_SALARY),
-    );
-    const hasOption = rng.nextBool(0.5);
-    const years = CONTRACT_ROOKIE_SCALE_YEARS;
-    return {
-      type: 'rookie_scale',
-      salarySchedule: Array.from({ length: years }, () => salary),
-      noTradeClause: false,
-      option: hasOption ? { type: 'team', year: years - 1 } : undefined,
-    };
-  }
-
-  // 3. MINIMUM: low-rated or old
-  if (overall < 35 || age >= 36) {
-    const years = ageAdjustedYears(rng.nextInt(1, 2), age);
-    return {
-      type: 'minimum',
-      salarySchedule: Array.from({ length: years }, () => CONTRACT_MINIMUM_SALARY),
-      noTradeClause: false,
-    };
-  }
-
-  // 4. MAX: stars
-  if (overall >= 60) {
-    const salary = roundSalary(maxEligible);
-    const baseYears = rng.nextInt(3, CONTRACT_MAX_YEARS);
-    const years = ageAdjustedYears(baseYears, age);
-
-    const ntcEligible =
-      experience >= CONTRACT_NTC_MIN_EXPERIENCE &&
-      salary >= CONTRACT_NTC_SALARY_FLOOR * maxEligible;
-    const noTradeClause = ntcEligible && rng.nextBool(0.5);
-
-    const hasOption = rng.nextBool(0.3);
-    const optionType = rng.nextBool(0.5) ? 'player' as const : 'team' as const;
-
-    return {
-      type: 'max',
-      salarySchedule: Array.from({ length: years }, () => salary),
-      noTradeClause,
-      option: hasOption && years > 1 ? { type: optionType, year: years - 1 } : undefined,
-    };
-  }
-
-  // 5. VETERAN: everything else
-  {
-    const fraction = (overall - 35) / (60 - 35); // 0..1 within the veteran range
-    const salary = roundSalary(
-      CONTRACT_MINIMUM_SALARY + fraction * (0.8 * maxEligible - CONTRACT_MINIMUM_SALARY),
-    );
-    const baseYears = rng.nextInt(1, CONTRACT_MAX_YEARS);
-    const years = ageAdjustedYears(baseYears, age);
-
-    const hasOption = rng.nextBool(0.2);
-    const optionType = rng.nextBool(0.5) ? 'player' as const : 'team' as const;
-
-    return {
-      type: 'veteran',
-      salarySchedule: Array.from({ length: years }, () => salary),
-      noTradeClause: false,
-      option: hasOption && years > 1 ? { type: optionType, year: years - 1 } : undefined,
-    };
-  }
-}
