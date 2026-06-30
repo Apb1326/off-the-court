@@ -9,8 +9,11 @@ import { SeasonState } from './season';
  *
  * v1 -> v2 (transactions Phase 1): SeasonState gains `freeAgentPool` and
  * `transactionLog`; the migration empty-inits both on pre-v2 saves.
+ * v2 -> v3 (transactions Phase 2): Player.contract expanded from placeholder
+ * to full model (type, salarySchedule, NTC, options); DesiredContract added
+ * for free agents; FA pool repaired.
  */
-export const SAVE_SCHEMA_VERSION = 2;
+export const SAVE_SCHEMA_VERSION = 3;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star

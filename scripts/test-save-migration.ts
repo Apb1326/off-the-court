@@ -55,9 +55,9 @@ async function main() {
     return;
   }
   check('migrate reports it ran', m1.migrated === true);
-  check('migrated schemaVersion is current (2)', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
-  check('migrated FA pool exists and is empty',
-    Array.isArray(m1.file.season.freeAgentPool) && m1.file.season.freeAgentPool.length === 0);
+  check('migrated schemaVersion is current', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
+  check('migrated FA pool exists',
+    Array.isArray(m1.file.season.freeAgentPool));
   check('migrated transaction log exists and is empty',
     Array.isArray(m1.file.season.transactionLog) && m1.file.season.transactionLog.length === 0);
 
@@ -78,17 +78,17 @@ async function main() {
 
   const loaded = await store.loadSave('oldsave');
   check('loadSave migrates an old save instead of rejecting it', loaded.ok);
-  check('loaded save is at the current version with empty pool + log',
+  check('loaded save is at the current version with pool + empty log',
     loaded.ok &&
       loaded.file.schemaVersion === SAVE_SCHEMA_VERSION &&
-      loaded.file.season.freeAgentPool.length === 0 &&
+      Array.isArray(loaded.file.season.freeAgentPool) &&
       loaded.file.season.transactionLog.length === 0);
 
-  // Re-serialize through the store and reload: still clean, still v2.
+  // Re-serialize through the store and reload: still clean, still current version.
   if (loaded.ok) {
     await store.overwriteSave('oldsave', loaded.file);
     const reloaded = await store.loadSave('oldsave');
-    check('re-saved migrated file reloads cleanly at v2',
+    check('re-saved migrated file reloads cleanly at current version',
       reloaded.ok && reloaded.file.schemaVersion === SAVE_SCHEMA_VERSION);
   }
 

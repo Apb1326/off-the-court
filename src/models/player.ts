@@ -19,6 +19,7 @@ export interface Player {
 
   tendencies: PlayerTendencies;
   contract: Contract;
+  desiredContract?: DesiredContract;
   health: HealthStatus;
 
   careerStats: SeasonStats[];
@@ -70,10 +71,58 @@ export interface PlayerTendencies {
   reboundRate: number;
 }
 
+/**
+ * Contract types. Phase 2 sets these as data; enforcement comes later.
+ * - 'rookie_scale': first contracts for drafted players (Phase 8 will set these on draft)
+ * - 'veteran': standard negotiated contract
+ * - 'max': a designated-player or max contract
+ * - 'minimum': a veteran- or league-minimum contract
+ * - 'two_way': a two-way contract (type flag only in Phase 2 — no roster-slot accounting)
+ */
+export type ContractType = 'rookie_scale' | 'veteran' | 'max' | 'minimum' | 'two_way';
+
+/**
+ * An option on a specific contract year. Set here (Phase 2); resolved in Phase 5a
+ * (contract lifecycle / season rollover).
+ */
+export interface ContractOption {
+  type: 'player' | 'team';
+  /** 0-indexed year the option applies to (typically the last year). */
+  year: number;
+}
+
+/**
+ * A player's contract. Replaces the Phase 1 placeholder.
+ *
+ * - `salarySchedule[0]` is the current-year salary. Length = years remaining.
+ * - `noTradeClause` is set here, *enforced* in Phase 4 (legality predicate).
+ * - `option` is set here, *resolved* in Phase 5a (season rollover).
+ * - `type: 'two_way'` is a flag only — two-way roster-slot accounting is deferred.
+ *
+ * Simplification: a single `option?` cannot represent the two team options on a
+ * real rookie-scale deal. Known limitation — Phase 5a may introduce `options[]`.
+ *
+ * When a player enters the FA pool, `contract` is preserved as their previous/last
+ * contract (not an active deal). The `desiredContract` field is what they carry to market.
+ */
 export interface Contract {
-  yearsRemaining: number;
-  salaryPerYear: number; // in millions
-  option?: 'player' | 'team' | 'none';
+  type: ContractType;
+  /** Salary per year in millions, index 0 = current year. Length = years remaining. */
+  salarySchedule: number[];
+  noTradeClause: boolean;
+  option?: ContractOption;
+}
+
+/**
+ * What a free agent wants when they sign. Signing instantiates a real `Contract`
+ * from these parameters. Set when a player enters the FA pool; cleared on signing.
+ */
+export interface DesiredContract {
+  type: ContractType;
+  /** Annual salary they're seeking, in millions. */
+  desiredSalary: number;
+  /** Number of years they want. */
+  desiredYears: number;
 }
 
 export interface HealthStatus {

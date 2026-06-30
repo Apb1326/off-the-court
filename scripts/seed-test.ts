@@ -1,6 +1,7 @@
 import { Player, Position, PlayerRatings, PlayerTendencies, PerGameStats } from '../src/models/player';
 import { Team, NBA_TEAMS } from '../src/models/team';
 import { derivePotential } from '../src/ratings';
+import { upgradeContractShape } from '../src/transactions/contracts';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -415,10 +416,10 @@ function generatePlayerFromArchetype(
     potential,
     scoutingAccuracy: 0.5 + Math.random() * 0.3,
     tendencies,
-    contract: {
+    contract: upgradeContractShape({
       yearsRemaining: Math.max(1, Math.floor(Math.random() * 4) + 1),
       salaryPerYear: estimateSalary(data.ovr),
-    },
+    }),
     health: { healthy: true },
     careerStats: stats,
   };

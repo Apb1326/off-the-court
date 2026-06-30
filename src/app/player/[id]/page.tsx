@@ -20,7 +20,13 @@ interface Player {
   potential: Record<string, number>;
   scoutingAccuracy: number;
   tendencies: Record<string, number>;
-  contract: { yearsRemaining: number; salaryPerYear: number };
+  contract: {
+    yearsRemaining?: number;
+    salaryPerYear?: number;
+    salarySchedule?: number[];
+    type?: string;
+    noTradeClause?: boolean;
+  };
   health: { healthy: boolean; injury?: string };
   careerStats: Array<{
     season: string;
@@ -134,8 +140,8 @@ export default function PlayerPage({ params }: { params: Promise<{ id: string }>
           {/* Contract */}
           <div className="mt-4 pt-3 flex gap-6 text-[13px]" style={{ borderTop: '1px solid var(--card-border)' }}>
             <span style={{ color: 'var(--muted)' }}>
-              Contract: <span style={{ color: 'var(--foreground)' }}>${player.contract.salaryPerYear.toFixed(1)}M/yr</span>
-              {' '}&middot; {player.contract.yearsRemaining} yr{player.contract.yearsRemaining !== 1 ? 's' : ''} remaining
+              Contract: <span style={{ color: 'var(--foreground)' }}>${(player.contract.salarySchedule?.[0] ?? player.contract.salaryPerYear ?? 0).toFixed(1)}M/yr</span>
+              {' '}&middot; {player.contract.salarySchedule?.length ?? player.contract.yearsRemaining ?? 0} yr{(player.contract.salarySchedule?.length ?? player.contract.yearsRemaining ?? 0) !== 1 ? 's' : ''} remaining
             </span>
             <span style={{ color: player.health.healthy ? 'var(--success)' : 'var(--danger)' }}>
               {player.health.healthy ? '● Healthy' : `✚ ${player.health.injury}`}

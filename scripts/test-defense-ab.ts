@@ -63,7 +63,7 @@ function mkDef(perim: number, ath: number, ht: number, defIQ: number, intDef: nu
       offScreenFreq: 0.1, handoffFreq: 0.1, threePointRate: 0.4, midrangeRate: 0.15, rimRate: 0.35,
       drawFoulRate: 0.1, assistRate: 0.12, usageRate: 0.12, reboundRate: 0.1,
     },
-    contract: { yearsRemaining: 2, salaryPerYear: 10 }, health: { healthy: true }, careerStats: [],
+    contract: { type: 'veteran' as const, salarySchedule: [10, 10], noTradeClause: false }, health: { healthy: true }, careerStats: [],
   };
 }
 

@@ -7,6 +7,7 @@ import { SeasonState } from '@/models/season';
 import { Team } from '@/models/team';
 import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
+import { normalizePlayersForSave } from '@/transactions/contracts';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -87,12 +88,14 @@ function nextGameDate(state: SeasonState): string | null {
 /** Wrap a season + its rosters into a fresh SaveFile (timestamps set by the store on write). */
 function toSaveFile(season: SeasonState, teams: Team[], players: Player[]): SaveFile {
   const now = new Date().toISOString();
+  const { players: normalized, freeAgentPool } =
+    normalizePlayersForSave(players, season.freeAgentPool);
   return {
     schemaVersion: 0, // set by the store on write
     phase: derivePhase(season),
-    season,
+    season: { ...season, freeAgentPool },
     teams,
-    players,
+    players: normalized,
     createdAt: now,
     updatedAt: now,
   };

@@ -1,4 +1,5 @@
 import { Player, Position, PerGameStats, SeasonStats, PlayerRatings, PlayerTendencies } from '@/models/player';
+import { upgradeContractShape } from '@/transactions/contracts';
 import { Team, RotationSettings, OffensiveSystem, DefensiveSystem } from '@/models/team';
 import { deriveRatings, deriveTendencies, derivePotential } from '@/ratings/derivation';
 import { BDLTeam, BDLPlayer, BDLSeasonAverage } from './balldontlie';
@@ -72,10 +73,10 @@ export function transformPlayer(
     potential,
     scoutingAccuracy: 0.5,
     tendencies,
-    contract: {
+    contract: upgradeContractShape({
       yearsRemaining: Math.max(1, Math.floor(Math.random() * 4) + 1),
       salaryPerYear: estimateSalary(ratings),
-    },
+    }),
     health: { healthy: true },
     careerStats,
   };

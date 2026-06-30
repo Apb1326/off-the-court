@@ -52,7 +52,7 @@ function makePlayer(
     height: 78, weight: 210, age: 26, experience: 5, teamId, jerseyNumber: pid,
     ratings: baseRatings(ratings), potential: baseRatings(ratings), scoutingAccuracy: 1,
     tendencies: baseTend(tend),
-    contract: { yearsRemaining: 2, salaryPerYear: 10 },
+    contract: { type: 'veteran' as const, salarySchedule: [10, 10], noTradeClause: false },
     health: { healthy: true },
     careerStats: [],
   };

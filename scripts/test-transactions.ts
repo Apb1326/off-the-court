@@ -28,10 +28,12 @@ import {
   buildPlayerTrade,
   evaluateTradeForCpu,
   executeCpuTrade,
+  upgradeContractShape,
   FREE_AGENT_TEAM_ID,
   ROSTER_MIN,
   ROSTER_MAX,
 } from '../src/transactions';
+import { CutEntry, SignEntry } from '../src/models/transaction';
 
 let failures = 0;
 function check(label: string, ok: boolean) {
@@ -311,10 +313,72 @@ function testDesirabilitySeam() {
   check('executeCpuTrade applies a legal, desired trade', res.ok);
 }
 
+function testCutContractSnapshot() {
+  const { world, aId, aRoster } = scenario(ROSTER_MAX, ROSTER_MIN);
+  const a0 = aRoster[0];
+
+  const res = applyCut(world, { teamId: aId, playerId: a0 });
+  check('cut-contract: operation is legal', res.ok);
+  if (!res.ok) return;
+
+  const entry = res.world.season.transactionLog[0] as CutEntry;
+  check('cut-contract: entry has contractAtCut', entry.contractAtCut !== undefined);
+  check('cut-contract: contractAtCut matches player contract pre-cut',
+    entry.contractAtCut !== undefined &&
+    JSON.stringify(entry.contractAtCut) === JSON.stringify(world.players.find(p => p.id === a0)!.contract));
+
+  const cutPlayer = res.world.players.find(p => p.id === a0)!;
+  check('cut-contract: cut player has desiredContract', cutPlayer.desiredContract !== undefined);
+  check('cut-contract: cut player contract is preserved (previous deal)',
+    cutPlayer.contract !== undefined && cutPlayer.contract.salarySchedule !== undefined);
+}
+
+function testSignContractInstantiation() {
+  // Set up a scenario with a FA who has a desiredContract
+  const { world, aId, faIds } = scenario(ROSTER_MIN, ROSTER_MIN, 1);
+  const fa = faIds[0];
+
+  // First cut a player from a full team to get a player with desiredContract,
+  // or just set it manually on the FA for test purposes.
+  const worldWithDesired: RosterWorld = {
+    ...world,
+    players: world.players.map(p =>
+      p.id === fa
+        ? { ...p, desiredContract: { type: 'veteran' as const, desiredSalary: 5, desiredYears: 2 } }
+        : p,
+    ),
+  };
+
+  const res = applySignFreeAgent(worldWithDesired, { teamId: aId, playerId: fa });
+  check('sign-contract: operation is legal', res.ok);
+  if (!res.ok) return;
+
+  const entry = res.world.season.transactionLog[0] as SignEntry;
+  check('sign-contract: entry has contractSigned', entry.contractSigned !== undefined);
+  check('sign-contract: contractSigned has correct type',
+    entry.contractSigned?.type === 'veteran');
+  check('sign-contract: contractSigned has correct salary schedule length',
+    entry.contractSigned?.salarySchedule.length === 2);
+  check('sign-contract: contractSigned salary matches desired',
+    entry.contractSigned?.salarySchedule[0] === 5);
+
+  const signedPlayer = res.world.players.find(p => p.id === fa)!;
+  check('sign-contract: signed player desiredContract is cleared',
+    signedPlayer.desiredContract === undefined);
+  check('sign-contract: signed player contract matches contractSigned',
+    JSON.stringify(signedPlayer.contract) === JSON.stringify(entry.contractSigned));
+}
+
 async function main() {
   const DATA_DIR = path.join(process.cwd(), 'data');
   realTeams = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
-  realPlayers = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
+  const loaded: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
+  realPlayers = loaded.map(p => ({
+    ...p,
+    contract: typeof (p.contract as unknown as Record<string, unknown>).type === 'string'
+      ? p.contract
+      : upgradeContractShape(p.contract as unknown as { yearsRemaining: number; salaryPerYear: number; option?: string }),
+  }));
   pool = realPlayers.map((p) => p.id);
 
   if (realTeams.length < 2 || pool.length < ROSTER_MAX * 2 + 4) {
@@ -330,6 +394,8 @@ async function main() {
   testDesirabilitySeam();
   testSequentialTransactions();
   testZeroAssetTrade();
+  testCutContractSnapshot();
+  testSignContractInstantiation();
 
   console.log(`\n${failures === 0 ? 'PASS — all checks green' : `FAIL — ${failures} check(s) failed`}`);
   process.exit(failures === 0 ? 0 : 1);

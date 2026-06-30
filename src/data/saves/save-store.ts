@@ -9,6 +9,7 @@ import {
   metadataFor,
 } from '@/models/save';
 import { migrateSaveFile } from './migrations';
+import { normalizePlayersForSave } from '@/transactions/contracts';
 
 /** Reserved slot id for the auto-save. Lives alongside manual slots but is never a manual name. */
 export const AUTOSAVE_ID = '__autosave__';
@@ -109,8 +110,12 @@ export class SaveStore {
     opts: { name: string; isAutosave: boolean },
   ): Promise<SaveMetadata> {
     const now = new Date().toISOString();
+    const { players: normalizedPlayers, freeAgentPool: normalizedPool } =
+      normalizePlayersForSave(file.players, file.season.freeAgentPool);
     const full: SaveFile = {
       ...file,
+      players: normalizedPlayers,
+      season: { ...file.season, freeAgentPool: normalizedPool },
       schemaVersion: SAVE_SCHEMA_VERSION,
       phase: derivePhase(file.season),
       createdAt: file.createdAt || now,

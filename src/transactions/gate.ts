@@ -9,6 +9,7 @@ import {
 import { RosterWorld, getTeam } from './world';
 import { playerIdsOf } from './assets';
 import { FREE_AGENT_TEAM_ID } from './constants';
+import { generateDesiredContract, instantiateContract } from './contracts';
 import {
   runValidators,
   teamExists,
@@ -167,13 +168,30 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
   const teams = world.teams.map((t) =>
     t.id === teamId ? { ...t, roster: [...t.roster, playerId] } : t,
   );
-  const players = world.players.map((p) => (p.id === playerId ? { ...p, teamId } : p));
+
+  const signingPlayer = world.players.find(p => p.id === playerId);
+  const newContract = signingPlayer?.desiredContract
+    ? instantiateContract(signingPlayer.desiredContract)
+    : signingPlayer?.contract; // fallback for pre-Phase-2 signings
+
+  const players = world.players.map((p) => {
+    if (p.id === playerId) {
+      return {
+        ...p,
+        teamId,
+        contract: newContract ?? p.contract,
+        desiredContract: undefined,
+      };
+    }
+    return p;
+  });
 
   const entry: SignEntry = {
     ...entryBase(world.season),
     type: 'sign',
     playerId,
     toTeamId: teamId,
+    contractSigned: newContract ? structuredClone(newContract) : undefined,
   };
   const freeAgentPool = world.season.freeAgentPool.filter((id) => id !== playerId);
 
@@ -207,15 +225,26 @@ export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
   const teams = world.teams.map((t) =>
     t.id === teamId ? { ...t, roster: t.roster.filter((id) => id !== playerId) } : t,
   );
-  const players = world.players.map((p) =>
-    p.id === playerId ? { ...p, teamId: FREE_AGENT_TEAM_ID } : p,
-  );
+
+  const cutPlayer = world.players.find(p => p.id === playerId);
+
+  const players = world.players.map((p) => {
+    if (p.id === playerId) {
+      return {
+        ...p,
+        teamId: FREE_AGENT_TEAM_ID,
+        desiredContract: generateDesiredContract(p),
+      };
+    }
+    return p;
+  });
 
   const entry: CutEntry = {
     ...entryBase(world.season),
     type: 'cut',
     playerId,
     fromTeamId: teamId,
+    contractAtCut: cutPlayer?.contract ? structuredClone(cutPlayer.contract) : undefined,
   };
   const freeAgentPool = [...world.season.freeAgentPool, playerId];
 

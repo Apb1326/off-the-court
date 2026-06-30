@@ -1,3 +1,5 @@
+import { Contract } from './player';
+
 /**
  * Roster-transaction data types (transactions Phase 1).
  *
@@ -65,6 +67,12 @@ export interface SignEntry extends TransactionEntryBase {
   type: 'sign';
   playerId: string;
   toTeamId: string;
+  /**
+   * The contract instantiated on signing (Phase 2+). Absent on pre-Phase-2
+   * sign entries. Self-describing: a later phase can derive cap consequences
+   * from this entry alone.
+   */
+  contractSigned?: Contract;
 }
 
 /**
@@ -81,6 +89,13 @@ export interface CutEntry extends TransactionEntryBase {
   type: 'cut';
   playerId: string;
   fromTeamId: string;
+  /**
+   * Snapshot of the player's contract at the time of the cut (Phase 2+).
+   * Absent on pre-Phase-2 cut entries. Phase 5a derives dead money from this
+   * without needing to look up the player's current (possibly replaced) contract.
+   * Per the append-only rule: set once at cut time and never rewritten.
+   */
+  contractAtCut?: Contract;
 }
 
 /** One immutable entry in the append-only transaction log. */
