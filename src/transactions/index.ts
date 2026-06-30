@@ -14,3 +14,4 @@ export * from './validators';
 export * from './gate';
 export * from './evaluate';
 export * from './contracts';
+export * from './cap';

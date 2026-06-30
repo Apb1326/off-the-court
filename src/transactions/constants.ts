@@ -58,3 +58,31 @@ export const CONTRACT_TWO_WAY_MAX_YEARS = 2;
 export const CONTRACT_NTC_MIN_EXPERIENCE = 8;
 /** Salary threshold for NTC eligibility (fraction of player's max-eligible salary). */
 export const CONTRACT_NTC_SALARY_FLOOR = 0.75;
+
+// --- Phase 3 — salary-cap rules ---
+
+/** The NBA salary-cap year used by the Phase 3 financial model. */
+export const CAP_RULES_YEAR = '2025-26';
+
+/**
+ * 2025-26 NBA system levels, in millions of dollars. The cap, floor, tax line,
+ * and apron figures come from the NBA's June 30, 2025 announcement.
+ */
+export const SALARY_CAP = 154.647;
+export const MINIMUM_TEAM_SALARY = 139.182;
+export const LUXURY_TAX_LINE = 187.895;
+export const FIRST_APRON = 195.945;
+export const SECOND_APRON = 207.824;
+
+/** Rounded zero-years-of-service minimum used by this game model, in millions. */
+export const ROOKIE_MINIMUM_SALARY = 1.273;
+
+/**
+ * The real CBA includes 12 players in Team Salary before applying empty-roster
+ * charges. Phase 3 applies this whenever cap-room salary is requested; the
+ * real date window is deferred until the league-year/offseason lifecycle exists.
+ */
+export const INCOMPLETE_ROSTER_THRESHOLD = 12;
+
+/** Temporary Phase 3 free-agent hold multiplier; explicit rights arrive in Phase 4. */
+export const CAP_HOLD_PERCENTAGE = 1.5;
