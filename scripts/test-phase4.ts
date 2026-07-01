@@ -599,7 +599,7 @@ function testMigration(): void {
   };
   const logBefore = snap(v3.season.transactionLog);
   const migrated = migrateSaveFile(v3);
-  check('direct v3 migration reaches schema v4', migrated.ok && migrated.file.schemaVersion === 4);
+  check('direct v3 migration reaches current schema', migrated.ok && migrated.file.schemaVersion === SAVE_SCHEMA_VERSION);
   if (!migrated.ok) return;
   check('latest applicable cut reconstructs deterministic Early Bird rights',
     player(migrated.file, cutFa).birdRights?.teamId === f.aId &&
@@ -625,7 +625,7 @@ function testMigration(): void {
     schemaVersion: 1,
     season: v1Season,
   } as unknown as SaveFile);
-  check('complete v1 -> v4 migration chain succeeds',
+  check('complete v1 -> current migration chain succeeds',
     fullChain.ok && fullChain.file.schemaVersion === SAVE_SCHEMA_VERSION);
   const future = migrateSaveFile({ ...roundTrip, schemaVersion: SAVE_SCHEMA_VERSION + 1 });
   check('future save version is rejected', !future.ok);

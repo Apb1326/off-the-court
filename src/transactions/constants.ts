@@ -127,3 +127,20 @@ export const EARLY_BIRD_MIN_YEARS = 2;
 export const EARLY_BIRD_MAX_YEARS = 4;
 export const NON_BIRD_MAX_YEARS = 4;
 export const MINIMUM_EXCEPTION_MAX_YEARS = 2;
+
+// --- Phase 5a — signing exceptions / banked Standard TPEs ---
+// 2025-26 MLE values: https://www.nba.com/news/nba-salary-cap-set-2025-26-season
+export const NON_TAXPAYER_MLE = 14.104;
+export const NON_TAXPAYER_MLE_MAX_YEARS = 4;
+export const TAXPAYER_MLE = 5.685;
+export const TAXPAYER_MLE_MAX_YEARS = 2;
+export const ROOM_MLE = 8.781;
+export const ROOM_MLE_MAX_YEARS = 3;
+// 2024-25 $4.668M grown with the cap by 10%, per CBA 101:
+// https://cms.nba.com/wp-content/uploads/sites/4/2024/11/2024-25-CBA-101.pdf
+export const BI_ANNUAL_EXCEPTION = 5.135;
+export const BAE_MAX_YEARS = 2;
+export const TPE_DURATION_YEARS = 1;
+
+/** Shared floating-point tolerance for transaction money arithmetic. */
+export const MONEY_EPSILON = 1e-9;

@@ -1,4 +1,5 @@
 import { ReSigningRightsType } from '@/models/player';
+import { SigningException, SigningMechanism } from '@/models/transaction';
 import { getPlayer, RosterWorld } from './world';
 import {
   BIRD_MAX_YEARS,
@@ -23,19 +24,16 @@ import {
   projectPostSigningApronPayroll,
   projectPostSigningCapRoomSalary,
 } from './cap';
+import { getAvailableSigningExceptions } from './exceptions';
 
 const MONEY_EPSILON = 1e-9;
-
-export type SigningMechanism =
-  | 'room'
-  | ReSigningRightsType
-  | 'minimum_exception';
 
 export interface SigningPlan {
   mechanism: SigningMechanism;
   projectedCapRoomSalary: number;
   projectedApronPayroll: number;
   maximumSalary?: number;
+  triggeredHardCap?: 'first_apron' | 'second_apron';
 }
 
 export type SigningAnalysis =
@@ -107,6 +105,7 @@ export function analyzeSigning(
   world: RosterWorld,
   teamId: string,
   playerId: string,
+  exception?: SigningException,
 ): SigningAnalysis {
   const player = getPlayer(world, playerId);
   if (!player?.desiredContract) {
@@ -123,6 +122,32 @@ export function analyzeSigning(
       ok: false,
       reason: `player "${playerId}" may receive at most $${generalMaximum.toFixed(3)}M in year one`,
     };
+  }
+  if (exception) {
+    if (desired.type === 'two_way') {
+      return { ok: false, reason: `${exception} cannot be used for a two-way contract` };
+    }
+    const available = getAvailableSigningExceptions(teamId, world)
+      .find((candidate) => candidate.type === exception);
+    if (!available) return { ok: false, reason: `${exception} is not available to ${teamId}` };
+    if (desired.desiredSalary > available.remainingAmount + MONEY_EPSILON) {
+      return { ok: false, reason: `${exception} has only $${available.remainingAmount.toFixed(3)}M remaining` };
+    }
+    if (desired.desiredYears > available.maxYears) {
+      return { ok: false, reason: `${exception} permits at most ${available.maxYears} years` };
+    }
+    const triggeredHardCap = exception === 'non_taxpayer_mle' || exception === 'bae'
+      ? 'first_apron' as const
+      : exception === 'taxpayer_mle'
+        ? 'second_apron' as const
+        : undefined;
+    return { ok: true, plan: {
+      mechanism: exception,
+      projectedCapRoomSalary,
+      projectedApronPayroll,
+      maximumSalary: available.remainingAmount,
+      ...(triggeredHardCap ? { triggeredHardCap } : {}),
+    } };
   }
   if (
     projectedCapRoomSalary <= SALARY_CAP + MONEY_EPSILON &&

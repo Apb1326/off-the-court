@@ -1,5 +1,5 @@
 /**
- * Tests the complete save schema migration chain through schema v4.
+ * Tests the complete save schema migration chain through schema v5.
  *
  * Proves:
  *  - A pre-Phase-1 save (no free-agent pool / transaction log, schemaVersion 1) migrates to

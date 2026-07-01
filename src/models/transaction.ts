@@ -60,7 +60,34 @@ export interface TradeEntry extends TransactionEntryBase {
   teamB: string;
   assetsFromA: TradeAsset[];
   assetsFromB: TradeAsset[];
+  createdTradeExceptionIds?: string[];
+  tpeUsages?: TradeExceptionUsage[];
+  /** Teams whose successful matching plan used cap room. Canonical absence means none. */
+  capRoomTeams?: string[];
 }
+
+export interface TradeExceptionUsage {
+  tpeId: string;
+  teamId: string;
+  incomingPlayerId: string;
+  amount: number;
+}
+
+export type SigningMechanism =
+  | 'room'
+  | 'bird'
+  | 'early_bird'
+  | 'non_bird'
+  | 'minimum_exception'
+  | 'non_taxpayer_mle'
+  | 'taxpayer_mle'
+  | 'room_mle'
+  | 'bae';
+
+export type SigningException = Extract<
+  SigningMechanism,
+  'non_taxpayer_mle' | 'taxpayer_mle' | 'room_mle' | 'bae'
+>;
 
 /** A free-agent signing: a player drawn from the FA pool onto a team. */
 export interface SignEntry extends TransactionEntryBase {
@@ -73,10 +100,12 @@ export interface SignEntry extends TransactionEntryBase {
    * from this entry alone.
    */
   contractSigned?: Contract;
+  /** Selected mechanism for Phase 5a+ signings. Pre-v5 entries may omit it. */
+  signingMechanism?: SigningMechanism;
 }
 
 /**
- * A cut/waive (collapsed in Phase 1: the player goes straight to the FA pool, for free).
+ * A cut/waive (collapsed waiver process: the player goes straight to the FA pool).
  *
  * Carries enough to attribute future financial consequences from this immutable event:
  * the player, the team that released them, and when (date + seq). Phase 5a derives dead
@@ -96,7 +125,35 @@ export interface CutEntry extends TransactionEntryBase {
    * Per the append-only rule: set once at cut time and never rewritten.
    */
   contractAtCut?: Contract;
+  /** Phase 5a stretch election. Absence on earlier entries means false. */
+  stretchApplied?: boolean;
+}
+
+export interface OptionExercisedEntry extends TransactionEntryBase {
+  type: 'option_exercised';
+  playerId: string;
+  teamId: string;
+  optionType: 'player' | 'team';
+}
+
+export interface OptionDeclinedEntry extends TransactionEntryBase {
+  type: 'option_declined';
+  playerId: string;
+  teamId: string;
+  optionType: 'player' | 'team';
+}
+
+export interface ContractExpiredEntry extends TransactionEntryBase {
+  type: 'contract_expired';
+  playerId: string;
+  teamId: string;
 }
 
 /** One immutable entry in the append-only transaction log. */
-export type TransactionEntry = TradeEntry | SignEntry | CutEntry;
+export type TransactionEntry =
+  | TradeEntry
+  | SignEntry
+  | CutEntry
+  | OptionExercisedEntry
+  | OptionDeclinedEntry
+  | ContractExpiredEntry;

@@ -252,7 +252,11 @@ export function reSigningRightsLegal(
   playerId: string,
   plan: SigningPlan,
 ): ValidationResult {
-  if (plan.mechanism === 'room' || plan.mechanism === 'minimum_exception') return VALID;
+  if (
+    plan.mechanism !== 'bird' &&
+    plan.mechanism !== 'early_bird' &&
+    plan.mechanism !== 'non_bird'
+  ) return VALID;
   const player = getPlayer(world, playerId);
   if (!player?.desiredContract || player.birdRights?.teamId !== teamId ||
       player.birdRights.type !== plan.mechanism) {
@@ -273,6 +277,18 @@ export function reSigningRightsLegal(
   return player.desiredContract.desiredSalary <= maximum + 1e-9
     ? VALID
     : invalid(`${plan.mechanism} rights permit at most $${maximum.toFixed(3)}M in year one`);
+}
+
+export function stretchElectionLegal(
+  world: RosterWorld,
+  playerId: string,
+  stretch: boolean,
+): ValidationResult {
+  if (!stretch) return VALID;
+  const player = getPlayer(world, playerId);
+  return player?.contract.type === 'two_way'
+    ? invalid('two-way contracts cannot use the stretch provision')
+    : VALID;
 }
 
 /** Independent minimum-salary-exception predicate for a selected signing plan. */

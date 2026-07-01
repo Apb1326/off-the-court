@@ -16,3 +16,8 @@ export * from './evaluate';
 export * from './contracts';
 export * from './cap';
 export * from './financial';
+export * from './date';
+export * from './deadMoney';
+export * from './tpe';
+export * from './exceptions';
+export * from './rollover';

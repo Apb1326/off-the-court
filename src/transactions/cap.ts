@@ -20,12 +20,12 @@ import {
   SECOND_APRON,
   TRADE_ALLOWANCE,
   EXPANDED_TPE_CUSHION_2025_26,
+  MONEY_EPSILON,
 } from './constants';
 import { currentSalary } from './contracts';
 import { getPlayer, getTeam, isStandardContractPlayer, RosterWorld } from './world';
 import { playerIdsOf } from './assets';
-
-const MONEY_EPSILON = 1e-9;
+import { computeDeadMoney } from './deadMoney';
 
 function getTeamOrThrow(world: RosterWorld, teamId: string) {
   const team = getTeam(world, teamId);
@@ -132,7 +132,8 @@ export function computeCapRoomSalary(world: RosterWorld, teamId: string): number
   return (
     payrollFromPlayers(players) +
     capHoldsForKnownTeam(world, teamId) +
-    incompleteRosterChargeFromPlayers(players)
+    incompleteRosterChargeFromPlayers(players) +
+    computeDeadMoney(world, teamId)
   );
 }
 
@@ -141,14 +142,14 @@ export function computeCapRoom(world: RosterWorld, teamId: string): number {
   return SALARY_CAP - computeCapRoomSalary(world, teamId);
 }
 
-/** Phase 3 tax payroll is raw standard-contract payroll only. */
+/** Tax payroll: active standard contracts plus waived-contract dead money. */
 export function computeTaxPayroll(world: RosterWorld, teamId: string): number {
-  return computeTeamPayroll(world, teamId);
+  return computeTeamPayroll(world, teamId) + computeDeadMoney(world, teamId);
 }
 
-/** Phase 3 apron payroll is raw standard-contract payroll only. */
+/** Apron payroll: active standard contracts plus waived-contract dead money. */
 export function computeApronPayroll(world: RosterWorld, teamId: string): number {
-  return computeTeamPayroll(world, teamId);
+  return computeTeamPayroll(world, teamId) + computeDeadMoney(world, teamId);
 }
 
 function rosterPlayersAfterTrade(
@@ -177,7 +178,8 @@ export function projectPostTradeCapRoomSalary(
   const players = rosterPlayersAfterTrade(world, teamId, outgoingPlayerIds, incomingPlayerIds);
   return payrollFromPlayers(players) +
     capHoldsForKnownTeam(world, teamId) +
-    incompleteRosterChargeFromPlayers(players);
+    incompleteRosterChargeFromPlayers(players) +
+    computeDeadMoney(world, teamId);
 }
 
 /** Project the apron-payroll accounting basis after one side of a trade. */
@@ -189,8 +191,11 @@ export function projectPostTradeApronPayroll(
 ): number {
   return payrollFromPlayers(
     rosterPlayersAfterTrade(world, teamId, outgoingPlayerIds, incomingPlayerIds),
-  );
+  ) + computeDeadMoney(world, teamId);
 }
+
+/** Project tax payroll after a trade; currently the same player/dead-money basis as apron. */
+export const projectPostTradeTaxPayroll = projectPostTradeApronPayroll;
 
 /** Project cap-room Team Salary after signing, replacing the player's own hold. */
 export function projectPostSigningCapRoomSalary(
@@ -208,7 +213,8 @@ export function projectPostSigningCapRoomSalary(
     (signingCounts ? player.desiredContract.desiredSalary : 0);
   const standardCount = standardRosterPlayers(rosterPlayers).length + (signingCounts ? 1 : 0);
   const incomplete = Math.max(0, INCOMPLETE_ROSTER_THRESHOLD - standardCount) * ROOKIE_MINIMUM_SALARY;
-  return payroll + capHoldsForKnownTeam(world, teamId, playerId) + incomplete;
+  return payroll + capHoldsForKnownTeam(world, teamId, playerId) + incomplete +
+    computeDeadMoney(world, teamId);
 }
 
 /** Project apron payroll after signing; two-way salary is excluded. */
@@ -225,6 +231,9 @@ export function projectPostSigningApronPayroll(
     (player.desiredContract.type === 'two_way' ? 0 : player.desiredContract.desiredSalary);
 }
 
+/** Project tax payroll after signing; currently the same standard/dead-money basis as apron. */
+export const projectPostSigningTaxPayroll = projectPostSigningApronPayroll;
+
 export type TradeMatchingMode = 'room' | 'standard' | 'aggregated_standard' | 'expanded';
 
 export interface TradeMatchingPlan {
@@ -235,6 +244,8 @@ export interface TradeMatchingPlan {
   projectedApronPayroll: number;
   projectedTeamSalary: number;
   triggeredHardCap?: 'first_apron' | 'second_apron';
+  /** Deterministic sole source for a banked Standard TPE. */
+  sourcePlayerId?: string;
 }
 
 export type TradeMatchingAnalysis =
@@ -281,9 +292,10 @@ export function analyzeTradeMatchingForTeam(
   teamId: string,
   outgoingPlayerIds: string[],
   incomingPlayerIds: string[],
+  ordinaryIncomingPlayerIds: string[] = incomingPlayerIds,
 ): TradeMatchingAnalysis {
   const outgoingSalary = matchingSalary(world, outgoingPlayerIds);
-  const incomingSalary = matchingSalary(world, incomingPlayerIds);
+  const incomingSalary = matchingSalary(world, ordinaryIncomingPlayerIds);
   const outgoingCount = matchingPlayerCount(world, outgoingPlayerIds);
   const projectedApronPayroll = projectPostTradeApronPayroll(
     world, teamId, outgoingPlayerIds, incomingPlayerIds,
@@ -324,16 +336,21 @@ export function analyzeTradeMatchingForTeam(
     // Multiple players may leave without their salaries being aggregated. If
     // one outgoing player's Standard TPE covers all incoming salary, use that
     // no-hard-cap mechanism and simply do not bank the other outgoing TPEs.
-    const largestOutgoingSalary = outgoingPlayerIds.reduce((largest, playerId) => {
-      const player = getPlayer(world, playerId)!;
-      const salary = isStandardContractPlayer(player) ? currentSalary(player.contract) : 0;
-      return Math.max(largest, salary);
-    }, 0);
+    const source = outgoingPlayerIds
+      .map((playerId) => ({
+        playerId,
+        salary: isStandardContractPlayer(getPlayer(world, playerId)!)
+          ? currentSalary(getPlayer(world, playerId)!.contract)
+          : 0,
+      }))
+      .filter(({ salary }) => salary > MONEY_EPSILON)
+      .sort((a, b) => b.salary - a.salary || a.playerId.localeCompare(b.playerId))[0];
+    const largestOutgoingSalary = source?.salary ?? 0;
     const maximumIncomingSalary = largestOutgoingSalary + allowance;
     if (incomingSalary <= maximumIncomingSalary + MONEY_EPSILON) {
       return { ok: true, plan: {
         mode: 'standard', outgoingSalary, incomingSalary, maximumIncomingSalary,
-        projectedApronPayroll, projectedTeamSalary,
+        projectedApronPayroll, projectedTeamSalary, sourcePlayerId: source?.playerId,
       } };
     }
   }
@@ -374,12 +391,15 @@ export function analyzeTradeMatchingForTeam(
 export function analyzeTradeMatching(
   world: RosterWorld,
   proposal: TradeProposal,
+  allocatedIncomingByTeam: Map<string, Set<string>> = new Map(),
 ): { teamA: TradeMatchingAnalysis; teamB: TradeMatchingAnalysis } {
   const idsFromA = playerIdsOf(proposal.assetsFromA);
   const idsFromB = playerIdsOf(proposal.assetsFromB);
+  const ordinaryA = idsFromB.filter((id) => !allocatedIncomingByTeam.get(proposal.teamA)?.has(id));
+  const ordinaryB = idsFromA.filter((id) => !allocatedIncomingByTeam.get(proposal.teamB)?.has(id));
   return {
-    teamA: analyzeTradeMatchingForTeam(world, proposal.teamA, idsFromA, idsFromB),
-    teamB: analyzeTradeMatchingForTeam(world, proposal.teamB, idsFromB, idsFromA),
+    teamA: analyzeTradeMatchingForTeam(world, proposal.teamA, idsFromA, idsFromB, ordinaryA),
+    teamB: analyzeTradeMatchingForTeam(world, proposal.teamB, idsFromB, idsFromA, ordinaryB),
   };
 }
 
@@ -417,6 +437,7 @@ export interface TeamFinancialSummary {
   teamId: string;
   rulesYear: typeof CAP_RULES_YEAR;
   payroll: number;
+  deadMoney: number;
   capHolds: number;
   incompleteRosterCharge: number;
   capRoomSalary: number;
@@ -436,16 +457,18 @@ export function getTeamFinancialSummary(
   const payroll = payrollFromPlayers(players);
   const capHolds = capHoldsForKnownTeam(world, teamId);
   const incompleteRosterCharge = incompleteRosterChargeFromPlayers(players);
-  const capRoomSalary = payroll + capHolds + incompleteRosterCharge;
+  const deadMoney = computeDeadMoney(world, teamId);
+  const capRoomSalary = payroll + capHolds + incompleteRosterCharge + deadMoney;
   const capRoom = SALARY_CAP - capRoomSalary;
-  const taxPayroll = payroll;
-  const apronPayroll = payroll;
+  const taxPayroll = payroll + deadMoney;
+  const apronPayroll = payroll + deadMoney;
   const capStatus = classifyCapStatus({ capRoomSalary, taxPayroll, apronPayroll });
 
   return {
     teamId,
     rulesYear: CAP_RULES_YEAR,
     payroll,
+    deadMoney,
     capHolds,
     incompleteRosterCharge,
     capRoomSalary,
@@ -453,7 +476,7 @@ export function getTeamFinancialSummary(
     taxPayroll,
     apronPayroll,
     capStatus,
-    belowSalaryFloor: payroll < MINIMUM_TEAM_SALARY,
+    belowSalaryFloor: payroll + deadMoney < MINIMUM_TEAM_SALARY,
   };
 }
 

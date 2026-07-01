@@ -1,5 +1,5 @@
 /**
- * Tests the save schema migration chain through transactions Phase 4 (schema v4).
+ * Tests the save schema migration chain through transactions Phase 5a (schema v5).
  *
  * Proves:
  *  1. FNV-1a hash stability (test vector)
@@ -76,12 +76,12 @@ async function main() {
   const hashResult = fnv1a('player_123');
   check(`fnv1a('player_123') === 2558982419 (got ${hashResult})`, hashResult === 2558982419);
 
-  console.log('\n--- 2. v2 -> v4 migration chain: valid contracts ---');
+  console.log('\n--- 2. v2 -> v5 migration chain: valid contracts ---');
   const v2 = buildV2Save(teams, players);
   const m1 = migrateSaveFile(v2);
-  check('v2->v4 migration succeeds', m1.ok);
+  check('v2->v5 migration succeeds', m1.ok);
   if (!m1.ok) { finish(); return; }
-  check('migrated schemaVersion is 4', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
+  check('migrated schemaVersion is current', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
   check('all players have contract.type',
     m1.file.players.every(p => typeof p.contract.type === 'string'));
   check('all players have non-empty salarySchedule',
@@ -105,7 +105,7 @@ async function main() {
   const roundTripped = JSON.parse(JSON.stringify(m1.file)) as SaveFile;
   const m2 = migrateSaveFile(roundTripped);
   check('second migration succeeds', m2.ok);
-  check('second migration reports no change (already at v4)', m2.ok && m2.migrated === false);
+  check('second migration reports no change (already current)', m2.ok && m2.migrated === false);
   check('second migration is byte-identical',
     m2.ok && JSON.stringify(m2.file) === JSON.stringify(roundTripped));
 
@@ -173,12 +173,12 @@ async function main() {
   check(`no players have empty salarySchedule (found ${emptySchedule.length})`,
     emptySchedule.length === 0);
 
-  console.log('\n--- 10. v1 → v2 → v3 → v4 full chain ---');
+  console.log('\n--- 10. v1 → v2 → v3 → v4 → v5 full chain ---');
   const v1 = buildV1Save(teams, players);
   const mChain = migrateSaveFile(v1 as unknown as SaveFile);
-  check('v1→v4 full-chain migration succeeds', mChain.ok);
+  check('v1→v5 full-chain migration succeeds', mChain.ok);
   if (mChain.ok) {
-    check('full-chain: schemaVersion is 4', mChain.file.schemaVersion === SAVE_SCHEMA_VERSION);
+    check('full-chain: schemaVersion is current', mChain.file.schemaVersion === SAVE_SCHEMA_VERSION);
     check('full-chain: all players have contract.type',
       mChain.file.players.every(p => typeof p.contract.type === 'string'));
     check('full-chain: FA pool exists',
@@ -348,7 +348,7 @@ async function main() {
   check('direct v3→v4 migration succeeds', directV4.ok);
   if (directV4.ok) {
     const byId = new Map(directV4.file.players.map((player) => [player.id, player]));
-    check('direct migration reaches schema v4', directV4.file.schemaVersion === 4);
+    check('direct migration reaches current schema', directV4.file.schemaVersion === SAVE_SCHEMA_VERSION);
     check('Bird proxy reconstructed from veteran experience >= 3',
       byId.get(birdId)?.birdRights?.type === 'bird');
     check('Early Bird proxy reconstructed from veteran experience 1–2',
@@ -379,9 +379,9 @@ async function main() {
 
     const directRoundTrip = JSON.parse(JSON.stringify(directV4.file)) as SaveFile;
     const directAgain = migrateSaveFile(directRoundTrip);
-    check('direct v4 re-migration reports no change',
+    check('direct current-schema re-migration reports no change',
       directAgain.ok && directAgain.migrated === false);
-    check('direct v4 re-migration is byte-identical after canonical JSON',
+    check('direct current-schema re-migration is byte-identical after canonical JSON',
       directAgain.ok && JSON.stringify(directAgain.file) === JSON.stringify(directRoundTrip));
   }
 

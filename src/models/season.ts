@@ -1,6 +1,27 @@
 import { StatLine } from './game';
 import { TransactionEntry } from './transaction';
 
+/** Immutable, append-only grant record for a banked Standard TPE. */
+export interface TradeException {
+  id: string;
+  teamId: string;
+  sourceTradeSeq: number;
+  sourcePlayerId: string;
+  /** Original banked amount in millions. Never mutate this field. */
+  amount: number;
+  createdDate: string;
+  expiresDate: string;
+  createdSeason: string;
+}
+
+/** Historical event-state needed to determine which signing exceptions remain available. */
+export interface TeamExceptionState {
+  teamId: string;
+  capYear: number;
+  /** Event-set fact: once true, it remains true for that cap year. */
+  operatedUnderCap: true;
+}
+
 export interface ScheduledGame {
   id: string;
   homeTeamId: string;
@@ -107,6 +128,10 @@ export interface SeasonState {
    * immutable once written; never rewrite one. See `TransactionEntry`.
    */
   transactionLog: TransactionEntry[];
+  /** Append-only event-set grant ledger. Balances and expiry are always derived. */
+  tradeExceptions: TradeException[];
+  /** Append-only per-cap-year history; legacy v4 saves intentionally start empty. */
+  teamExceptionStates: TeamExceptionState[];
   gamesPlayed: number;
   totalGames: number;
 }

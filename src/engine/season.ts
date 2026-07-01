@@ -138,6 +138,8 @@ export function createSeasonState(
     injuryHistory: [],
     freeAgentPool: [],
     transactionLog: [],
+    tradeExceptions: [],
+    teamExceptionStates: [],
     gamesPlayed: 0,
     totalGames: schedule.length,
   };

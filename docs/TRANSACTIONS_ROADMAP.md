@@ -165,10 +165,13 @@ Call these out explicitly wherever they appear so an agent doesn't try to "fix" 
 
 **Adds:**
 - **Trade exceptions** (created by uneven outgoing salary; usable in later trades).
-- **Mid-level / bi-annual / disabled-player exceptions.**
+- **Mid-level / bi-annual exceptions.** Disabled Player Exception is an approved
+  game-scope deferral for this phase.
 - **Waived-player dead money / stretch provision** — cutting a contract is no longer free; it hits the cap on a schedule.
   > This **retroactively makes Phase 1's cut a financial event.** Per the append-only rule: do **not** rewrite the old cut log entry. Dead money is *derived* state computed from (original contract + immutable cut event), applied on a schedule. Never store it as a mutable field you keep in sync.
 - **Contract expiry & option resolution** at season rollover (player/team options exercised or declined; expirings become free agents). Ties transactions into the **season-transition flow** — coordinate with wherever rollover lives.
+  Phase 5a supplies a tested pure transaction-layer rollover seam only; app/franchise
+  integration waits for the future offseason flow.
 
 **Out of scope for this phase:** sign-and-trade (Phase 5b). No CPU initiative — the CPU isn't proposing anything; it's only reacting to the player and resolving deterministic lifecycle events.
 

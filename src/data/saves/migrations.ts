@@ -56,6 +56,12 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
     migrated = true;
   }
 
+  // --- v4 -> v5: transactions Phase 5a (TPE + exception event-state ledgers) ---
+  if (version < 5) {
+    working = migrateV4toV5(working);
+    migrated = true;
+  }
+
   // Normalize even current-schema saves so stale FA pools/back-references cannot
   // survive indefinitely. This is idempotent and does not require a schema bump.
   try {
@@ -170,5 +176,20 @@ function migrateV3toV4(file: SaveFile): SaveFile {
     ...file,
     schemaVersion: 4,
     players,
+  };
+}
+
+
+/** v4 -> v5: empty-init new append-only ledgers without rewriting old log entries. */
+function migrateV4toV5(file: SaveFile): SaveFile {
+  return {
+    ...file,
+    schemaVersion: 5,
+    season: {
+      ...file.season,
+      tradeExceptions: file.season.tradeExceptions ?? [],
+      // Legacy room usage cannot be reconstructed reliably; canonical migration is empty.
+      teamExceptionStates: file.season.teamExceptionStates ?? [],
+    },
   };
 }
