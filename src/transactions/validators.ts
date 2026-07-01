@@ -14,8 +14,12 @@ import {
   NON_BIRD_MAX_YEARS,
   ROOKIE_MINIMUM_SALARY,
   SECOND_APRON,
+  SIGN_AND_TRADE_MAX_YEARS,
+  SIGN_AND_TRADE_MIN_YEARS,
 } from './constants';
 import { currentSalary } from './contracts';
+import { capYearForDate } from './date';
+import { computeSigningMechanismUsed } from './exceptions';
 
 /**
  * Roster-legality validators for the transaction gate.
@@ -305,4 +309,78 @@ export function minimumSalaryExceptionLegal(
     Math.abs(desired.desiredSalary - ROOKIE_MINIMUM_SALARY) <= 1e-9
     ? VALID
     : invalid('minimum salary exception requires a one- or two-year configured minimum contract');
+}
+
+// --- Phase 5b sign-and-trade peers ---
+
+export function signAndTradeBirdRightsRequired(
+  world: RosterWorld,
+  playerId: string,
+  signingTeamId: string,
+): ValidationResult {
+  const rights = getPlayer(world, playerId)?.birdRights;
+  return rights?.teamId === signingTeamId &&
+    (rights.type === 'bird' || rights.type === 'early_bird')
+    ? VALID
+    : invalid(`player "${playerId}" requires ${signingTeamId} Bird or Early Bird rights for sign-and-trade`);
+}
+
+export function signAndTradeTermLegal(
+  world: RosterWorld,
+  playerId: string,
+): ValidationResult {
+  const desired = getPlayer(world, playerId)?.desiredContract;
+  if (!desired) return invalid(`player "${playerId}" has no desired contract`);
+  if (desired.type === 'two_way') {
+    return invalid('sign-and-trade requires a standard contract, not a two-way contract');
+  }
+  return desired.desiredYears >= SIGN_AND_TRADE_MIN_YEARS &&
+    desired.desiredYears <= SIGN_AND_TRADE_MAX_YEARS
+    ? VALID
+    : invalid(`sign-and-trade contract must cover ${SIGN_AND_TRADE_MIN_YEARS} or ${SIGN_AND_TRADE_MAX_YEARS} years`);
+}
+
+export function signAndTradeSalaryLegal(
+  world: RosterWorld,
+  playerId: string,
+  signingTeamId: string,
+): ValidationResult {
+  const player = getPlayer(world, playerId);
+  const rights = player?.birdRights;
+  if (!player?.desiredContract || rights?.teamId !== signingTeamId ||
+      (rights.type !== 'bird' && rights.type !== 'early_bird')) {
+    return invalid(`player "${playerId}" lacks eligible sign-and-trade salary rights for ${signingTeamId}`);
+  }
+  const maximum = maximumSalaryForRights(
+    rights.type,
+    player.experience,
+    currentSalary(player.contract),
+  );
+  return player.desiredContract.desiredSalary <= maximum + 1e-9
+    ? VALID
+    : invalid(`${rights.type} rights permit at most $${maximum.toFixed(3)}M in year one`);
+}
+
+export function signAndTradeReceivingApronLegal(
+  receivingTeamId: string,
+  projectedTeamSalary: number,
+): ValidationResult {
+  return projectedTeamSalary <= FIRST_APRON + 1e-9
+    ? VALID
+    : invalid(`${receivingTeamId} cannot receive a sign-and-trade player above the first apron in Team Salary`);
+}
+
+export function signAndTradeReceiverTaxpayerMleLegal(
+  world: RosterWorld,
+  receivingTeamId: string,
+): ValidationResult {
+  const used = computeSigningMechanismUsed(
+    world,
+    receivingTeamId,
+    'taxpayer_mle',
+    capYearForDate(world.season.currentDate),
+  );
+  return used <= 1e-9
+    ? VALID
+    : invalid(`${receivingTeamId} cannot acquire a sign-and-trade player after using the taxpayer MLE in the current cap year`);
 }

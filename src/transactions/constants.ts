@@ -142,5 +142,9 @@ export const BI_ANNUAL_EXCEPTION = 5.135;
 export const BAE_MAX_YEARS = 2;
 export const TPE_DURATION_YEARS = 1;
 
+// --- Phase 5b — sign-and-trade ---
+export const SIGN_AND_TRADE_MIN_YEARS = 3;
+export const SIGN_AND_TRADE_MAX_YEARS = 4;
+
 /** Shared floating-point tolerance for transaction money arithmetic. */
 export const MONEY_EPSILON = 1e-9;

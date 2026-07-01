@@ -1,4 +1,4 @@
-import { Contract } from './player';
+import { Contract, ReSigningRightsType } from './player';
 
 /**
  * Roster-transaction data types (transactions Phase 1).
@@ -71,6 +71,27 @@ export interface TradeExceptionUsage {
   teamId: string;
   incomingPlayerId: string;
   amount: number;
+}
+
+export type SignAndTradeRightsType = Extract<
+  ReSigningRightsType,
+  'bird' | 'early_bird'
+>;
+
+/** One atomic signing-and-subsequent-trade, self-contained for later ledger reads. */
+export interface SignAndTradeEntry extends TransactionEntryBase {
+  type: 'sign_and_trade';
+  playerId: string;
+  signingTeamId: string;
+  receivingTeamId: string;
+  contractSigned: Contract;
+  rightsType: SignAndTradeRightsType;
+  additionalAssetsFromSigning: TradeAsset[];
+  assetsFromReceiving: TradeAsset[];
+  createdTradeExceptionIds?: string[];
+  tpeUsages?: TradeExceptionUsage[];
+  /** Teams whose successful matching plan used cap room. Canonical absence means none. */
+  capRoomTeams?: string[];
 }
 
 export type SigningMechanism =
@@ -152,6 +173,7 @@ export interface ContractExpiredEntry extends TransactionEntryBase {
 /** One immutable entry in the append-only transaction log. */
 export type TransactionEntry =
   | TradeEntry
+  | SignAndTradeEntry
   | SignEntry
   | CutEntry
   | OptionExercisedEntry

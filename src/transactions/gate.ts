@@ -5,6 +5,8 @@ import {
   TradeEntry,
   SignEntry,
   CutEntry,
+  SignAndTradeEntry,
+  TradeAsset,
 } from '@/models/transaction';
 import { SigningException } from '@/models/transaction';
 import { TeamExceptionState, TradeException } from '@/models/season';
@@ -15,7 +17,7 @@ import {
   projectStandardRosterCount,
   projectStandardRosterCountForSigning,
 } from './world';
-import { playerIdsOf } from './assets';
+import { buildTrade, playerAsset, playerIdsOf } from './assets';
 import { FREE_AGENT_TEAM_ID, MINIMUM_TEAM_SALARY, MONEY_EPSILON } from './constants';
 import {
   deriveReSigningRightsForCut,
@@ -26,6 +28,7 @@ import {
   analyzeTradeMatching,
   computeTeamPayroll,
   computeCapRoom,
+  TradeMatchingPlan,
 } from './cap';
 import { analyzeSigning } from './financial';
 import {
@@ -50,8 +53,17 @@ import {
   minimumSalaryExceptionLegal,
   stricterHardCap,
   stretchElectionLegal,
+  signAndTradeBirdRightsRequired,
+  signAndTradeTermLegal,
+  signAndTradeSalaryLegal,
+  signAndTradeReceivingApronLegal,
+  signAndTradeReceiverTaxpayerMleLegal,
 } from './validators';
-import { analyzeTpeUsages, RequestedTpeUsage } from './tpe';
+import {
+  analyzeTpeUsages,
+  RequestedTpeUsage,
+  TpeUsageAnalysis,
+} from './tpe';
 import { addOneCalendarYear, capYearForDate } from './date';
 import { computeDeadMoney } from './deadMoney';
 
@@ -88,6 +100,16 @@ export interface CutOp {
   teamId: string;
   playerId: string;
   stretch?: boolean;
+}
+
+export interface SignAndTradeOp {
+  signingTeamId: string;
+  receivingTeamId: string;
+  playerId: string;
+  additionalAssetsFromSigning?: TradeAsset[];
+  assetsFromReceiving?: TradeAsset[];
+  controlledTeamId?: string;
+  tpeUsages?: RequestedTpeUsage[];
 }
 
 /** Base fields shared by every log entry, stamped at append time. */
@@ -146,6 +168,45 @@ function exceptionStatesAfter(
     }
   }
   return states;
+}
+
+/** Exact Phase 5a banked-Standard-TPE construction, shared without changing its rules. */
+function bankedTradeExceptionGrants(
+  season: SeasonState,
+  tradeSeq: number,
+  teamPlans: ReadonlyArray<{ teamId: string; plan: TradeMatchingPlan }>,
+): TradeException[] {
+  return teamPlans.flatMap(({ teamId, plan }) => {
+    const banked = plan.maximumIncomingSalary - plan.incomingSalary;
+    if (plan.mode !== 'standard' || !plan.sourcePlayerId || banked <= MONEY_EPSILON) return [];
+    return [{
+      id: `tpe_${tradeSeq}_${teamId}_${plan.sourcePlayerId}`,
+      teamId,
+      sourceTradeSeq: tradeSeq,
+      sourcePlayerId: plan.sourcePlayerId,
+      amount: banked,
+      createdDate: season.currentDate,
+      expiresDate: addOneCalendarYear(season.currentDate),
+      createdSeason: season.seasonId,
+    }];
+  });
+}
+
+function composedTradeHardCap(
+  teamId: string,
+  plan: TradeMatchingPlan,
+  tpe: Extract<TpeUsageAnalysis, { ok: true }>,
+  unconditional?: 'first_apron' | 'second_apron',
+): 'first_apron' | 'second_apron' | undefined {
+  const withSignAndTradeTpe = stricterHardCap(
+    plan.triggeredHardCap,
+    tpe.triggeredSecondApron.has(teamId) ? 'second_apron' : undefined,
+  );
+  const withPriorYearTpe = stricterHardCap(
+    withSignAndTradeTpe,
+    tpe.triggeredFirstApron.has(teamId) ? 'first_apron' : undefined,
+  );
+  return stricterHardCap(withPriorYearTpe, unconditional);
 }
 
 // --- trade ---
@@ -208,14 +269,8 @@ export function applyTrade(
   const planB = matching.teamB.plan;
   const existingTeamA = getTeam(world, teamA)!;
   const existingTeamB = getTeam(world, teamB)!;
-  const triggerA = stricterHardCap(
-    planA.triggeredHardCap,
-    tpe.triggeredFirstApron.has(teamA) ? 'first_apron' : undefined,
-  );
-  const triggerB = stricterHardCap(
-    planB.triggeredHardCap,
-    tpe.triggeredFirstApron.has(teamB) ? 'first_apron' : undefined,
-  );
+  const triggerA = composedTradeHardCap(teamA, planA, tpe);
+  const triggerB = composedTradeHardCap(teamB, planB, tpe);
   const apronAndHardCapCheck = runValidators([
     () => tradeMechanismApronLegal(teamA, planA),
     () => tradeMechanismApronLegal(teamB, planB),
@@ -277,23 +332,10 @@ export function applyTrade(
   // season). Address when trades become user-facing; not this phase's concern.
 
   const tradeSeq = world.season.transactionLog.length;
-  const grants: TradeException[] = ([
+  const grants = bankedTradeExceptionGrants(world.season, tradeSeq, [
     { teamId: teamA, plan: planA },
     { teamId: teamB, plan: planB },
-  ] as const).flatMap(({ teamId, plan }) => {
-    const banked = plan.maximumIncomingSalary - plan.incomingSalary;
-    if (plan.mode !== 'standard' || !plan.sourcePlayerId || banked <= MONEY_EPSILON) return [];
-    return [{
-      id: `tpe_${tradeSeq}_${teamId}_${plan.sourcePlayerId}`,
-      teamId,
-      sourceTradeSeq: tradeSeq,
-      sourcePlayerId: plan.sourcePlayerId,
-      amount: banked,
-      createdDate: world.season.currentDate,
-      expiresDate: addOneCalendarYear(world.season.currentDate),
-      createdSeason: world.season.seasonId,
-    }];
-  });
+  ]);
   const capRoomTeams = [
     ...(planA.mode === 'room' ? [teamA] : []),
     ...(planB.mode === 'room' ? [teamB] : []),
@@ -323,6 +365,245 @@ export function applyTrade(
     world: nextWorld,
     entry: committed.entry,
     ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+// --- sign-and-trade ---
+
+/**
+ * Atomically sign an eligible free agent with the rights-owning team and trade the new
+ * contract. Approved game simplifications: Bird/Early Bird rights proxy prior-team
+ * eligibility; contracts are flat and fully guaranteed, so first-year protection and 5%
+ * raises need no separate machinery; base-year compensation is deferred and matching is
+ * symmetric at the full new salary; desiredContract is the only negotiation lever;
+ * post-S&T re-trade waiting periods are deferred; and tradeWindowOpen stands in until an
+ * offseason transaction phase exists.
+ */
+export function applySignAndTrade(
+  world: RosterWorld,
+  op: SignAndTradeOp,
+): TransactionResult {
+  const { signingTeamId, receivingTeamId, playerId } = op;
+  const additionalAssetsFromSigning = structuredClone(op.additionalAssetsFromSigning ?? []);
+  const assetsFromReceiving = structuredClone(op.assetsFromReceiving ?? []);
+  const requestedTpeUsages = structuredClone(op.tpeUsages ?? []);
+  const additionalPlayerIds = playerIdsOf(additionalAssetsFromSigning);
+  const receivingPlayerIds = playerIdsOf(assetsFromReceiving);
+
+  const originalCheck = runValidators([
+    () => teamExists(world, signingTeamId),
+    () => teamExists(world, receivingTeamId),
+    () => teamsDistinct(signingTeamId, receivingTeamId),
+    () => playerExists(world, playerId),
+    () => playerInFreeAgentPool(world, playerId),
+    () => playerHasTeamId(world, playerId, FREE_AGENT_TEAM_ID),
+    () => playerAbsentFromAllRosters(world, playerId),
+    () => playerHasValidDesiredContract(world, playerId),
+    () => signAndTradeBirdRightsRequired(world, playerId, signingTeamId),
+    () => signAndTradeTermLegal(world, playerId),
+    () => signAndTradeSalaryLegal(world, playerId, signingTeamId),
+    () => tradeWindowOpen(world),
+    () => signAndTradeReceiverTaxpayerMleLegal(world, receivingTeamId),
+    () => noDuplicatePlayers([playerId, ...additionalPlayerIds, ...receivingPlayerIds]),
+    ...additionalPlayerIds.map((id) => () => playerExists(world, id)),
+    ...receivingPlayerIds.map((id) => () => playerExists(world, id)),
+    ...additionalPlayerIds.map((id) => () => playerOnRoster(world, signingTeamId, id)),
+    ...receivingPlayerIds.map((id) => () => playerOnRoster(world, receivingTeamId, id)),
+  ]);
+  if (!originalCheck.ok) return originalCheck;
+
+  const signingPlayer = getPlayer(world, playerId)!;
+  const rightsType = signingPlayer.birdRights!.type;
+  if (rightsType !== 'bird' && rightsType !== 'early_bird') {
+    return { ok: false, reason: 'unreachable sign-and-trade rights state' };
+  }
+  // Exactly one instantiation per attempt. Shadow, final player, and log each receive clones.
+  const newContract = instantiateContract(signingPlayer.desiredContract!);
+
+  const shadow = structuredClone(world);
+  const shadowPlayer = getPlayer(shadow, playerId)!;
+  shadowPlayer.teamId = signingTeamId;
+  shadowPlayer.contract = structuredClone(newContract);
+  delete shadowPlayer.birdRights;
+  delete shadowPlayer.desiredContract;
+  shadow.season.freeAgentPool = shadow.season.freeAgentPool.filter((id) => id !== playerId);
+  getTeam(shadow, signingTeamId)!.roster.push(playerId);
+
+  const proposal = buildTrade(
+    signingTeamId,
+    receivingTeamId,
+    [playerAsset(playerId), ...structuredClone(additionalAssetsFromSigning)],
+    structuredClone(assetsFromReceiving),
+  );
+  const idsFromSigning = playerIdsOf(proposal.assetsFromA);
+  const idsFromReceiving = playerIdsOf(proposal.assetsFromB);
+
+  const consentAndRosterCheck = runValidators([
+    () => noControlledTeamNtc(shadow, proposal, op.controlledTeamId),
+    () => rosterWithinBounds(
+      signingTeamId,
+      projectStandardRosterCount(
+        shadow,
+        signingTeamId,
+        idsFromSigning,
+        idsFromReceiving,
+      ),
+    ),
+    () => rosterWithinBounds(
+      receivingTeamId,
+      projectStandardRosterCount(
+        shadow,
+        receivingTeamId,
+        idsFromReceiving,
+        idsFromSigning,
+      ),
+    ),
+  ]);
+  if (!consentAndRosterCheck.ok) return consentAndRosterCheck;
+
+  const tpe = analyzeTpeUsages(shadow, proposal, requestedTpeUsages);
+  if (!tpe.ok) return { ok: false, reason: `TPE validation failed: ${tpe.reason}` };
+  const matching = analyzeTradeMatching(shadow, proposal, tpe.allocatedByTeam);
+  const matchingCheck = runValidators([
+    () => tradeMatchingLegal(signingTeamId, matching.teamA),
+    () => tradeMatchingLegal(receivingTeamId, matching.teamB),
+  ]);
+  if (!matchingCheck.ok) return matchingCheck;
+  if (!matching.teamA.ok || !matching.teamB.ok) {
+    return { ok: false, reason: 'unreachable matching state' };
+  }
+
+  const signingPlan = matching.teamA.plan;
+  const receivingPlan = matching.teamB.plan;
+  const signingTrigger = composedTradeHardCap(signingTeamId, signingPlan, tpe);
+  const receivingTrigger = composedTradeHardCap(
+    receivingTeamId,
+    receivingPlan,
+    tpe,
+    'first_apron',
+  );
+  const existingSigningTeam = getTeam(world, signingTeamId)!;
+  const existingReceivingTeam = getTeam(world, receivingTeamId)!;
+  const apronAndHardCapCheck = runValidators([
+    () => tradeMechanismApronLegal(signingTeamId, signingPlan),
+    () => tradeMechanismApronLegal(receivingTeamId, receivingPlan),
+    () => signAndTradeReceivingApronLegal(
+      receivingTeamId,
+      receivingPlan.projectedTeamSalary,
+    ),
+    () => hardCapLegal(
+      signingTeamId,
+      signingPlan.projectedTeamSalary,
+      existingSigningTeam.hardCappedAtApron,
+      signingTrigger,
+    ),
+    () => hardCapLegal(
+      receivingTeamId,
+      receivingPlan.projectedTeamSalary,
+      existingReceivingTeam.hardCappedAtApron,
+      receivingTrigger,
+    ),
+  ]);
+  if (!apronAndHardCapCheck.ok) return apronAndHardCapCheck;
+
+  // All predicates passed. Build final state from the original world, never the shadow.
+  const leavingSigning = new Set(additionalPlayerIds);
+  const leavingReceiving = new Set(receivingPlayerIds);
+  const teams = world.teams.map((team) => {
+    if (team.id === signingTeamId) {
+      const hardCappedAtApron = stricterHardCap(
+        team.hardCappedAtApron,
+        signingTrigger,
+      );
+      return {
+        ...team,
+        roster: [
+          ...team.roster.filter((id) => !leavingSigning.has(id)),
+          ...receivingPlayerIds,
+        ],
+        ...(hardCappedAtApron ? { hardCappedAtApron } : {}),
+      };
+    }
+    if (team.id === receivingTeamId) {
+      const hardCappedAtApron = stricterHardCap(
+        team.hardCappedAtApron,
+        receivingTrigger,
+      );
+      return {
+        ...team,
+        roster: [
+          ...team.roster.filter((id) => !leavingReceiving.has(id)),
+          playerId,
+          ...additionalPlayerIds,
+        ],
+        ...(hardCappedAtApron ? { hardCappedAtApron } : {}),
+      };
+    }
+    return team;
+  });
+
+  const players = world.players.map((player) => {
+    if (player.id === playerId) {
+      const signed = structuredClone(player);
+      signed.teamId = receivingTeamId;
+      signed.contract = structuredClone(newContract);
+      delete signed.birdRights;
+      delete signed.desiredContract;
+      return signed;
+    }
+    if (leavingSigning.has(player.id)) return { ...player, teamId: receivingTeamId };
+    if (leavingReceiving.has(player.id)) return { ...player, teamId: signingTeamId };
+    return player;
+  });
+
+  const tradeSeq = world.season.transactionLog.length;
+  const grants = bankedTradeExceptionGrants(world.season, tradeSeq, [
+    { teamId: signingTeamId, plan: signingPlan },
+    { teamId: receivingTeamId, plan: receivingPlan },
+  ]);
+  const capRoomTeams = [
+    ...(signingPlan.mode === 'room' ? [signingTeamId] : []),
+    ...(receivingPlan.mode === 'room' ? [receivingTeamId] : []),
+  ];
+  const entry: SignAndTradeEntry = {
+    ...entryBase(world.season),
+    type: 'sign_and_trade',
+    playerId,
+    signingTeamId,
+    receivingTeamId,
+    contractSigned: structuredClone(newContract),
+    rightsType,
+    additionalAssetsFromSigning: structuredClone(additionalAssetsFromSigning),
+    assetsFromReceiving: structuredClone(assetsFromReceiving),
+    ...(grants.length ? { createdTradeExceptionIds: grants.map((grant) => grant.id) } : {}),
+    ...(tpe.usages.length ? { tpeUsages: structuredClone(tpe.usages) } : {}),
+    ...(capRoomTeams.length ? { capRoomTeams: [...capRoomTeams] } : {}),
+  };
+  const freeAgentPool = world.season.freeAgentPool.filter((id) => id !== playerId);
+  const preCommitWorld: RosterWorld = {
+    teams,
+    players,
+    season: { ...world.season, freeAgentPool },
+  };
+  const teamExceptionStates = exceptionStatesAfter(
+    preCommitWorld,
+    [signingTeamId, receivingTeamId],
+    capRoomTeams,
+  );
+  const committed = commitSeason(world.season, entry, freeAgentPool, {
+    tradeExceptions: [
+      ...world.season.tradeExceptions.map((grant) => structuredClone(grant)),
+      ...grants,
+    ],
+    teamExceptionStates,
+  });
+  const nextWorld = { teams, players, season: committed.season };
+  const warnings = salaryFloorWarnings(nextWorld, [signingTeamId, receivingTeamId]);
+  return {
+    ok: true,
+    world: nextWorld,
+    entry: committed.entry,
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 

@@ -25,7 +25,7 @@ function allUsage(world: RosterWorld): Map<string, number> {
   const grants = grantMap(world);
   const used = new Map<string, number>();
   for (const entry of world.season.transactionLog) {
-    if (entry.type !== 'trade') continue;
+    if (entry.type !== 'trade' && entry.type !== 'sign_and_trade') continue;
     for (const usage of entry.tpeUsages ?? []) {
       const grant = grants.get(usage.tpeId);
       if (!grant) throw new Error(`unknown trade exception usage id "${usage.tpeId}"`);
@@ -76,7 +76,13 @@ export interface RequestedTpeUsage {
 }
 
 export type TpeUsageAnalysis =
-  | { ok: true; usages: TradeExceptionUsage[]; allocatedByTeam: Map<string, Set<string>>; triggeredFirstApron: Set<string> }
+  | {
+      ok: true;
+      usages: TradeExceptionUsage[];
+      allocatedByTeam: Map<string, Set<string>>;
+      triggeredFirstApron: Set<string>;
+      triggeredSecondApron: Set<string>;
+    }
   | { ok: false; reason: string };
 
 /** Independent TPE allocation analysis used by the shared legality gate. */
@@ -97,6 +103,7 @@ export function analyzeTpeUsages(
     const usedTpes = new Set<string>();
     const allocatedByTeam = new Map<string, Set<string>>();
     const triggeredFirstApron = new Set<string>();
+    const triggeredSecondApron = new Set<string>();
     const usages: TradeExceptionUsage[] = [];
 
     for (const request of requests) {
@@ -125,8 +132,20 @@ export function analyzeTpeUsages(
       if (capYearForDate(grant.createdDate) < capYearForDate(world.season.currentDate)) {
         triggeredFirstApron.add(request.teamId);
       }
+      const sourceEntry = world.season.transactionLog.find(
+        (entry) => entry.seq === grant.sourceTradeSeq,
+      );
+      if (sourceEntry?.type === 'sign_and_trade') {
+        triggeredSecondApron.add(request.teamId);
+      }
     }
-    return { ok: true, usages, allocatedByTeam, triggeredFirstApron };
+    return {
+      ok: true,
+      usages,
+      allocatedByTeam,
+      triggeredFirstApron,
+      triggeredSecondApron,
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : 'invalid trade exception ledger' };
   }
