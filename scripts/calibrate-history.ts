@@ -12,6 +12,11 @@ import path from 'path';
 import { Team } from '../src/models/team';
 import { Player } from '../src/models/player';
 import { simulateGame } from '../src/engine';
+import { SeededRNG } from '../src/lib/rng';
+
+// Fixed seed for matchup selection so the engine benchmark is reproducible
+// run-to-run and comparable across engine changes.
+const CALIBRATION_SEED = 0x0ca11b;
 
 const HISTORY_DIR = path.join(process.cwd(), 'data', 'history');
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -166,11 +171,12 @@ async function simBenchmark(): Promise<EraBenchmark> {
   let homePtsSum = 0;
   let awayPtsSum = 0;
   const N = 400;
+  const rng = new SeededRNG(CALIBRATION_SEED);
 
   for (let i = 0; i < N; i++) {
-    const a = teams[Math.floor(Math.random() * teams.length)];
-    let b = teams[Math.floor(Math.random() * teams.length)];
-    while (b.id === a.id) b = teams[Math.floor(Math.random() * teams.length)];
+    const a = teams[Math.floor(rng.next() * teams.length)];
+    let b = teams[Math.floor(rng.next() * teams.length)];
+    while (b.id === a.id) b = teams[Math.floor(rng.next() * teams.length)];
     const ap = byTeam.get(a.id)!;
     const bp = byTeam.get(b.id)!;
     if (ap.length < 5 || bp.length < 5) continue;
