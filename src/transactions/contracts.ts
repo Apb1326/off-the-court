@@ -133,23 +133,6 @@ export function instantiateContract(desired: DesiredContract): Contract {
 }
 
 /**
- * Cap-hold stub (Phase 2). Returns a placeholder cap-hold NUMBER for a player.
- *
- * This is NOT a Bird-rights-aware calculation — it knows nothing about the team's
- * relationship to the player or their years of service. It is a PLACEHOLDER value
- * that Phase 3 will replace with real cap-hold logic. Does NOT do anything yet —
- * no system reads this value in Phase 2.
- *
- * Phase 3 must: accept a rights-owning teamId, look up Bird/Early-Bird/Non-Bird
- * status and years of service, and return a hold that can be charged to that
- * team's cap sheet. This stub establishes the seam; the signature will change.
- */
-export function computeCapHoldStub(contract: Contract): number {
-  const prev = currentSalary(contract);
-  return Math.max(prev * 1.5, CONTRACT_MINIMUM_SALARY);
-}
-
-/**
  * Generate a DesiredContract for a player entering the FA pool.
  * Uses the player's previous contract and their overall quality to set
  * market-rate expectations. FAs typically can't command the same deal

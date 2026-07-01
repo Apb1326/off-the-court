@@ -291,7 +291,12 @@ export function analyzeTradeMatchingForTeam(
   const projectedTeamSalary = projectPostTradeCapRoomSalary(
     world, teamId, outgoingPlayerIds, incomingPlayerIds,
   );
-  // CBA 101 keys removal of the allowance to post-trade Team Salary, not Apron Team Salary.
+  // DESIGN DECISION: This check uses Team Salary (payroll + cap holds + incomplete
+  // roster charges), rather than the narrower Apron Team Salary the real CBA specifies.
+  // This is intentionally more restrictive and avoids splitting the accounting basis
+  // before Phase 5a's full exception system (MLE/BAE/dead money) exists. Once Phase 5a
+  // ships and tax/apron payroll diverges from raw payroll, revisit whether this check
+  // should switch to the narrower Apron Team Salary base.
   const allowance = projectedTeamSalary > FIRST_APRON + MONEY_EPSILON ? 0 : TRADE_ALLOWANCE;
   const currentRoom = computeCapRoom(world, teamId);
 

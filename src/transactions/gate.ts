@@ -180,6 +180,12 @@ export function applyTrade(
   const apronAndHardCapCheck = runValidators([
     () => tradeMechanismApronLegal(teamA, planA),
     () => tradeMechanismApronLegal(teamB, planB),
+    // DESIGN DECISION: This check uses Team Salary (payroll + cap holds + incomplete
+    // roster charges), rather than the narrower Apron Team Salary the real CBA specifies.
+    // This is intentionally more restrictive and avoids splitting the accounting basis
+    // before Phase 5a's full exception system (MLE/BAE/dead money) exists. Once Phase 5a
+    // ships and tax/apron payroll diverges from raw payroll, revisit whether hard cap
+    // enforcement should switch to the narrower Apron Team Salary base.
     () => hardCapLegal(
       teamA, planA.projectedTeamSalary,
       existingTeamA.hardCappedAtApron, planA.triggeredHardCap,
@@ -283,6 +289,12 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
   const hardCapCheck = runValidators([
     () => reSigningRightsLegal(world, teamId, playerId, signing.plan),
     () => minimumSalaryExceptionLegal(world, playerId, signing.plan),
+    // DESIGN DECISION: This check uses Team Salary (payroll + cap holds + incomplete
+    // roster charges), rather than the narrower Apron Team Salary the real CBA specifies.
+    // This is intentionally more restrictive and avoids splitting the accounting basis
+    // before Phase 5a's full exception system (MLE/BAE/dead money) exists. Once Phase 5a
+    // ships and tax/apron payroll diverges from raw payroll, revisit whether hard cap
+    // enforcement should switch to the narrower Apron Team Salary base.
     () => hardCapLegal(
       teamId,
       signing.plan.projectedCapRoomSalary,
