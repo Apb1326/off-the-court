@@ -2,7 +2,7 @@
  * Standalone transactions Phase 3 verification.
  *
  * Exercises real normalized data, threshold boundaries, incomplete-roster
- * charges, the temporary cut-log cap-hold proxy, corrupt-world failures, and
+ * charges, explicit re-signing-rights cap holds, corrupt-world failures, and
  * input purity. Run with:
  *   node_modules/.bin/tsx scripts/test-cap-status.ts
  */
@@ -12,11 +12,9 @@ import path from 'path';
 import { createSeasonState } from '../src/engine/season';
 import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
-import { CutEntry } from '../src/models/transaction';
 import {
   applyCut,
   applySignFreeAgent,
-  CAP_HOLD_PERCENTAGE,
   CapStatus,
   classifyCapStatus,
   computeApronPayroll,
@@ -24,6 +22,7 @@ import {
   computeCapRoom,
   computeCapRoomSalary,
   computeIncompleteRosterCharge,
+  computePlayerCapHold,
   computeTaxPayroll,
   computeTeamPayroll,
   currentSalary,
@@ -295,7 +294,7 @@ function testIncompleteRosterCharges(world: RosterWorld): void {
 }
 
 function testCapHoldHistory(realWorld: RosterWorld): void {
-  console.log('\nD. Cap-hold history');
+  console.log('\nD. Explicit rights-owned cap holds');
   const { world, teamAId, teamBId, cutPlayerId, seededFreeAgentId } =
     capHoldHistoryScenario(realWorld);
 
@@ -305,13 +304,12 @@ function testCapHoldHistory(realWorld: RosterWorld): void {
   const cutByA = applyCut(world, { teamId: teamAId, playerId: cutPlayerId });
   check('Team A can cut from a 15-player roster', cutByA.ok);
   if (!cutByA.ok) return;
-  const cutAEntry = cutByA.entry as CutEntry;
-  const expectedA = Math.max(
-    currentSalary(cutAEntry.contractAtCut!) * CAP_HOLD_PERCENTAGE,
-    ROOKIE_MINIMUM_SALARY,
-  );
+  const cutAPlayer = cutByA.world.players.find((player) => player.id === cutPlayerId)!;
+  const expectedA = computePlayerCapHold(cutAPlayer);
   check('cut player enters the FA pool', cutByA.world.season.freeAgentPool.includes(cutPlayerId));
-  check('Team A receives exactly one hold based on contractAtCut',
+  check('cut assigns explicit re-signing rights to Team A',
+    cutAPlayer.birdRights?.teamId === teamAId);
+  check('Team A receives exactly one hold from the player rights record',
     close(computeCapHolds(cutByA.world, teamAId), expectedA));
 
   const signedByB = applySignFreeAgent(cutByA.world, { teamId: teamBId, playerId: cutPlayerId });
@@ -319,18 +317,18 @@ function testCapHoldHistory(realWorld: RosterWorld): void {
   if (!signedByB.ok) return;
   check('signing removes the player from the FA pool',
     !signedByB.world.season.freeAgentPool.includes(cutPlayerId));
+  check('signing clears the player rights record',
+    signedByB.world.players.find((player) => player.id === cutPlayerId)?.birdRights === undefined);
   check('Team A hold disappears after Team B signs the player',
     computeCapHolds(signedByB.world, teamAId) === 0);
 
   const cutByB = applyCut(signedByB.world, { teamId: teamBId, playerId: cutPlayerId });
   check('Team B can later cut the same player', cutByB.ok);
   if (!cutByB.ok) return;
-  const cutBEntry = cutByB.entry as CutEntry;
-  const expectedB = Math.max(
-    currentSalary(cutBEntry.contractAtCut!) * CAP_HOLD_PERCENTAGE,
-    ROOKIE_MINIMUM_SALARY,
-  );
-  check('only Team B owns the latest cut proxy hold',
+  const cutBPlayer = cutByB.world.players.find((player) => player.id === cutPlayerId)!;
+  const expectedB = computePlayerCapHold(cutBPlayer);
+  check('the later cut assigns rights to Team B', cutBPlayer.birdRights?.teamId === teamBId);
+  check('only Team B owns the current explicit-rights hold',
     computeCapHolds(cutByB.world, teamAId) === 0 &&
     close(computeCapHolds(cutByB.world, teamBId), expectedB));
 
@@ -343,12 +341,9 @@ function testCapHoldHistory(realWorld: RosterWorld): void {
   const cutAgainByA = applyCut(signedBackByA.world, { teamId: teamAId, playerId: cutPlayerId });
   check('Team A can cut the player again', cutAgainByA.ok);
   if (!cutAgainByA.ok) return;
-  const latestCut = cutAgainByA.entry as CutEntry;
-  const latestExpected = Math.max(
-    currentSalary(latestCut.contractAtCut!) * CAP_HOLD_PERCENTAGE,
-    ROOKIE_MINIMUM_SALARY,
-  );
-  check('repeated sign/cut history counts one current FA hold, never stale holds',
+  const latestCutPlayer = cutAgainByA.world.players.find((player) => player.id === cutPlayerId)!;
+  const latestExpected = computePlayerCapHold(latestCutPlayer);
+  check('repeated sign/cut activity counts one current rights-owned hold, never stale holds',
     close(computeCapHolds(cutAgainByA.world, teamAId), latestExpected) &&
     computeCapHolds(cutAgainByA.world, teamBId) === 0);
 
@@ -361,7 +356,7 @@ function testCapHoldHistory(realWorld: RosterWorld): void {
     playerId: seededFreeAgentId,
     fromTeamId: teamAId,
   }];
-  check('pre-Phase-2 cut without contractAtCut creates no hold',
+  check('a legacy cut-log entry without explicit rights creates no hold',
     computeCapHolds(legacyCutWorld, teamAId) === 0);
 }
 

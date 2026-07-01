@@ -1,9 +1,9 @@
 /**
- * Tests the save schema migration for transactions Phase 1 (v1 -> v2).
+ * Tests the complete save schema migration chain through schema v4.
  *
  * Proves:
  *  - A pre-Phase-1 save (no free-agent pool / transaction log, schemaVersion 1) migrates to
- *    an EMPTY pool + EMPTY log at schemaVersion 2, then re-serializes cleanly.
+ *    an EMPTY log and canonical pool at schemaVersion 4, then re-serializes cleanly.
  *  - Migration is idempotent: running it again is a no-op (byte-identical).
  *  - The real SaveStore.loadSave path migrates an old on-disk save transparently.
  *  - A save from a newer, unknown version is still rejected (not down-converted).

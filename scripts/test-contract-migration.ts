@@ -1,9 +1,9 @@
 /**
- * Tests the save schema migration for transactions Phase 2 (v2 -> v3: contracts).
+ * Tests the save schema migration chain through transactions Phase 4 (schema v4).
  *
  * Proves:
  *  1. FNV-1a hash stability (test vector)
- *  2. v2 -> v3 migration: all players have valid contracts
+ *  2. v2 -> v4 migration chain: all players have valid contracts
  *  3. FA-pool repair: teamId === '' players are in pool
  *  4. FA-pool players have desiredContract
  *  5. Idempotency: migrate twice = byte-identical
@@ -11,8 +11,9 @@
  *  7. Plausibility: stars have higher salaries than bench
  *  8. Tier precedence: young high-rated → rookie_scale; old star → max
  *  9. No empty salarySchedule
- *  10. v1 → v2 → v3 full chain
+ *  10. v1 → v2 → v3 → v4 full chain
  *  11. validateContract passes on all generated contracts
+ *  12. direct v3 → v4 rights reconstruction and canonical absence
  *
  * Run with: node_modules/.bin/tsx scripts/test-contract-migration.ts
  */
@@ -28,6 +29,7 @@ import { validateContract } from '../src/transactions/contracts';
 import {
   FIRST_APRON,
   FREE_AGENT_TEAM_ID,
+  ROOKIE_MINIMUM_SALARY,
   SALARY_CAP,
   SECOND_APRON,
 } from '../src/transactions/constants';
@@ -74,12 +76,12 @@ async function main() {
   const hashResult = fnv1a('player_123');
   check(`fnv1a('player_123') === 2558982419 (got ${hashResult})`, hashResult === 2558982419);
 
-  console.log('\n--- 2. v2 -> v3 migration: valid contracts ---');
+  console.log('\n--- 2. v2 -> v4 migration chain: valid contracts ---');
   const v2 = buildV2Save(teams, players);
   const m1 = migrateSaveFile(v2);
-  check('v2->v3 migration succeeds', m1.ok);
+  check('v2->v4 migration succeeds', m1.ok);
   if (!m1.ok) { finish(); return; }
-  check('migrated schemaVersion is 3', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
+  check('migrated schemaVersion is 4', m1.file.schemaVersion === SAVE_SCHEMA_VERSION);
   check('all players have contract.type',
     m1.file.players.every(p => typeof p.contract.type === 'string'));
   check('all players have non-empty salarySchedule',
@@ -103,7 +105,7 @@ async function main() {
   const roundTripped = JSON.parse(JSON.stringify(m1.file)) as SaveFile;
   const m2 = migrateSaveFile(roundTripped);
   check('second migration succeeds', m2.ok);
-  check('second migration reports no change (already at v3)', m2.ok && m2.migrated === false);
+  check('second migration reports no change (already at v4)', m2.ok && m2.migrated === false);
   check('second migration is byte-identical',
     m2.ok && JSON.stringify(m2.file) === JSON.stringify(roundTripped));
 
@@ -171,12 +173,12 @@ async function main() {
   check(`no players have empty salarySchedule (found ${emptySchedule.length})`,
     emptySchedule.length === 0);
 
-  console.log('\n--- 10. v1 → v2 → v3 full chain ---');
+  console.log('\n--- 10. v1 → v2 → v3 → v4 full chain ---');
   const v1 = buildV1Save(teams, players);
   const mChain = migrateSaveFile(v1 as unknown as SaveFile);
-  check('v1→v3 full-chain migration succeeds', mChain.ok);
+  check('v1→v4 full-chain migration succeeds', mChain.ok);
   if (mChain.ok) {
-    check('full-chain: schemaVersion is 3', mChain.file.schemaVersion === SAVE_SCHEMA_VERSION);
+    check('full-chain: schemaVersion is 4', mChain.file.schemaVersion === SAVE_SCHEMA_VERSION);
     check('full-chain: all players have contract.type',
       mChain.file.players.every(p => typeof p.contract.type === 'string'));
     check('full-chain: FA pool exists',
@@ -261,6 +263,127 @@ async function main() {
     !duplicateResult.ok && /multiple rosters/.test(duplicateResult.reason));
   check('duplicate-roster rejection leaves migration input byte-identical',
     JSON.stringify(duplicateOwner) === duplicateBefore);
+
+  console.log('\n--- 14. Direct v3 → v4 rights migration ---');
+  const directV3 = structuredClone(m1.file);
+  directV3.schemaVersion = 3;
+  const releasingTeam = directV3.teams[0];
+  const releasedIds = releasingTeam.roster.slice(0, 4);
+  const [birdId, earlyBirdId, nonBirdId, supersededCutId] = releasedIds;
+  releasingTeam.roster = releasingTeam.roster.filter((id) => !releasedIds.includes(id));
+  directV3.season.freeAgentPool = [...directV3.season.freeAgentPool, ...releasedIds];
+  directV3.players = directV3.players.map((player) => {
+    if (player.id === birdId) {
+      return { ...player, teamId: FREE_AGENT_TEAM_ID, experience: 3 };
+    }
+    if (player.id === earlyBirdId) {
+      return { ...player, teamId: FREE_AGENT_TEAM_ID, experience: 1 };
+    }
+    if (player.id === nonBirdId) {
+      return {
+        ...player,
+        teamId: FREE_AGENT_TEAM_ID,
+        contract: { type: 'minimum', salarySchedule: [1.1], noTradeClause: false },
+        desiredContract: { type: 'veteran', desiredSalary: 1.1, desiredYears: 1 },
+      };
+    }
+    if (releasedIds.includes(player.id)) {
+      return { ...player, teamId: FREE_AGENT_TEAM_ID };
+    }
+    if (player.id === directV3.teams[1].roster[0]) {
+      return { ...player, birdRights: { teamId: releasingTeam.id, type: 'bird' as const } };
+    }
+    return player;
+  });
+
+  const entryBase = {
+    date: directV3.season.currentDate,
+    season: directV3.season.seasonId,
+  };
+  const firstSeq = directV3.season.transactionLog.length;
+  directV3.season.transactionLog.push(
+    {
+      ...entryBase,
+      seq: firstSeq,
+      type: 'cut',
+      playerId: birdId,
+      fromTeamId: releasingTeam.id,
+      contractAtCut: { type: 'veteran', salarySchedule: [10], noTradeClause: false },
+    },
+    {
+      ...entryBase,
+      seq: firstSeq + 1,
+      type: 'cut',
+      playerId: earlyBirdId,
+      fromTeamId: releasingTeam.id,
+      contractAtCut: { type: 'veteran', salarySchedule: [5], noTradeClause: false },
+    },
+    {
+      ...entryBase,
+      seq: firstSeq + 2,
+      type: 'cut',
+      playerId: nonBirdId,
+      fromTeamId: releasingTeam.id,
+      contractAtCut: { type: 'minimum', salarySchedule: [1], noTradeClause: false },
+    },
+    {
+      ...entryBase,
+      seq: firstSeq + 3,
+      type: 'cut',
+      playerId: supersededCutId,
+      fromTeamId: releasingTeam.id,
+      contractAtCut: { type: 'max', salarySchedule: [40], noTradeClause: false },
+    },
+    {
+      ...entryBase,
+      seq: firstSeq + 4,
+      type: 'sign',
+      playerId: supersededCutId,
+      toTeamId: releasingTeam.id,
+    },
+  );
+  directV3.teams[1].hardCappedAtApron = 'first_apron';
+  const logBeforeV4 = JSON.stringify(directV3.season.transactionLog);
+  const directV4 = migrateSaveFile(directV3);
+  check('direct v3→v4 migration succeeds', directV4.ok);
+  if (directV4.ok) {
+    const byId = new Map(directV4.file.players.map((player) => [player.id, player]));
+    check('direct migration reaches schema v4', directV4.file.schemaVersion === 4);
+    check('Bird proxy reconstructed from veteran experience >= 3',
+      byId.get(birdId)?.birdRights?.type === 'bird');
+    check('Early Bird proxy reconstructed from veteran experience 1–2',
+      byId.get(earlyBirdId)?.birdRights?.type === 'early_bird');
+    check('Non-Bird proxy reconstructed from minimum contract',
+      byId.get(nonBirdId)?.birdRights?.type === 'non_bird');
+    check('legacy minimum free-agent ask is normalized for the minimum exception',
+      byId.get(nonBirdId)?.desiredContract?.type === 'minimum' &&
+      byId.get(nonBirdId)?.desiredContract?.desiredSalary === ROOKIE_MINIMUM_SALARY);
+    check('latest sign supersedes an older cut for rights reconstruction',
+      !('birdRights' in (byId.get(supersededCutId) ?? {})));
+    check('all reconstructed rights belong to the releasing team',
+      [birdId, earlyBirdId, nonBirdId]
+        .every((id) => byId.get(id)?.birdRights?.teamId === releasingTeam.id));
+    check('seeded free agents without an applicable cut keep rights absent',
+      directV4.file.players
+        .filter((player) => !releasedIds.includes(player.id) && player.teamId === FREE_AGENT_TEAM_ID)
+        .every((player) => !('birdRights' in player)));
+    check('normalization strips stale rights keys from rostered players',
+      directV4.file.players
+        .filter((player) => directV4.file.teams.some((team) => team.roster.includes(player.id)))
+        .every((player) => !('birdRights' in player)));
+    check('existing hard-cap state is preserved and absent state stays absent',
+      directV4.file.teams[1].hardCappedAtApron === 'first_apron' &&
+      !('hardCappedAtApron' in directV4.file.teams[0]));
+    check('v3→v4 migration does not rewrite append-only log entries',
+      JSON.stringify(directV4.file.season.transactionLog) === logBeforeV4);
+
+    const directRoundTrip = JSON.parse(JSON.stringify(directV4.file)) as SaveFile;
+    const directAgain = migrateSaveFile(directRoundTrip);
+    check('direct v4 re-migration reports no change',
+      directAgain.ok && directAgain.migrated === false);
+    check('direct v4 re-migration is byte-identical after canonical JSON',
+      directAgain.ok && JSON.stringify(directAgain.file) === JSON.stringify(directRoundTrip));
+  }
 
   finish();
 }

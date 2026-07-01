@@ -1,5 +1,8 @@
 import { SaveFile, SAVE_SCHEMA_VERSION } from '@/models/save';
-import { normalizePlayersForSave } from '@/transactions/contracts';
+import {
+  deriveReSigningRightsForCut,
+  normalizePlayersForSave,
+} from '@/transactions/contracts';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -44,6 +47,12 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
   // --- v2 -> v3: transactions Phase 2 (contracts) ---
   if (version < 3) {
     working = migrateV2toV3(working);
+    migrated = true;
+  }
+
+  // --- v3 -> v4: transactions Phase 4 (rights + persisted hard-cap state) ---
+  if (version < 4) {
+    working = migrateV3toV4(working);
     migrated = true;
   }
 
@@ -106,5 +115,60 @@ function migrateV2toV3(file: SaveFile): SaveFile {
   return {
     ...file,
     schemaVersion: 3,
+  };
+}
+
+/**
+ * v3 -> v4: reconstruct explicit re-signing rights for current free agents.
+ *
+ * The latest relevant sign/cut event decides whether a cut is applicable. A
+ * legacy cut without its immutable contract snapshot cannot create rights.
+ * Team hard-cap state is intentionally absent by default; no undefined key is
+ * added. The transaction log is read only and returned byte-for-byte unchanged.
+ */
+function migrateV3toV4(file: SaveFile): SaveFile {
+  const rosteredPlayerIds = new Set(file.teams.flatMap((team) => team.roster));
+  const currentFreeAgentIds = new Set(
+    file.players
+      .filter((player) => !rosteredPlayerIds.has(player.id))
+      .map((player) => player.id),
+  );
+  const latestRelevantEntry = new Map<string, (typeof file.season.transactionLog)[number]>();
+
+  for (const entry of file.season.transactionLog ?? []) {
+    if (
+      (entry.type === 'sign' || entry.type === 'cut') &&
+      currentFreeAgentIds.has(entry.playerId)
+    ) {
+      latestRelevantEntry.set(entry.playerId, entry);
+    }
+  }
+
+  const players = file.players.map((player) => {
+    if (!currentFreeAgentIds.has(player.id)) return player;
+
+    // v3 had no canonical rights field. Strip any stray key before rebuilding
+    // so no applicable cut means canonical absence, not undefined or stale data.
+    const withoutBirdRights = { ...player };
+    delete withoutBirdRights.birdRights;
+    const entry = latestRelevantEntry.get(player.id);
+    if (entry?.type !== 'cut' || entry.contractAtCut === undefined) {
+      return withoutBirdRights;
+    }
+
+    return {
+      ...withoutBirdRights,
+      birdRights: deriveReSigningRightsForCut(
+        entry.contractAtCut,
+        player.experience,
+        entry.fromTeamId,
+      ),
+    };
+  });
+
+  return {
+    ...file,
+    schemaVersion: 4,
+    players,
   };
 }

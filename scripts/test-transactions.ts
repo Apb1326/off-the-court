@@ -13,7 +13,7 @@
  *
  * Standalone (no Next runtime). Reuses the real player/team data for fully-valid objects,
  * then sets up controlled roster sizes per scenario. Run with:
- *   node_modules/.bin/tsx scripts/test-transactions.ts
+ *   node --import tsx scripts/test-transactions.ts
  */
 import { readFile } from 'fs/promises';
 import path from 'path';
@@ -35,6 +35,8 @@ import {
   FREE_AGENT_TEAM_ID,
   ROSTER_MIN,
   ROSTER_MAX,
+  CONTRACT_TWO_WAY_SALARY,
+  ROOKIE_MINIMUM_SALARY,
 } from '../src/transactions';
 import { CutEntry, SignEntry, TradeEntry } from '../src/models/transaction';
 
@@ -47,6 +49,43 @@ function check(label: string, ok: boolean) {
 let realTeams: Team[];
 let realPlayers: Player[];
 let pool: string[];
+
+/**
+ * Keep Phase 1/2 roster and mutation tests financially neutral under Phase 4.
+ * Uniform low salaries make intended-success trades legal through cap room,
+ * while preserving each player's contract type for standard/two-way counting.
+ */
+const FIXTURE_STANDARD_SALARY = 5;
+
+function fixturePlayer(player: Player, isFreeAgent: boolean): Player {
+  const copy = structuredClone(player);
+  const salary = copy.contract.type === 'two_way'
+    ? CONTRACT_TWO_WAY_SALARY
+    : FIXTURE_STANDARD_SALARY;
+  copy.contract = {
+    ...copy.contract,
+    salarySchedule: copy.contract.salarySchedule.map(() => salary),
+    noTradeClause: false,
+  };
+  copy.desiredContract = isFreeAgent
+    ? {
+        type: 'minimum',
+        desiredSalary: ROOKIE_MINIMUM_SALARY,
+        desiredYears: 1,
+      }
+    : undefined;
+  delete copy.birdRights;
+  return copy;
+}
+
+/** Give every test world exactly one canonical, currently-open deadline. */
+function setCanonicalOpenTradeWindow(season: RosterWorld['season']): void {
+  season.currentDate = '2025-10-20';
+  season.markers = [
+    ...season.markers.filter((marker) => marker.type !== 'trade_deadline'),
+    { type: 'trade_deadline', date: '2026-02-05', label: 'Trade Deadline' },
+  ];
+}
 
 /** Roster array of a team in a world, by id. */
 function rosterOf(world: RosterWorld, teamId: string): string[] {
@@ -83,16 +122,14 @@ function scenario(aSize: number, bSize: number, faCount = 0) {
   const players = realPlayers
     .filter((p) => used.has(p.id))
     .map((p) => {
-      const c = structuredClone(p);
+      const c = fixturePlayer(p, faIds.includes(p.id));
       c.teamId = aRoster.includes(p.id) ? aId : bRoster.includes(p.id) ? bId : FREE_AGENT_TEAM_ID;
-      c.desiredContract = faIds.includes(p.id)
-        ? generateDesiredContract(c)
-        : undefined;
       return c;
     });
 
   const season = createSeasonState(realTeams, realPlayers, { seed: 1 });
   season.freeAgentPool = [...faIds];
+  setCanonicalOpenTradeWindow(season);
 
   const world: RosterWorld = { teams: [teamA, teamB], players, season };
   return { world, aId, bId, aRoster, bRoster, faIds };
@@ -100,12 +137,18 @@ function scenario(aSize: number, bSize: number, faCount = 0) {
 
 function liveWorld(): RosterWorld {
   const teams = structuredClone(realTeams);
-  const players = structuredClone(realPlayers);
+  const players = realPlayers.map((player) => {
+    const isFreeAgent = player.teamId === FREE_AGENT_TEAM_ID;
+    const copy = fixturePlayer(player, isFreeAgent);
+    copy.teamId = player.teamId;
+    return copy;
+  });
   const season = createSeasonState(teams, players, { seed: 1 });
   season.freeAgentPool = players
     .filter((player) => player.teamId === FREE_AGENT_TEAM_ID)
     .map((player) => player.id)
     .sort();
+  setCanonicalOpenTradeWindow(season);
   return { teams, players, season };
 }
 

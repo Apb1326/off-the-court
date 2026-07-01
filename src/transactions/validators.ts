@@ -1,6 +1,21 @@
 import { RosterWorld, getTeam, getPlayer } from './world';
 import { ROSTER_MIN, ROSTER_MAX } from './constants';
 import { validateDesiredContract } from './contracts';
+import { TradeProposal } from '@/models/transaction';
+import { Team } from '@/models/team';
+import { TradeMatchingAnalysis, TradeMatchingPlan } from './cap';
+import { maximumSalaryForRights, SigningAnalysis, SigningPlan } from './financial';
+import {
+  BIRD_MAX_YEARS,
+  EARLY_BIRD_MAX_YEARS,
+  EARLY_BIRD_MIN_YEARS,
+  FIRST_APRON,
+  MINIMUM_EXCEPTION_MAX_YEARS,
+  NON_BIRD_MAX_YEARS,
+  ROOKIE_MINIMUM_SALARY,
+  SECOND_APRON,
+} from './constants';
+import { currentSalary } from './contracts';
 
 /**
  * Roster-legality validators for the transaction gate.
@@ -128,4 +143,150 @@ export function rosterWithinBounds(teamId: string, projectedSize: number): Valid
     );
   }
   return VALID;
+}
+
+// --- Phase 4 financial / temporal peers ---
+
+const CANONICAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isCanonicalDate(value: string): boolean {
+  if (!CANONICAL_DATE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/** Trading is legal through the deadline date and fails closed on invalid season state. */
+export function tradeWindowOpen(world: RosterWorld): ValidationResult {
+  const deadlines = world.season.markers.filter((marker) => marker.type === 'trade_deadline');
+  if (deadlines.length !== 1) {
+    return invalid(`season must contain exactly one trade-deadline marker (found ${deadlines.length})`);
+  }
+  const deadline = deadlines[0].date;
+  if (!isCanonicalDate(world.season.currentDate) || !isCanonicalDate(deadline)) {
+    return invalid('trade window requires canonical YYYY-MM-DD current and deadline dates');
+  }
+  return world.season.currentDate <= deadline
+    ? VALID
+    : invalid(`trading closed after the ${deadline} trade deadline`);
+}
+
+/** Only an NTC player leaving the controlled team requires explicit consent in Phase 4. */
+export function noControlledTeamNtc(
+  world: RosterWorld,
+  proposal: TradeProposal,
+  controlledTeamId?: string,
+): ValidationResult {
+  if (!controlledTeamId) return VALID;
+  const outgoing = proposal.teamA === controlledTeamId
+    ? proposal.assetsFromA
+    : proposal.teamB === controlledTeamId
+      ? proposal.assetsFromB
+      : [];
+  for (const asset of outgoing) {
+    if (asset.kind !== 'player') continue;
+    const player = getPlayer(world, asset.playerId);
+    if (player?.contract.noTradeClause) {
+      return invalid(`player "${player.id}" has a no-trade clause and cannot leave the controlled team`);
+    }
+  }
+  return VALID;
+}
+
+export function tradeMatchingLegal(
+  teamId: string,
+  analysis: TradeMatchingAnalysis,
+): ValidationResult {
+  return analysis.ok ? VALID : invalid(`salary matching failed for ${teamId}: ${analysis.reason}`);
+}
+
+/** Mechanism-specific apron restrictions remain a peer of salary arithmetic. */
+export function tradeMechanismApronLegal(
+  teamId: string,
+  plan: TradeMatchingPlan,
+): ValidationResult {
+  if (plan.mode === 'expanded' && plan.projectedApronPayroll > FIRST_APRON + 1e-9) {
+    return invalid(`${teamId} cannot use the Expanded TPE above the first apron`);
+  }
+  if (plan.mode === 'aggregated_standard' && plan.projectedApronPayroll > SECOND_APRON + 1e-9) {
+    return invalid(`${teamId} cannot aggregate salaries above the second apron`);
+  }
+  return VALID;
+}
+
+/** First-apron is stricter and can never be replaced by a second-apron trigger. */
+export function stricterHardCap(
+  existing: Team['hardCappedAtApron'],
+  triggered: Team['hardCappedAtApron'],
+): Team['hardCappedAtApron'] {
+  if (existing === 'first_apron' || triggered === 'first_apron') return 'first_apron';
+  return existing ?? triggered;
+}
+
+export function hardCapLegal(
+  teamId: string,
+  projectedTeamSalary: number,
+  existing: Team['hardCappedAtApron'],
+  triggered?: Team['hardCappedAtApron'],
+): ValidationResult {
+  const effective = stricterHardCap(existing, triggered);
+  if (!effective) return VALID;
+  const threshold = effective === 'first_apron' ? FIRST_APRON : SECOND_APRON;
+  return projectedTeamSalary <= threshold + 1e-9
+    ? VALID
+    : invalid(`${teamId} would exceed its ${effective.replace('_', '-')} hard cap in Team Salary`);
+}
+
+export function signingCapOrExceptionLegal(
+  teamId: string,
+  analysis: SigningAnalysis,
+): ValidationResult {
+  return analysis.ok
+    ? VALID
+    : invalid(`signing cap compliance failed for ${teamId}: ${analysis.reason}`);
+}
+
+/** Independent rights salary/term predicate for a selected signing plan. */
+export function reSigningRightsLegal(
+  world: RosterWorld,
+  teamId: string,
+  playerId: string,
+  plan: SigningPlan,
+): ValidationResult {
+  if (plan.mechanism === 'room' || plan.mechanism === 'minimum_exception') return VALID;
+  const player = getPlayer(world, playerId);
+  if (!player?.desiredContract || player.birdRights?.teamId !== teamId ||
+      player.birdRights.type !== plan.mechanism) {
+    return invalid(`player "${playerId}" lacks ${plan.mechanism} rights for ${teamId}`);
+  }
+  const years = player.desiredContract.desiredYears;
+  const validTerm = plan.mechanism === 'bird'
+    ? years <= BIRD_MAX_YEARS
+    : plan.mechanism === 'early_bird'
+      ? years >= EARLY_BIRD_MIN_YEARS && years <= EARLY_BIRD_MAX_YEARS
+      : years <= NON_BIRD_MAX_YEARS;
+  if (!validTerm) return invalid(`${plan.mechanism} rights do not permit a ${years}-year contract`);
+  const maximum = maximumSalaryForRights(
+    plan.mechanism,
+    player.experience,
+    currentSalary(player.contract),
+  );
+  return player.desiredContract.desiredSalary <= maximum + 1e-9
+    ? VALID
+    : invalid(`${plan.mechanism} rights permit at most $${maximum.toFixed(3)}M in year one`);
+}
+
+/** Independent minimum-salary-exception predicate for a selected signing plan. */
+export function minimumSalaryExceptionLegal(
+  world: RosterWorld,
+  playerId: string,
+  plan: SigningPlan,
+): ValidationResult {
+  if (plan.mechanism !== 'minimum_exception') return VALID;
+  const desired = getPlayer(world, playerId)?.desiredContract;
+  if (!desired) return invalid(`player "${playerId}" has no desired contract`);
+  return desired.type === 'minimum' &&
+    desired.desiredYears <= MINIMUM_EXCEPTION_MAX_YEARS &&
+    Math.abs(desired.desiredSalary - ROOKIE_MINIMUM_SALARY) <= 1e-9
+    ? VALID
+    : invalid('minimum salary exception requires a one- or two-year configured minimum contract');
 }

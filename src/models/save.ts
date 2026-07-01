@@ -12,8 +12,10 @@ import { SeasonState } from './season';
  * v2 -> v3 (transactions Phase 2): Player.contract expanded from placeholder
  * to full model (type, salarySchedule, NTC, options); DesiredContract added
  * for free agents; FA pool repaired.
+ * v3 -> v4 (transactions Phase 4): explicit free-agent re-signing rights and
+ * persisted, event-set team hard-cap state.
  */
-export const SAVE_SCHEMA_VERSION = 3;
+export const SAVE_SCHEMA_VERSION = 4;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star

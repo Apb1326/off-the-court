@@ -20,9 +20,18 @@ export interface Player {
   tendencies: PlayerTendencies;
   contract: Contract;
   desiredContract?: DesiredContract;
+  /** Re-signing rights exist only while the player is a free agent. */
+  birdRights?: ReSigningRights;
   health: HealthStatus;
 
   careerStats: SeasonStats[];
+}
+
+export type ReSigningRightsType = 'bird' | 'early_bird' | 'non_bird';
+
+export interface ReSigningRights {
+  teamId: string;
+  type: ReSigningRightsType;
 }
 
 export interface PlayerRatings {

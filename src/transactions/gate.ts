@@ -9,12 +9,22 @@ import {
 import {
   RosterWorld,
   getPlayer,
+  getTeam,
   projectStandardRosterCount,
   projectStandardRosterCountForSigning,
 } from './world';
 import { playerIdsOf } from './assets';
-import { FREE_AGENT_TEAM_ID } from './constants';
-import { generateDesiredContract, instantiateContract } from './contracts';
+import { FREE_AGENT_TEAM_ID, MINIMUM_TEAM_SALARY } from './constants';
+import {
+  deriveReSigningRightsForCut,
+  generateDesiredContract,
+  instantiateContract,
+} from './contracts';
+import {
+  analyzeTradeMatching,
+  computeTeamPayroll,
+} from './cap';
+import { analyzeSigning } from './financial';
 import {
   runValidators,
   teamExists,
@@ -27,6 +37,15 @@ import {
   playerHasValidDesiredContract,
   noDuplicatePlayers,
   rosterWithinBounds,
+  tradeWindowOpen,
+  noControlledTeamNtc,
+  tradeMatchingLegal,
+  tradeMechanismApronLegal,
+  hardCapLegal,
+  signingCapOrExceptionLegal,
+  reSigningRightsLegal,
+  minimumSalaryExceptionLegal,
+  stricterHardCap,
 } from './validators';
 
 /**
@@ -44,8 +63,12 @@ import {
  */
 
 export type TransactionResult =
-  | { ok: true; world: RosterWorld; entry: TransactionEntry }
+  | { ok: true; world: RosterWorld; entry: TransactionEntry; warnings?: string[] }
   | { ok: false; reason: string };
+
+export interface TradeOptions {
+  controlledTeamId?: string;
+}
 
 export interface SignOp {
   teamId: string;
@@ -87,6 +110,15 @@ function commitSeason(
   };
 }
 
+function salaryFloorWarnings(world: RosterWorld, teamIds: string[]): string[] {
+  return [...new Set(teamIds)].flatMap((teamId) => {
+    const payroll = computeTeamPayroll(world, teamId);
+    return payroll < MINIMUM_TEAM_SALARY
+      ? [`${teamId} payroll is $${payroll.toFixed(3)}M, below the $${MINIMUM_TEAM_SALARY.toFixed(3)}M minimum-team-salary floor; full next-day compliance is deferred to Phase 5a`]
+      : [];
+  });
+}
+
 // --- trade ---
 
 /**
@@ -98,7 +130,11 @@ function commitSeason(
  * is the only constraint here. Salary-matching (Phase 4) will naturally require non-trivial
  * compensation once it exists. A 0-for-0 trade is a harmless no-op that appends a log entry.
  */
-export function applyTrade(world: RosterWorld, proposal: TradeProposal): TransactionResult {
+export function applyTrade(
+  world: RosterWorld,
+  proposal: TradeProposal,
+  options: TradeOptions = {},
+): TransactionResult {
   const { teamA, teamB } = proposal;
   const idsFromA = playerIdsOf(proposal.assetsFromA);
   const idsFromB = playerIdsOf(proposal.assetsFromB);
@@ -123,16 +159,58 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
   ]);
   if (!check.ok) return check;
 
+  const temporalAndConsentCheck = runValidators([
+    () => tradeWindowOpen(world),
+    () => noControlledTeamNtc(world, proposal, options.controlledTeamId),
+  ]);
+  if (!temporalAndConsentCheck.ok) return temporalAndConsentCheck;
+
+  const matching = analyzeTradeMatching(world, proposal);
+  const matchingCheck = runValidators([
+    () => tradeMatchingLegal(teamA, matching.teamA),
+    () => tradeMatchingLegal(teamB, matching.teamB),
+  ]);
+  if (!matchingCheck.ok) return matchingCheck;
+  // The validator above proves both discriminated unions are successful.
+  if (!matching.teamA.ok || !matching.teamB.ok) return { ok: false, reason: 'unreachable matching state' };
+  const planA = matching.teamA.plan;
+  const planB = matching.teamB.plan;
+  const existingTeamA = getTeam(world, teamA)!;
+  const existingTeamB = getTeam(world, teamB)!;
+  const apronAndHardCapCheck = runValidators([
+    () => tradeMechanismApronLegal(teamA, planA),
+    () => tradeMechanismApronLegal(teamB, planB),
+    () => hardCapLegal(
+      teamA, planA.projectedTeamSalary,
+      existingTeamA.hardCappedAtApron, planA.triggeredHardCap,
+    ),
+    () => hardCapLegal(
+      teamB, planB.projectedTeamSalary,
+      existingTeamB.hardCappedAtApron, planB.triggeredHardCap,
+    ),
+  ]);
+  if (!apronAndHardCapCheck.ok) return apronAndHardCapCheck;
+
   // Legality proven — build the new world immutably.
   const leavingA = new Set(idsFromA);
   const leavingB = new Set(idsFromB);
 
   const teams = world.teams.map((t) => {
     if (t.id === teamA) {
-      return { ...t, roster: [...t.roster.filter((id) => !leavingA.has(id)), ...idsFromB] };
+      const hardCappedAtApron = stricterHardCap(t.hardCappedAtApron, planA.triggeredHardCap);
+      return {
+        ...t,
+        roster: [...t.roster.filter((id) => !leavingA.has(id)), ...idsFromB],
+        ...(hardCappedAtApron ? { hardCappedAtApron } : {}),
+      };
     }
     if (t.id === teamB) {
-      return { ...t, roster: [...t.roster.filter((id) => !leavingB.has(id)), ...idsFromA] };
+      const hardCappedAtApron = stricterHardCap(t.hardCappedAtApron, planB.triggeredHardCap);
+      return {
+        ...t,
+        roster: [...t.roster.filter((id) => !leavingB.has(id)), ...idsFromA],
+        ...(hardCappedAtApron ? { hardCappedAtApron } : {}),
+      };
     }
     return t;
   });
@@ -163,7 +241,14 @@ export function applyTrade(world: RosterWorld, proposal: TradeProposal): Transac
   };
   const committed = commitSeason(world.season, entry);
 
-  return { ok: true, world: { teams, players, season: committed.season }, entry: committed.entry };
+  const nextWorld = { teams, players, season: committed.season };
+  const warnings = salaryFloorWarnings(nextWorld, [teamA, teamB]);
+  return {
+    ok: true,
+    world: nextWorld,
+    entry: committed.entry,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 // --- sign free agent ---
@@ -188,6 +273,24 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
   ]);
   if (!check.ok) return check;
 
+  const signing = analyzeSigning(world, teamId, playerId);
+  const capCheck = runValidators([
+    () => signingCapOrExceptionLegal(teamId, signing),
+  ]);
+  if (!capCheck.ok) return capCheck;
+  if (!signing.ok) return { ok: false, reason: 'unreachable signing state' };
+  const signingTeam = getTeam(world, teamId)!;
+  const hardCapCheck = runValidators([
+    () => reSigningRightsLegal(world, teamId, playerId, signing.plan),
+    () => minimumSalaryExceptionLegal(world, playerId, signing.plan),
+    () => hardCapLegal(
+      teamId,
+      signing.plan.projectedCapRoomSalary,
+      signingTeam.hardCappedAtApron,
+    ),
+  ]);
+  if (!hardCapCheck.ok) return hardCapCheck;
+
   const teams = world.teams.map((t) =>
     t.id === teamId ? { ...t, roster: [...t.roster, playerId] } : t,
   );
@@ -197,8 +300,10 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
 
   const players = world.players.map((p) => {
     if (p.id === playerId) {
+      const withoutBirdRights = { ...p };
+      delete withoutBirdRights.birdRights;
       return {
-        ...p,
+        ...withoutBirdRights,
         teamId,
         contract: newContract,
         desiredContract: undefined,
@@ -216,11 +321,14 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
   };
   const freeAgentPool = world.season.freeAgentPool.filter((id) => id !== playerId);
   const committed = commitSeason(world.season, entry, freeAgentPool);
+  const nextWorld = { teams, players, season: committed.season };
+  const warnings = salaryFloorWarnings(nextWorld, [teamId]);
 
   return {
     ok: true,
-    world: { teams, players, season: committed.season },
+    world: nextWorld,
     entry: committed.entry,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
@@ -229,8 +337,8 @@ export function applySignFreeAgent(world: RosterWorld, op: SignOp): TransactionR
 /**
  * Cut a player. Legal iff the player is on the team's roster and the team stays at/above the
  * floor afterward — a team at the minimum must sign a replacement before it can cut. The
- * player goes straight to the FA pool (the real waiver process is deferred). The cut entry
- * records who was cut by whom and when, so a later phase can attribute consequences.
+ * player goes straight to the FA pool (the real waiver process is deferred). Cuts remain
+ * financially incomplete until Phase 5a derives dead money from the immutable cut entry.
  */
 export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
   const { teamId, playerId } = op;
@@ -257,6 +365,7 @@ export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
         ...p,
         teamId: FREE_AGENT_TEAM_ID,
         desiredContract: generateDesiredContract(p),
+        birdRights: deriveReSigningRightsForCut(p.contract, p.experience, teamId),
       };
     }
     return p;
@@ -271,10 +380,13 @@ export function applyCut(world: RosterWorld, op: CutOp): TransactionResult {
   };
   const freeAgentPool = [...world.season.freeAgentPool, playerId];
   const committed = commitSeason(world.season, entry, freeAgentPool);
+  const nextWorld = { teams, players, season: committed.season };
+  const warnings = salaryFloorWarnings(nextWorld, [teamId]);
 
   return {
     ok: true,
-    world: { teams, players, season: committed.season },
+    world: nextWorld,
     entry: committed.entry,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

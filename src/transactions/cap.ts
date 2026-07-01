@@ -1,14 +1,13 @@
 /**
- * Pure, compute-only salary-cap analytics (transactions Phase 3).
+ * Pure salary-cap analytics and projections (transactions Phases 3-4).
  *
- * Nothing in this module is persisted, so Phase 3 needs no schema bump. Cap-room
- * salary and tax/apron payroll deliberately use separate accounting bases. The
- * latest cut in the transaction log acts as a temporary rights-owner proxy until
- * Phase 4 introduces explicit Bird/Early-Bird/Non-Bird rights.
+ * Nothing in this module is persisted. Cap-room salary and tax/apron payroll
+ * deliberately use separate accounting bases. Phase 4 cap holds are owned
+ * through explicit re-signing rights on free agents.
  */
 
 import { Player } from '@/models/player';
-import { CutEntry, SignEntry } from '@/models/transaction';
+import { TradeProposal } from '@/models/transaction';
 import {
   CAP_HOLD_PERCENTAGE,
   CAP_RULES_YEAR,
@@ -19,11 +18,14 @@ import {
   ROOKIE_MINIMUM_SALARY,
   SALARY_CAP,
   SECOND_APRON,
+  TRADE_ALLOWANCE,
+  EXPANDED_TPE_CUSHION_2025_26,
 } from './constants';
 import { currentSalary } from './contracts';
 import { getPlayer, getTeam, isStandardContractPlayer, RosterWorld } from './world';
+import { playerIdsOf } from './assets';
 
-type RelevantFreeAgentEntry = SignEntry | CutEntry;
+const MONEY_EPSILON = 1e-9;
 
 function getTeamOrThrow(world: RosterWorld, teamId: string) {
   const team = getTeam(world, teamId);
@@ -63,37 +65,32 @@ function incompleteRosterChargeFromPlayers(players: Player[]): number {
   return missingSlots * ROOKIE_MINIMUM_SALARY;
 }
 
-function capHoldsForKnownTeam(world: RosterWorld, teamId: string): number {
+/** Phase 3's deliberately simplified cap-hold amount, now with explicit ownership. */
+export function computePlayerCapHold(player: Player): number {
+  return Math.max(
+    currentSalary(player.contract) * CAP_HOLD_PERCENTAGE,
+    ROOKIE_MINIMUM_SALARY,
+  );
+}
+
+function capHoldsForKnownTeam(
+  world: RosterWorld,
+  teamId: string,
+  excludedPlayerId?: string,
+): number {
   const currentFreeAgents = new Set(world.season.freeAgentPool);
-  const latestRelevantEntry = new Map<string, RelevantFreeAgentEntry>();
-
-  for (const entry of world.season.transactionLog) {
-    if (
-      (entry.type === 'sign' || entry.type === 'cut') &&
-      currentFreeAgents.has(entry.playerId)
-    ) {
-      latestRelevantEntry.set(entry.playerId, entry);
-    }
-  }
-
   // Sorting makes the floating-point reduction independent of FA-pool ordering.
   return [...currentFreeAgents]
     .sort()
     .reduce((total, playerId) => {
-      const entry = latestRelevantEntry.get(playerId);
-      if (
-        entry?.type !== 'cut' ||
-        entry.fromTeamId !== teamId ||
-        entry.contractAtCut === undefined
-      ) {
-        return total;
+      if (playerId === excludedPlayerId) return total;
+      const player = getPlayer(world, playerId);
+      if (!player) {
+        throw new Error(`cannot compute cap holds: missing free agent "${playerId}"`);
       }
-
-      const hold = Math.max(
-        currentSalary(entry.contractAtCut) * CAP_HOLD_PERCENTAGE,
-        ROOKIE_MINIMUM_SALARY,
-      );
-      return total + hold;
+      return player.birdRights?.teamId === teamId
+        ? total + computePlayerCapHold(player)
+        : total;
     }, 0);
 }
 
@@ -103,12 +100,22 @@ export function computeTeamPayroll(world: RosterWorld, teamId: string): number {
 }
 
 /**
- * Temporary free-agent holds attributed by each current FA's latest sign/cut event.
- * Seeded FAs and legacy cuts without a contract snapshot create no hold.
+ * Free-agent holds attributed by explicit re-signing rights. Seeded FAs without
+ * rights create no hold.
  */
 export function computeCapHolds(world: RosterWorld, teamId: string): number {
   getTeamOrThrow(world, teamId);
   return capHoldsForKnownTeam(world, teamId);
+}
+
+/** Cap holds for a team, optionally excluding one player whose hold is being replaced. */
+export function computeCapHoldsExcluding(
+  world: RosterWorld,
+  teamId: string,
+  excludedPlayerId: string,
+): number {
+  getTeamOrThrow(world, teamId);
+  return capHoldsForKnownTeam(world, teamId, excludedPlayerId);
 }
 
 /** Empty-slot charges below 12 standard contracts; two-way deals do not fill a slot. */
@@ -142,6 +149,233 @@ export function computeTaxPayroll(world: RosterWorld, teamId: string): number {
 /** Phase 3 apron payroll is raw standard-contract payroll only. */
 export function computeApronPayroll(world: RosterWorld, teamId: string): number {
   return computeTeamPayroll(world, teamId);
+}
+
+function rosterPlayersAfterTrade(
+  world: RosterWorld,
+  teamId: string,
+  outgoingPlayerIds: string[],
+  incomingPlayerIds: string[],
+): Player[] {
+  const outgoing = new Set(outgoingPlayerIds);
+  const retained = getRosterPlayersOrThrow(world, teamId).filter((player) => !outgoing.has(player.id));
+  const incoming = incomingPlayerIds.map((playerId) => {
+    const player = getPlayer(world, playerId);
+    if (!player) throw new Error(`cannot project trade: missing player "${playerId}"`);
+    return player;
+  });
+  return [...retained, ...incoming];
+}
+
+/** Project the cap-room Team Salary accounting basis after one side of a trade. */
+export function projectPostTradeCapRoomSalary(
+  world: RosterWorld,
+  teamId: string,
+  outgoingPlayerIds: string[],
+  incomingPlayerIds: string[],
+): number {
+  const players = rosterPlayersAfterTrade(world, teamId, outgoingPlayerIds, incomingPlayerIds);
+  return payrollFromPlayers(players) +
+    capHoldsForKnownTeam(world, teamId) +
+    incompleteRosterChargeFromPlayers(players);
+}
+
+/** Project the apron-payroll accounting basis after one side of a trade. */
+export function projectPostTradeApronPayroll(
+  world: RosterWorld,
+  teamId: string,
+  outgoingPlayerIds: string[],
+  incomingPlayerIds: string[],
+): number {
+  return payrollFromPlayers(
+    rosterPlayersAfterTrade(world, teamId, outgoingPlayerIds, incomingPlayerIds),
+  );
+}
+
+/** Project cap-room Team Salary after signing, replacing the player's own hold. */
+export function projectPostSigningCapRoomSalary(
+  world: RosterWorld,
+  teamId: string,
+  playerId: string,
+): number {
+  const player = getPlayer(world, playerId);
+  if (!player?.desiredContract) {
+    throw new Error(`cannot project signing: player "${playerId}" has no desired contract`);
+  }
+  const rosterPlayers = getRosterPlayersOrThrow(world, teamId);
+  const signingCounts = player.desiredContract.type !== 'two_way';
+  const payroll = payrollFromPlayers(rosterPlayers) +
+    (signingCounts ? player.desiredContract.desiredSalary : 0);
+  const standardCount = standardRosterPlayers(rosterPlayers).length + (signingCounts ? 1 : 0);
+  const incomplete = Math.max(0, INCOMPLETE_ROSTER_THRESHOLD - standardCount) * ROOKIE_MINIMUM_SALARY;
+  return payroll + capHoldsForKnownTeam(world, teamId, playerId) + incomplete;
+}
+
+/** Project apron payroll after signing; two-way salary is excluded. */
+export function projectPostSigningApronPayroll(
+  world: RosterWorld,
+  teamId: string,
+  playerId: string,
+): number {
+  const player = getPlayer(world, playerId);
+  if (!player?.desiredContract) {
+    throw new Error(`cannot project signing: player "${playerId}" has no desired contract`);
+  }
+  return computeApronPayroll(world, teamId) +
+    (player.desiredContract.type === 'two_way' ? 0 : player.desiredContract.desiredSalary);
+}
+
+export type TradeMatchingMode = 'room' | 'standard' | 'aggregated_standard' | 'expanded';
+
+export interface TradeMatchingPlan {
+  mode: TradeMatchingMode;
+  outgoingSalary: number;
+  incomingSalary: number;
+  maximumIncomingSalary: number;
+  projectedApronPayroll: number;
+  projectedTeamSalary: number;
+  triggeredHardCap?: 'first_apron' | 'second_apron';
+}
+
+export type TradeMatchingAnalysis =
+  | { ok: true; plan: TradeMatchingPlan }
+  | { ok: false; reason: string };
+
+/** Direct CBA Expanded TPE formula. Do not replace with derived tier boundaries. */
+export function expandedTpeMaximum(
+  outgoingSalary: number,
+  allowance = TRADE_ALLOWANCE,
+): number {
+  return Math.max(
+    Math.min(
+      outgoingSalary * 2 + allowance,
+      outgoingSalary + EXPANDED_TPE_CUSHION_2025_26,
+    ),
+    outgoingSalary * 1.25 + allowance,
+  );
+}
+
+function matchingSalary(world: RosterWorld, playerIds: string[]): number {
+  return playerIds.reduce((total, playerId) => {
+    const player = getPlayer(world, playerId);
+    if (!player) throw new Error(`cannot analyze trade: missing player "${playerId}"`);
+    return total + (isStandardContractPlayer(player) ? currentSalary(player.contract) : 0);
+  }, 0);
+}
+
+function matchingPlayerCount(world: RosterWorld, playerIds: string[]): number {
+  return playerIds.reduce((count, playerId) => {
+    const player = getPlayer(world, playerId);
+    if (!player) throw new Error(`cannot analyze trade: missing player "${playerId}"`);
+    return count + (isStandardContractPlayer(player) ? 1 : 0);
+  }, 0);
+}
+
+/**
+ * Analyze one team's side as one simultaneous transaction. Candidate order is
+ * deliberately least restrictive: room/standard, then second-apron aggregation,
+ * then first-apron Expanded TPE.
+ */
+export function analyzeTradeMatchingForTeam(
+  world: RosterWorld,
+  teamId: string,
+  outgoingPlayerIds: string[],
+  incomingPlayerIds: string[],
+): TradeMatchingAnalysis {
+  const outgoingSalary = matchingSalary(world, outgoingPlayerIds);
+  const incomingSalary = matchingSalary(world, incomingPlayerIds);
+  const outgoingCount = matchingPlayerCount(world, outgoingPlayerIds);
+  const projectedApronPayroll = projectPostTradeApronPayroll(
+    world, teamId, outgoingPlayerIds, incomingPlayerIds,
+  );
+  const projectedTeamSalary = projectPostTradeCapRoomSalary(
+    world, teamId, outgoingPlayerIds, incomingPlayerIds,
+  );
+  // CBA 101 keys removal of the allowance to post-trade Team Salary, not Apron Team Salary.
+  const allowance = projectedTeamSalary > FIRST_APRON + MONEY_EPSILON ? 0 : TRADE_ALLOWANCE;
+  const currentRoom = computeCapRoom(world, teamId);
+
+  if (outgoingSalary === 0 && incomingSalary === 0) {
+    return { ok: true, plan: {
+      mode: 'standard', outgoingSalary, incomingSalary, maximumIncomingSalary: 0,
+      projectedApronPayroll, projectedTeamSalary,
+    } };
+  }
+
+  if (currentRoom > MONEY_EPSILON) {
+    // Derive room from the fully projected Team Salary so uneven deals correctly
+    // add or remove incomplete-roster charges.
+    const maximumIncomingSalary = incomingSalary +
+      (SALARY_CAP + allowance - projectedTeamSalary);
+    return projectedTeamSalary <= SALARY_CAP + allowance + MONEY_EPSILON
+      ? { ok: true, plan: {
+        mode: 'room', outgoingSalary, incomingSalary, maximumIncomingSalary,
+        projectedApronPayroll, projectedTeamSalary,
+      } }
+      : { ok: false, reason: `${teamId} can acquire at most $${maximumIncomingSalary.toFixed(3)}M using cap room` };
+  }
+
+  if (outgoingCount >= 1) {
+    // Multiple players may leave without their salaries being aggregated. If
+    // one outgoing player's Standard TPE covers all incoming salary, use that
+    // no-hard-cap mechanism and simply do not bank the other outgoing TPEs.
+    const largestOutgoingSalary = outgoingPlayerIds.reduce((largest, playerId) => {
+      const player = getPlayer(world, playerId)!;
+      const salary = isStandardContractPlayer(player) ? currentSalary(player.contract) : 0;
+      return Math.max(largest, salary);
+    }, 0);
+    const maximumIncomingSalary = largestOutgoingSalary + allowance;
+    if (incomingSalary <= maximumIncomingSalary + MONEY_EPSILON) {
+      return { ok: true, plan: {
+        mode: 'standard', outgoingSalary, incomingSalary, maximumIncomingSalary,
+        projectedApronPayroll, projectedTeamSalary,
+      } };
+    }
+  }
+
+  if (outgoingCount >= 2) {
+    const maximumIncomingSalary = outgoingSalary + allowance;
+    if (
+      incomingSalary <= maximumIncomingSalary + MONEY_EPSILON &&
+      projectedApronPayroll <= SECOND_APRON + MONEY_EPSILON
+    ) {
+      return { ok: true, plan: {
+        mode: 'aggregated_standard', outgoingSalary, incomingSalary, maximumIncomingSalary,
+        projectedApronPayroll, projectedTeamSalary, triggeredHardCap: 'second_apron',
+      } };
+    }
+  }
+
+  if (outgoingCount >= 1) {
+    const maximumIncomingSalary = expandedTpeMaximum(outgoingSalary, allowance);
+    if (
+      incomingSalary <= maximumIncomingSalary + MONEY_EPSILON &&
+      projectedApronPayroll <= FIRST_APRON + MONEY_EPSILON
+    ) {
+      return { ok: true, plan: {
+        mode: 'expanded', outgoingSalary, incomingSalary, maximumIncomingSalary,
+        projectedApronPayroll, projectedTeamSalary, triggeredHardCap: 'first_apron',
+      } };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: `${teamId} cannot match $${incomingSalary.toFixed(3)}M incoming against $${outgoingSalary.toFixed(3)}M outgoing`,
+  };
+}
+
+/** Analyze both sides of a proposal without mutating the world. */
+export function analyzeTradeMatching(
+  world: RosterWorld,
+  proposal: TradeProposal,
+): { teamA: TradeMatchingAnalysis; teamB: TradeMatchingAnalysis } {
+  const idsFromA = playerIdsOf(proposal.assetsFromA);
+  const idsFromB = playerIdsOf(proposal.assetsFromB);
+  return {
+    teamA: analyzeTradeMatchingForTeam(world, proposal.teamA, idsFromA, idsFromB),
+    teamB: analyzeTradeMatchingForTeam(world, proposal.teamB, idsFromB, idsFromA),
+  };
 }
 
 export type CapStatus =

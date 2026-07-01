@@ -6,7 +6,14 @@
  * cap-hold stub.
  */
 
-import { Contract, ContractType, DesiredContract, Player, PlayerRatings } from '@/models/player';
+import {
+  Contract,
+  ContractType,
+  DesiredContract,
+  Player,
+  PlayerRatings,
+  ReSigningRights,
+} from '@/models/player';
 import { Team } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
 import { fnv1a } from '@/lib/hash';
@@ -25,6 +32,8 @@ import {
   CONTRACT_NTC_SALARY_FLOOR,
   CONTRACT_ROOKIE_SCALE_CAP_FRACTION,
   CONTRACT_VETERAN_MAX_FRACTION,
+  MINIMUM_EXCEPTION_MAX_YEARS,
+  ROOKIE_MINIMUM_SALARY,
 } from './constants';
 
 const CONTRACT_TYPES: ReadonlySet<ContractType> = new Set([
@@ -149,6 +158,19 @@ export function computeCapHoldStub(contract: Contract): number {
 export function generateDesiredContract(
   player: { contract: Contract; ratings: PlayerRatings },
 ): DesiredContract {
+  // Preserve a genuine minimum-contract ask as a minimum ask. Phase 4's
+  // minimum exception is keyed to contract type, so an arbitrary cheap veteran
+  // deal must never be silently reclassified as minimum.
+  if (player.contract.type === 'minimum') {
+    return {
+      type: 'minimum',
+      desiredSalary: ROOKIE_MINIMUM_SALARY,
+      desiredYears: Math.min(
+        Math.max(1, player.contract.salarySchedule.length),
+        MINIMUM_EXCEPTION_MAX_YEARS,
+      ),
+    };
+  }
   const prev = currentSalary(player.contract);
   const overall = computeOverallForContract(player.ratings);
 
@@ -161,6 +183,42 @@ export function generateDesiredContract(
     desiredSalary: roundSalary(desired),
     desiredYears: years,
   };
+}
+
+/**
+ * Phase 4's deterministic re-signing-rights proxy for a player being cut.
+ *
+ * The game does not yet retain team-tenure history, so contract type and NBA
+ * experience stand in for it. This is a game simplification, not a claim that
+ * real NBA Bird rights derive from contract type.
+ */
+export function deriveReSigningRightsForCut(
+  contract: Contract,
+  experience: number,
+  teamId: string,
+): ReSigningRights {
+  let type: ReSigningRights['type'];
+
+  switch (contract.type) {
+    case 'rookie_scale':
+    case 'max':
+      type = 'bird';
+      break;
+    case 'veteran':
+      type = experience >= 3
+        ? 'bird'
+        : experience >= 1
+          ? 'early_bird'
+          : 'non_bird';
+      break;
+    case 'two_way':
+    case 'minimum':
+    default:
+      type = 'non_bird';
+      break;
+  }
+
+  return { teamId, type };
 }
 
 /**
@@ -345,15 +403,33 @@ export function normalizePlayersForSave(
     const existingDesiredValidation = p.desiredContract
       ? validateDesiredContract(p.desiredContract)
       : undefined;
+    const staleMinimumAsk = contract.type === 'minimum' && (
+      p.desiredContract?.type !== 'minimum' ||
+      p.desiredContract.desiredSalary !== ROOKIE_MINIMUM_SALARY ||
+      p.desiredContract.desiredYears > MINIMUM_EXCEPTION_MAX_YEARS
+    );
     const desiredContract = isFreeAgent
-      ? existingDesiredValidation?.ok
+      ? existingDesiredValidation?.ok && !staleMinimumAsk
         ? p.desiredContract
         : generateDesiredContract({ contract, ratings: p.ratings })
       : undefined;
 
+    if (isFreeAgent) {
+      return {
+        ...p,
+        teamId: FREE_AGENT_TEAM_ID,
+        contract,
+        desiredContract,
+      };
+    }
+
+    // Rostered players can never carry free-agent re-signing rights. Omit the
+    // key entirely so canonical JSON does not depend on serializing undefined.
+    const withoutBirdRights = { ...p };
+    delete withoutBirdRights.birdRights;
     return {
-      ...p,
-      teamId: ownerTeamId ?? FREE_AGENT_TEAM_ID,
+      ...withoutBirdRights,
+      teamId: ownerTeamId,
       contract,
       desiredContract,
     };

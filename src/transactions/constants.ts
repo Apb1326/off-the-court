@@ -92,5 +92,38 @@ export const ROOKIE_MINIMUM_SALARY = 1.273;
  */
 export const INCOMPLETE_ROSTER_THRESHOLD = 12;
 
-/** Temporary Phase 3 free-agent hold multiplier; explicit rights arrive in Phase 4. */
+/** Simplified free-agent hold multiplier; Phase 4 adds explicit ownership, not new hold tiers. */
 export const CAP_HOLD_PERCENTAGE = 1.5;
+
+// --- Phase 4 — salary matching and cap enforcement ---
+
+/** Fixed traded-player-exception allowance, in millions. CBA 101 II.B(2)(i). */
+export const TRADE_ALLOWANCE = 0.25;
+
+/**
+ * 2025-26 Expanded TPE fixed cushion, in millions. The 2024-25 CBA amount
+ * ($7.752M) rises with the 10% salary-cap increase for 2025-26; rounded to the
+ * nearest $1,000 to match the league's published system-level precision.
+ */
+export const EXPANDED_TPE_CUSHION_2025_26 = 8.527;
+
+/**
+ * Estimated 2024-25 average player salary, in millions. The NBA's public CBA
+ * summary specifies this input to the Early Bird formula but does not publish
+ * the amount; Phase 4 deliberately uses this approved gameplay estimate.
+ */
+export const ESTIMATED_AVERAGE_PLAYER_SALARY_2024_25 = 11.91;
+
+/** CBA 101 II.G(1): prior salary can set a 105% general maximum floor. */
+export const MAX_PREVIOUS_SALARY_MULTIPLIER = 1.05;
+/** CBA 101 II.B(2)(b-c): Early Bird and Non-Bird first-year salary formulas. */
+export const EARLY_BIRD_PREVIOUS_SALARY_MULTIPLIER = 1.75;
+export const EARLY_BIRD_AVERAGE_SALARY_MULTIPLIER = 1.05;
+export const NON_BIRD_SALARY_MULTIPLIER = 1.2;
+/** CBA 101 II.G(4): maximum contract lengths; Early Bird also has a two-year minimum. */
+export const BIRD_MAX_YEARS = 5;
+export const ROOM_SIGNING_MAX_YEARS = 4;
+export const EARLY_BIRD_MIN_YEARS = 2;
+export const EARLY_BIRD_MAX_YEARS = 4;
+export const NON_BIRD_MAX_YEARS = 4;
+export const MINIMUM_EXCEPTION_MAX_YEARS = 2;

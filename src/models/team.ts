@@ -12,6 +12,13 @@ export interface Team {
 
   offensiveSystem: OffensiveSystem;
   defensiveSystem: DefensiveSystem;
+
+  /**
+   * Event-set league-year state triggered by qualifying transactions. This is
+   * deliberately persisted rather than derived from current payroll. Absence
+   * means the team is not hard-capped.
+   */
+  hardCappedAtApron?: 'first_apron' | 'second_apron';
 }
 
 export interface RotationSettings {

@@ -1,6 +1,6 @@
 import { TradeProposal } from '@/models/transaction';
 import { RosterWorld } from './world';
-import { applyTrade, TransactionResult } from './gate';
+import { applyTrade, TradeOptions, TransactionResult } from './gate';
 
 /**
  * CPU trade desirability — the single chokepoint for "does the CPU *want* this deal?".
@@ -42,8 +42,9 @@ export function executeCpuTrade(
   world: RosterWorld,
   proposal: TradeProposal,
   cpuTeamId: string,
+  options: TradeOptions = {},
 ): TransactionResult {
   const verdict = evaluateTradeForCpu(world, proposal, cpuTeamId);
   if (!verdict.accept) return { ok: false, reason: `CPU declined: ${verdict.reason}` };
-  return applyTrade(world, proposal);
+  return applyTrade(world, proposal, options);
 }
