@@ -73,6 +73,29 @@ These govern the **state-mutation layer on top of `SeasonState`** — trades, si
 
 **Calibration for this layer.** No transaction phase touches the sim, so `npm run profile` and `npm run calibrate` must come back **unchanged** — a diff there is a bug, not a side effect. The transaction layer's real acceptance test is the **multi-season league-balance harness** (`scripts/league-balance.ts`, built in roadmap Phase 5c): from the trade-AI phases on, assert talent dispersion stays bounded, championship distribution stays non-degenerate, and no net league-value creation / oscillating-trade loops appear, all within tolerance of the trade-free baseline.
 
+## NBA data pipeline (`pipeline/`, `data/nba/`, `src/data/nba/`)
+
+The offline stats.nba.com harvest tool is **outside the sim** — it changes
+nothing about engine behavior, ratings, ingest, or saves, and the engine
+rules above don't apply to it, including determinism: the harvester may use
+plain `random` for rate-limit jitter. The exception is **`normalize.py`,
+which must stay idempotent** — a pure function of the raw cache producing
+byte-identical output on re-run (sorted rows, sorted keys, no timestamps in
+data payloads).
+
+- **TypeScript never calls stats.nba.com.** The TS side (`src/data/nba/`)
+  only reads `data/nba/normalized/` — versioned, schema-stable contracts
+  owned by the TS types in `src/data/nba/types.ts`. If the NBA changes an
+  endpoint, only Python changes; the contracts stay stable (bump
+  `schema_version` for intentional contract changes).
+- **The raw cache (`data/nba/raw/`) is never hand-edited.** It is the
+  harvester's checkpoint/resume layer; fix problems by re-fetching
+  (`--force`), not by editing files.
+- The pipeline runs manually from a residential IP, never in CI or at app
+  runtime, and is never imported by app code.
+- The normalizer computes **no derived analytics** (no rating math, no
+  league targets) — that work belongs to later pipeline stages.
+
 ## Verification checklist
 
 Run after any engine change and report results:

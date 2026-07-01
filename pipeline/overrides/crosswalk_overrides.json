@@ -1,0 +1,4 @@
+{
+  "_comment": "Manual OTC-player-id -> NBA personId fixes. Keys are the full ids from data/players.json (e.g. 'player_255' or 'espn_player_4873201'), values are NBA personIds. Entries here win over automatic matching in pipeline/crosswalk.py.",
+  "overrides": {}
+}
