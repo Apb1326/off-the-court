@@ -1,0 +1,8 @@
+# The only direct dependency is nba_api. It hard-requires pandas + numpy
+# (declared in its package metadata since 1.9.0), so they are pinned here as
+# transitive dependencies — our code never imports pandas (we use the
+# .get_dict() accessors, never .get_data_frames()). See pipeline/README.md.
+nba_api==1.11.4
+pandas==3.0.3
+numpy==2.5.0
+requests==2.34.2

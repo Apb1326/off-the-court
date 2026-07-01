@@ -1,0 +1,32 @@
+{
+  "rate": { "base_seconds": 0.9, "jitter_seconds": 0.4 },
+  "groups": {
+    "static": {},
+    "player_index": {},
+    "box_advanced": { "seasons": { "from": 2024, "to": 2024 } },
+    "shot_locations": { "seasons": { "from": 2024, "to": 2024 } },
+    "game_logs": { "seasons": { "from": 2024, "to": 2024 } },
+    "shot_charts": {
+      "seasons": { "from": 2024, "to": 2024 },
+      "player_ids": [2544, 201939, 1628369]
+    },
+    "synergy": {
+      "seasons": { "from": 2024, "to": 2024 },
+      "play_types": ["Isolation"],
+      "sides": ["offensive"]
+    },
+    "tracking": {
+      "seasons": { "from": 2024, "to": 2024 },
+      "measures": ["Drives"]
+    },
+    "pt_defend": {
+      "seasons": { "from": 2024, "to": 2024 },
+      "categories": ["Overall"]
+    },
+    "hustle": { "seasons": { "from": 2024, "to": 2024 } },
+    "lineups": { "seasons": { "from": 2024, "to": 2024 } },
+    "matchups": { "seasons": { "from": 2024, "to": 2024 } },
+    "pbp": { "seasons": { "from": 2024, "to": 2024 }, "limit_games": 3 },
+    "combine": { "seasons": { "from": 2024, "to": 2024 } }
+  }
+}

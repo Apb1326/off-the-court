@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python (NBA data pipeline)
+pipeline/.venv/
+__pycache__/

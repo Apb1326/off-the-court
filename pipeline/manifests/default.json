@@ -1,0 +1,19 @@
+{
+  "rate": { "base_seconds": 0.9, "jitter_seconds": 0.4 },
+  "groups": {
+    "static": {},
+    "player_index": {},
+    "box_advanced": { "seasons": { "from": 1996, "to": 2025 } },
+    "shot_locations": { "seasons": { "from": 1996, "to": 2025 } },
+    "game_logs": { "seasons": { "from": 2023, "to": 2025 } },
+    "shot_charts": { "seasons": { "from": 2023, "to": 2025 } },
+    "synergy": { "seasons": { "from": 2015, "to": 2025 } },
+    "tracking": { "seasons": { "from": 2013, "to": 2025 } },
+    "pt_defend": { "seasons": { "from": 2013, "to": 2025 } },
+    "hustle": { "seasons": { "from": 2015, "to": 2025 } },
+    "lineups": { "seasons": { "from": 2007, "to": 2025 } },
+    "matchups": { "seasons": { "from": 2017, "to": 2025 } },
+    "pbp": { "seasons": { "from": 2023, "to": 2025 } },
+    "combine": { "seasons": { "from": 2000, "to": 2025 } }
+  }
+}

@@ -57,6 +57,7 @@ Wired into `package.json`:
 | `npm run download-history` | Fetch historical CSVs into `data/history/` (prerequisite for `calibrate`) |
 | `npm run calibrate` | Compare the engine to six decades of real games by era |
 | `npm run profile` | Calibration dashboard: season profile vs. modern-NBA targets with tolerance bands |
+| `npm run validate-nba-data` | Structural validation of `data/nba/normalized/` contracts (missing files are SKIPPED) |
 
 Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 
@@ -96,6 +97,26 @@ scripts/           seed, ingest, history download, calibration, profiling, A/B +
 data/              Generated league (gitignored): teams.json, players.json, season.json,
                    seasons/<id>/games/*.json, history/*.csv
 ```
+
+## NBA data pipeline
+
+`pipeline/` holds a standalone, offline-only Python tool that harvests a
+large dataset from stats.nba.com (via `nba_api`) into a gitignored raw cache
+(`data/nba/raw/`) and normalizes it into versioned JSON contracts
+(`data/nba/normalized/`). Those contracts are the only interface to the app:
+TypeScript reads them through `src/data/nba/load.ts` and never calls
+stats.nba.com. It is run manually from a residential IP — never in CI or at
+app runtime — and changes nothing about the simulation; later stages will
+consume the data to re-derive calibration targets and ratings.
+
+```sh
+pipeline/.venv/bin/python pipeline/harvest.py --manifest pipeline/manifests/default.json
+pipeline/.venv/bin/python pipeline/normalize.py
+npm run validate-nba-data
+```
+
+Setup, the full-harvest workflow (~2–3 hours, resumable), and the contract
+docs live in [pipeline/README.md](pipeline/README.md).
 
 ## Calibration & testing
 

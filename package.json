@@ -12,6 +12,7 @@
     "download-history": "tsx scripts/download-history.ts",
     "calibrate": "tsx scripts/calibrate-history.ts",
     "profile": "tsx scripts/profile-engine.ts",
+    "validate-nba-data": "tsx scripts/validate-nba-data.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
