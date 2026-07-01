@@ -18,6 +18,7 @@ import { ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
 import { generateSchedule } from '../src/engine/schedule';
+import { selectLatestCareerStats } from '../src/ratings/derivation';
 
 // Real modern NBA (~2023-24) per-team-per-game targets, shown for context. The
 // LEAGUE_AVG constant in engine/constants.ts is a coarser subset of these.
@@ -37,6 +38,10 @@ const REAL: Record<string, number> = {
 // mid share, avg margin — already sit outside the real-NBA bands on the
 // unmodified engine; that is a pre-existing calibration state this task must
 // not worsen, not something it introduced.)
+// 2026-07-01 pre-task capture already drifted from this older oracle at Points
+// 109.2, PPP 1.090, and mid share 0.241. This task judges neutrality against
+// that fresh capture; the stale BASE values remain unchanged for a dedicated
+// future recalibration.
 const BASE: Record<string, { v: number; tol: number }> = {
   pace: { v: 101.0, tol: 1.5 }, pts: { v: 113.3, tol: 2.5 }, ppp: { v: 1.122, tol: 0.020 },
   fga: { v: 87.8, tol: 2.0 }, fgPct: { v: 0.472, tol: 0.008 },
@@ -57,6 +62,50 @@ function zoneBucket(z: ShotZone): 'rim' | 'mid' | 'three' {
   if (z === 'rim') return 'rim';
   if (z === 'short_midrange' || z === 'long_midrange') return 'mid';
   return 'three';
+}
+
+interface PlayerProfileTotals {
+  teamId: string;
+  games: number;
+  minutes: number;
+  points: number;
+  fga: number;
+  ftm: number;
+  fta: number;
+}
+
+function rank(values: number[]): number[] {
+  const indexed = values.map((value, index) => ({ value, index }));
+  indexed.sort((a, b) => a.value - b.value || a.index - b.index);
+  const ranks = new Array<number>(values.length);
+  for (let start = 0; start < indexed.length;) {
+    let end = start + 1;
+    while (end < indexed.length && indexed[end].value === indexed[start].value) end++;
+    const averageRank = (start + 1 + end) / 2;
+    for (let i = start; i < end; i++) ranks[indexed[i].index] = averageRank;
+    start = end;
+  }
+  return ranks;
+}
+
+function pearson(xs: number[], ys: number[]): number {
+  if (xs.length !== ys.length || xs.length < 2) return Number.NaN;
+  const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  const meanY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+  let covariance = 0, varianceX = 0, varianceY = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    covariance += dx * dy;
+    varianceX += dx * dx;
+    varianceY += dy * dy;
+  }
+  const denominator = Math.sqrt(varianceX * varianceY);
+  return denominator === 0 ? Number.NaN : covariance / denominator;
+}
+
+function spearman(xs: number[], ys: number[]): number {
+  return pearson(rank(xs), rank(ys));
 }
 
 async function main() {
@@ -80,6 +129,7 @@ async function main() {
   let rimAtt = 0, midAtt = 0, threeAtt = 0;
   let marginSum = 0;
   let gamesPlayed = 0;
+  const playerTotals = new Map<string, PlayerProfileTotals>();
 
   for (const sg of schedule) {
     const home = teamById.get(sg.homeTeamId);
@@ -100,6 +150,25 @@ async function main() {
       ftm += t.freeThrowsMade; fta += t.freeThrowsAttempted;
       orb += t.offensiveRebounds; drb += t.defensiveRebounds; reb += t.rebounds;
       ast += t.assists; stl += t.steals; blk += t.blocks; tov += t.turnovers;
+
+      for (const line of side.players) {
+        const total = playerTotals.get(line.playerId) ?? {
+          teamId: side.teamId,
+          games: 0,
+          minutes: 0,
+          points: 0,
+          fga: 0,
+          ftm: 0,
+          fta: 0,
+        };
+        total.games++;
+        total.minutes += line.minutes;
+        total.points += line.stats.points;
+        total.fga += line.stats.fieldGoalsAttempted;
+        total.ftm += line.stats.freeThrowsMade;
+        total.fta += line.stats.freeThrowsAttempted;
+        playerTotals.set(line.playerId, total);
+      }
     }
 
     for (const e of sim.playByPlay) {
@@ -164,6 +233,58 @@ async function main() {
   }
   console.log('-'.repeat(62));
   console.log(fails === 0 ? 'ALL WITHIN TOLERANCE (no drift from baseline)' : `${fails} stat(s) DRIFTED OUT OF TOLERANCE`);
+
+  const playerById = new Map(players.map((player) => [player.id, player]));
+  const usageQualified = [...playerTotals.entries()].filter(([, total]) => total.minutes >= 500);
+  const usageSpearman = spearman(
+    usageQualified.map(([playerId]) => playerById.get(playerId)!.tendencies.usageRate),
+    usageQualified.map(([, total]) => total.fga / total.minutes),
+  );
+
+  const scoringQualified = [...playerTotals.entries()].flatMap(([playerId, total]) => {
+    const raw = selectLatestCareerStats(playerById.get(playerId)?.careerStats ?? []);
+    if (!raw || raw.minutesPerGame < 15 || total.minutes < 500 || total.games === 0) return [];
+    return [{ simPpg: total.points / total.games, realPpg: raw.stats.points }];
+  });
+  const scoringPearson = pearson(
+    scoringQualified.map((row) => row.simPpg),
+    scoringQualified.map((row) => row.realPpg),
+  );
+
+  const teamPointTotals = new Map<string, number>();
+  const teamLeaderPoints = new Map<string, number>();
+  for (const total of playerTotals.values()) {
+    teamPointTotals.set(total.teamId, (teamPointTotals.get(total.teamId) ?? 0) + total.points);
+    teamLeaderPoints.set(total.teamId, Math.max(teamLeaderPoints.get(total.teamId) ?? 0, total.points));
+  }
+  const topScorerShares = [...teamPointTotals].map(([teamId, total]) =>
+    total === 0 ? 0 : (teamLeaderPoints.get(teamId) ?? 0) / total);
+  const topScorerShare = topScorerShares.reduce((sum, value) => sum + value, 0) / topScorerShares.length;
+
+  const ftQualified = [...playerTotals.entries()].flatMap(([playerId, total]) => {
+    const raw = selectLatestCareerStats(playerById.get(playerId)?.careerStats ?? []);
+    if (!raw || raw.stats.freeThrowsAttempted < 2 || total.fta === 0) return [];
+    return [{ total, raw }];
+  });
+  const simFtm = ftQualified.reduce((sum, row) => sum + row.total.ftm, 0);
+  const simFta = ftQualified.reduce((sum, row) => sum + row.total.fta, 0);
+  const realFtm = ftQualified.reduce(
+    (sum, row) => sum + row.raw.stats.freeThrowPct * row.raw.stats.freeThrowsAttempted,
+    0,
+  );
+  const realFta = ftQualified.reduce((sum, row) => sum + row.raw.stats.freeThrowsAttempted, 0);
+  const simFtPcts = ftQualified.map((row) => row.total.ftm / row.total.fta);
+  const usages = players.map((player) => player.tendencies.usageRate);
+  const usageFloorCount = usages.filter((value) => value === 0.10).length;
+
+  console.log('\nPlayer-level distribution');
+  console.log('-'.repeat(72));
+  console.log(`Usage rate roster min/mean/max: ${Math.min(...usages).toFixed(3)} / ${(usages.reduce((a, b) => a + b, 0) / usages.length).toFixed(3)} / ${Math.max(...usages).toFixed(3)} (${usageFloorCount} at 0.10 floor)`);
+  console.log(`Usage vs sim FGA/min Spearman: ${usageSpearman.toFixed(3)} (n=${usageQualified.length}, min 500 sim minutes)`);
+  console.log(`Sim PPG vs real PPG Pearson:   ${scoringPearson.toFixed(3)} (n=${scoringQualified.length}, real MPG >= 15, sim minutes >= 500)`);
+  console.log(`Team top-scorer points share:  ${(topScorerShare * 100).toFixed(1)}% (real reference 19-22%)`);
+  console.log(`Qualified FT% sim vs real:     ${(simFtm / simFta * 100).toFixed(1)}% vs ${(realFtm / realFta * 100).toFixed(1)}% (n=${ftQualified.length}, real FTA >= 2)`);
+  console.log(`Qualified sim FT% min/max:     ${(Math.min(...simFtPcts) * 100).toFixed(1)}% / ${(Math.max(...simFtPcts) * 100).toFixed(1)}%`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

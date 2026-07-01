@@ -69,7 +69,34 @@ async function main() {
   check('second migration is byte-identical to the first',
     m2.ok && JSON.stringify(m2.file) === JSON.stringify(roundTripped));
 
-  // --- 3. Real SaveStore.loadSave migrates an old on-disk save ---
+  // --- 3. Direct v5 -> v6 derivation refresh + guarded passthrough ---
+  const v5 = structuredClone(m1.file);
+  v5.schemaVersion = 5;
+  const valid = v5.players.find((player) => player.careerStats.length > 0)!;
+  valid.tendencies.usageRate = 0.01;
+  valid.ratings.freeThrowShooting = 80;
+  valid.potential.freeThrowShooting = 80;
+  const invalid = v5.players.find((player) => player.id !== valid.id)!;
+  invalid.careerStats = [];
+  invalid.tendencies.usageRate = 0.02;
+  invalid.ratings.freeThrowShooting = 79;
+  invalid.potential.freeThrowShooting = 78;
+  const v6 = migrateSaveFile(v5);
+  check('v5 -> v6 refresh succeeds', v6.ok && v6.file.schemaVersion === 6);
+  if (v6.ok) {
+    const refreshed = v6.file.players.find((player) => player.id === valid.id)!;
+    const passedThrough = v6.file.players.find((player) => player.id === invalid.id)!;
+    check('v6 refreshes the three valid derived fields',
+      refreshed.tendencies.usageRate !== 0.01 &&
+      refreshed.ratings.freeThrowShooting !== 80 &&
+      refreshed.potential.freeThrowShooting !== 80);
+    check('v6 leaves invalid canonical-stat player derivations unchanged',
+      passedThrough.tendencies.usageRate === 0.02 &&
+      passedThrough.ratings.freeThrowShooting === 79 &&
+      passedThrough.potential.freeThrowShooting === 78);
+  }
+
+  // --- 4. Real SaveStore.loadSave migrates an old on-disk save ---
   const tmp = await mkdtemp(path.join(tmpdir(), 'otc-migrate-'));
   const store = new SaveStore(tmp);
   const slotDir = path.join(tmp, 'saves', 'oldsave');
@@ -92,7 +119,7 @@ async function main() {
       reloaded.ok && reloaded.file.schemaVersion === SAVE_SCHEMA_VERSION);
   }
 
-  // --- 4. A newer, unknown version is still rejected ---
+  // --- 5. A newer, unknown version is still rejected ---
   const futureDir = path.join(tmp, 'saves', 'fromthefuture');
   await mkdir(futureDir, { recursive: true });
   await writeFile(

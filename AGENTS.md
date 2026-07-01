@@ -26,6 +26,10 @@ Rules for anyone, human or AI, working on the simulation. They exist because the
 ## Simulation invariants
 
 **Rating scale.** 1–80, centered at **40** (`ratingToModifier`: `(rating - 40) / 40`). Not 0–100, not centered at 50.
+The derivation layer must honor the same 40-centered convention. The
+`FT_LEAGUE_AVG_PCT`, `FT_PCT_SLOPE`, and `FT_DERIVE_SCALE` constants in
+`engine/constants.ts` form the free-throw derivation/resolution inverse pair;
+change them together so real percentage → rating → sim percentage still round-trips.
 
 **Shot math is additive and clamped.** `resolveShot` sums base zone % plus shooter, defender, fatigue, play-type, contest, form, double-team, momentum, advantage, and rush terms, then clamps to `[0.05, 0.95]`. Keep new modifiers additive and inside the clamp — no multiplicative terms that escape the bounds.
 

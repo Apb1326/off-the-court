@@ -6,6 +6,23 @@ export const OVERTIME_LENGTH_SECONDS = 300; // 5 minutes
 export const MAX_FOULS = 6;
 export const TEAM_FOUL_BONUS_THRESHOLD = 5; // per quarter
 
+// Team possessions per minute of game time (~100 possessions / 48 minutes),
+// used to estimate a player's usage rate from per-game counting stats. The
+// denominator (mpg * this) approximates team possessions during the player's
+// floor time; usage = true attempts / that share.
+export const USAGE_TEAM_POSS_PER_MINUTE = 100 / 48;
+
+// Free-throw rating <-> percentage scale contract. These constants define an
+// INVERSE PAIR shared by ratings/derivation.ts (real pct -> rating) and
+// engine/shot.ts (rating -> sim pct). Rating 40 is the league-average shooter.
+// FT_DERIVE_SCALE is defined from FT_PCT_SLOPE so the round trip is exact by
+// construction apart from integer rating rounding and endpoint clamps.
+export const FT_LEAGUE_AVG_PCT = 0.781;
+export const FT_PCT_SLOPE = 0.25;                 // pct swing across centered rating range +/-1
+export const FT_DERIVE_SCALE = 40 / FT_PCT_SLOPE; // rating points per unit of real percentage
+export const FT_SIM_PCT_MIN = 0.45;
+export const FT_SIM_PCT_MAX = 0.95;
+
 export const BASE_FG_PCT_BY_ZONE: Record<ShotZone, number> = {
   rim: 0.645,
   short_midrange: 0.435,

@@ -7,6 +7,10 @@ import {
   PLAY_TYPE_EFFICIENCY_MOD,
   SHOOTING_FOUL_RATE_BY_ZONE,
   POINTS_BY_ZONE,
+  FT_LEAGUE_AVG_PCT,
+  FT_PCT_SLOPE,
+  FT_SIM_PCT_MIN,
+  FT_SIM_PCT_MAX,
 } from './constants';
 
 export type ContestLevel = 'open' | 'lightly_contested' | 'contested' | 'heavily_contested';
@@ -193,7 +197,10 @@ export function resolveFreeThrows(
   rng: SeededRNG,
 ): { made: number; attempted: number } {
   const ftRating = getEffectiveRating(shooter.ratings.freeThrowShooting, shooterFatigue);
-  const ftPct = 0.53 + (ftRating / 80) * 0.40; // ~53% to 93% range
+  const ftPct = Math.max(FT_SIM_PCT_MIN, Math.min(
+    FT_SIM_PCT_MAX,
+    FT_LEAGUE_AVG_PCT + ((ftRating - 40) / 40) * FT_PCT_SLOPE,
+  ));
 
   let made = 0;
   for (let i = 0; i < attempts; i++) {

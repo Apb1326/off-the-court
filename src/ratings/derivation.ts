@@ -1,4 +1,9 @@
-import { PlayerRatings, PlayerTendencies, PerGameStats, Position } from '@/models/player';
+import { Player, PlayerRatings, PlayerTendencies, PerGameStats, Position, SeasonStats } from '@/models/player';
+import {
+  FT_DERIVE_SCALE,
+  FT_LEAGUE_AVG_PCT,
+  USAGE_TEAM_POSS_PER_MINUTE,
+} from '@/engine/constants';
 
 interface RawPlayerStats {
   gamesPlayed: number;
@@ -7,6 +12,61 @@ interface RawPlayerStats {
   position: Position;
   age: number;
   experience: number;
+}
+
+/**
+ * Select the canonical raw-stat season for deterministic derivation work.
+ * Greatest season identifier wins; an equal identifier deliberately replaces
+ * the earlier match so the later array element is the tie-breaker.
+ */
+export function selectLatestCareerStats(
+  careerStats: readonly SeasonStats[],
+): SeasonStats | undefined {
+  let selected: SeasonStats | undefined;
+  for (const season of careerStats) {
+    if (!selected || season.season >= selected.season) selected = season;
+  }
+  return selected;
+}
+
+function hasFiniteStat(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * Recompute the three persisted fields governed by raw usage/FT stats.
+ * Invalid or sample-less canonical seasons return undefined so callers can
+ * preserve the player byte-for-byte and report the skipped id.
+ */
+export function recomputeUsageAndFreeThrowFields(player: Player): Player | undefined {
+  const raw = selectLatestCareerStats(player.careerStats);
+  if (
+    !raw ||
+    !hasFiniteStat(raw.gamesPlayed) || raw.gamesPlayed <= 0 ||
+    !hasFiniteStat(raw.minutesPerGame) || raw.minutesPerGame <= 0 ||
+    !raw.stats ||
+    !hasFiniteStat(raw.stats.fieldGoalsAttempted) ||
+    !hasFiniteStat(raw.stats.freeThrowsAttempted) ||
+    !hasFiniteStat(raw.stats.turnovers) ||
+    (raw.stats.freeThrowsAttempted >= 0.5 && !hasFiniteStat(raw.stats.freeThrowPct))
+  ) {
+    return undefined;
+  }
+
+  const usageRate = estimateUsageRate(raw.stats, raw.minutesPerGame);
+  const freeThrowShooting = deriveFreeThrowShooting(raw.stats);
+  const potentialFreeThrowShooting = derivePotential(
+    { ...player.ratings, freeThrowShooting },
+    player.age,
+    player.experience,
+  ).freeThrowShooting;
+
+  return {
+    ...player,
+    tendencies: { ...player.tendencies, usageRate },
+    ratings: { ...player.ratings, freeThrowShooting },
+    potential: { ...player.potential, freeThrowShooting: potentialFreeThrowShooting },
+  };
 }
 
 export function deriveRatings(raw: RawPlayerStats): PlayerRatings {
@@ -157,7 +217,8 @@ function deriveInteriorScoring(s: PerGameStats, pos: Position): number {
 
 function deriveFreeThrowShooting(s: PerGameStats): number {
   if (s.freeThrowsAttempted < 0.5) return clampRating(40);
-  return clampRating(Math.round((s.freeThrowPct || 0.75) * 80));
+  const pct = s.freeThrowPct || FT_LEAGUE_AVG_PCT;
+  return clampRating(Math.round(40 + (pct - FT_LEAGUE_AVG_PCT) * FT_DERIVE_SCALE));
 }
 
 function deriveBallHandling(s: PerGameStats, pos: Position): number {
@@ -275,12 +336,13 @@ function clampRating(value: number): number {
 
 // Tendency estimation helpers
 
-function estimateUsageRate(s: PerGameStats, mpg: number): number {
+export function estimateUsageRate(s: PerGameStats, mpg: number): number {
   if (mpg === 0) return 0.15;
   const fga = s.fieldGoalsAttempted || 0;
   const fta = s.freeThrowsAttempted || 0;
   const tov = s.turnovers || 0;
-  return Math.min(0.40, Math.max(0.10, (fga + 0.44 * fta + tov) / (mpg / 5 * 100) * 100 * 0.01));
+  const possOnFloor = mpg * USAGE_TEAM_POSS_PER_MINUTE;
+  return Math.min(0.40, Math.max(0.10, (fga + 0.44 * fta + tov) / possOnFloor));
 }
 
 function estimateRimRate(pos: Position, threePtRate: number): number {

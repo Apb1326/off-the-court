@@ -15,8 +15,9 @@ import { SeasonState } from './season';
  * v3 -> v4 (transactions Phase 4): explicit free-agent re-signing rights and
  * persisted, event-set team hard-cap state.
  * v4 -> v5 (transactions Phase 5a): TPE grants and operated-under-cap history.
+ * v5 -> v6: recompute usage and free-throw fields from canonical career stats.
  */
-export const SAVE_SCHEMA_VERSION = 5;
+export const SAVE_SCHEMA_VERSION = 6;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star

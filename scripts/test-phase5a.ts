@@ -384,7 +384,7 @@ function testRollover(): void {
 }
 
 function testMigration(): void {
-  console.log('\nE. Schema v5 migration');
+  console.log('\nE. Schema v4 through current migration');
   const f = fixture(15, 15);
   const oldCut: CutEntry = { type: 'cut', seq: 0, date: f.world.season.currentDate, season: f.world.season.seasonId, playerId: f.a[0], fromTeamId: f.aId, contractAtCut: { type: 'veteran', salarySchedule: [8], noTradeClause: false } };
   f.world.season.transactionLog = [oldCut];
@@ -394,12 +394,12 @@ function testMigration(): void {
   const v4 = { schemaVersion: 4, phase: derivePhase(f.world.season), season: v4Season, teams: f.world.teams, players: f.world.players, createdAt: now, updatedAt: now } as unknown as SaveFile;
   const logBefore = snap(v4.season.transactionLog);
   const migrated = migrateSaveFile(v4);
-  check('v4 loads to v5 with empty new ledgers', migrated.ok && migrated.file.schemaVersion === 5 && migrated.file.season.tradeExceptions.length === 0 && migrated.file.season.teamExceptionStates.length === 0);
+  check('v4 loads through v6 with empty new ledgers', migrated.ok && migrated.file.schemaVersion === 6 && migrated.file.season.tradeExceptions.length === 0 && migrated.file.season.teamExceptionStates.length === 0);
   if (!migrated.ok) return;
   check('old cut remains byte-identical and contributes dead money', snap(migrated.file.season.transactionLog) === logBefore && close(computeDeadMoney(migrated.file, f.aId), 8));
   const roundTrip = JSON.parse(JSON.stringify(migrated.file)) as SaveFile;
   const again = migrateSaveFile(roundTrip);
-  check('migration run twice and fresh v5 round-trip are byte-identical', again.ok && !again.migrated && snap(again.file) === snap(roundTrip) && SAVE_SCHEMA_VERSION === 5);
+  check('migration run twice and fresh v6 round-trip are byte-identical', again.ok && !again.migrated && snap(again.file) === snap(roundTrip) && SAVE_SCHEMA_VERSION === 6);
 }
 
 async function main(): Promise<void> {

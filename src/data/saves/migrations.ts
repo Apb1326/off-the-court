@@ -3,6 +3,7 @@ import {
   deriveReSigningRightsForCut,
   normalizePlayersForSave,
 } from '@/transactions/contracts';
+import { recomputeUsageAndFreeThrowFields } from '@/ratings/derivation';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -59,6 +60,12 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
   // --- v4 -> v5: transactions Phase 5a (TPE + exception event-state ledgers) ---
   if (version < 5) {
     working = migrateV4toV5(working);
+    migrated = true;
+  }
+
+  // --- v5 -> v6: canonical usage + free-throw derivation ---
+  if (version < 6) {
+    working = migrateV5toV6(working);
     migrated = true;
   }
 
@@ -191,5 +198,14 @@ function migrateV4toV5(file: SaveFile): SaveFile {
       // Legacy room usage cannot be reconstructed reliably; canonical migration is empty.
       teamExceptionStates: file.season.teamExceptionStates ?? [],
     },
+  };
+}
+
+/** v5 -> v6: refresh persisted player derivations from deterministic raw stats. */
+function migrateV5toV6(file: SaveFile): SaveFile {
+  return {
+    ...file,
+    schemaVersion: 6,
+    players: file.players.map((player) => recomputeUsageAndFreeThrowFields(player) ?? player),
   };
 }

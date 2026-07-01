@@ -1,6 +1,7 @@
 import { Player, Position, PlayerRatings, PlayerTendencies, PerGameStats } from '../src/models/player';
 import { Team, NBA_TEAMS } from '../src/models/team';
 import { derivePotential } from '../src/ratings';
+import { estimateUsageRate } from '../src/ratings/derivation';
 import { upgradeContractShape } from '../src/transactions/contracts';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -397,9 +398,9 @@ function generatePlayerFromArchetype(
   playerId: string,
 ): Player {
   const ratings = generateRatings(data);
-  const tendencies = generateTendencies(data);
-  const potential = derivePotential(ratings, data.age, data.exp);
   const stats = generateCareerStats(data);
+  const tendencies = generateTendencies(data, stats[0].stats, stats[0].minutesPerGame);
+  const potential = derivePotential(ratings, data.age, data.exp);
 
   return {
     id: playerId,
@@ -465,7 +466,11 @@ function generateRatings(data: typeof TEAM_ROSTERS['BOS'][0]): PlayerRatings {
   };
 }
 
-function generateTendencies(data: typeof TEAM_ROSTERS['BOS'][0]): PlayerTendencies {
+function generateTendencies(
+  data: typeof TEAM_ROSTERS['BOS'][0],
+  stats: PerGameStats,
+  minutesPerGame: number,
+): PlayerTendencies {
   const tpa = data.tpa;
   const fga = data.ppg / 2; // rough estimate
   const threePtRate = Math.min(0.60, tpa / Math.max(1, fga));
@@ -485,7 +490,7 @@ function generateTendencies(data: typeof TEAM_ROSTERS['BOS'][0]): PlayerTendenci
     rimRate: data.pos === 'C' ? 0.50 : data.pos === 'PF' ? 0.40 : 0.30,
     drawFoulRate: data.ppg > 20 ? 0.12 : 0.08,
     assistRate: data.apg / Math.max(1, data.ppg) * 3,
-    usageRate: Math.min(0.35, data.ppg / 80),
+    usageRate: estimateUsageRate(stats, minutesPerGame),
     reboundRate: data.rpg / 15,
   };
 }
