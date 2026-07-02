@@ -7,23 +7,26 @@ Usage:
 Pure function of data/nba/raw/: deterministic and idempotent — running twice
 with unchanged raw data produces byte-identical output. Rows are sorted by
 stable keys, JSON keys are sorted, and no timestamps appear inside data
-payloads (a single generated_at lives in manifest.json only). Files over
+payloads (a single raw-cache-derived generated_at lives in manifest.json only). Files over
 50 MB are gzipped (.json.gz, mtime pinned to 0 for byte-stability).
 
-No derived analytics here — flattening only. Rating math, league targets,
-and aggregations are Stage 1/2 work.
+No ratings, league targets, or model-ready features are computed here. The
+only semantic transforms are the versioned contract-shaping zone repartition
+and matchup-position summary documented in pipeline/README.md.
 """
 
+import argparse
 import gzip
 import io
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib.util import NORMALIZED_DIR, RAW_DIR, SCHEMA_VERSION, read_json
+from lib.util import NORMALIZED_DIR, RAW_DIR, SCHEMA_VERSION, read_json, write_json
 from lib.zones import NBA_TO_OTC, OTC_ZONES
 
 GZIP_THRESHOLD_BYTES = 50 * 1024 * 1024
@@ -38,7 +41,14 @@ def snake_to_camel(name: str) -> str:
 
 def rows_as_dicts(result_set: dict) -> list:
     headers = result_set["headers"]
-    return [dict(zip(headers, row)) for row in result_set["rowSet"]]
+    rows = result_set["rowSet"]
+    for index, row in enumerate(rows):
+        if len(row) != len(headers):
+            raise ValueError(
+                f"result-set row {index} has {len(row)} values for "
+                f"{len(headers)} headers"
+            )
+    return [dict(zip(headers, row)) for row in rows]
 
 
 def first_result_set(raw: dict, name: str = None) -> dict:
@@ -72,7 +82,27 @@ def load_single(season: str, group: str, match: str = "") -> dict:
     files = [f for f in season_raw_files(season, group) if match in f.name]
     if not files:
         return None
+    if len(files) > 1:
+        names = ", ".join(f.name for f in files[:3])
+        raise ValueError(
+            f"ambiguous raw input for {season}/{group} matching {match!r}: "
+            f"{names}{' ...' if len(files) > 3 else ''}"
+        )
     return read_json(files[0])
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Atomically replace a normalized artifact with complete bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_contract(relpath: str, payload: dict) -> str:
@@ -86,17 +116,16 @@ def write_contract(relpath: str, payload: dict) -> str:
     raw_bytes = data.encode("utf-8")
     plain = NORMALIZED_DIR / relpath
     gzipped = plain.with_suffix(plain.suffix + ".gz")
-    plain.parent.mkdir(parents=True, exist_ok=True)
     if len(raw_bytes) > GZIP_THRESHOLD_BYTES:
         buf = io.BytesIO()
         # mtime=0 keeps the gzip header byte-stable across runs
         with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
             gz.write(raw_bytes)
-        gzipped.write_bytes(buf.getvalue())
+        atomic_write_bytes(gzipped, buf.getvalue())
         if plain.exists():
             plain.unlink()
         return str(gzipped.relative_to(NORMALIZED_DIR))
-    plain.write_bytes(raw_bytes)
+    atomic_write_bytes(plain, raw_bytes)
     if gzipped.exists():
         gzipped.unlink()
     return str(plain.relative_to(NORMALIZED_DIR))
@@ -129,6 +158,138 @@ def to_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def raw_cache_metadata():
+    """Return deterministic provenance without loading large response bodies."""
+    fetched_at = []
+    versions = set()
+    fetched_pattern = re.compile(rb'"fetched_at"\s*:\s*"([^"]+)"')
+    version_pattern = re.compile(rb'"nba_api_version"\s*:\s*"([^"]+)"')
+    for path in sorted(RAW_DIR.rglob("*.json")):
+        if path.name == "_failures.json":
+            continue
+        with open(path, "rb") as f:
+            header = f.read(4096)
+        fetched_match = fetched_pattern.search(header)
+        version_match = version_pattern.search(header)
+        if fetched_match:
+            fetched_at.append(fetched_match.group(1).decode("utf-8"))
+        if version_match:
+            versions.add(version_match.group(1).decode("utf-8"))
+    return (max(fetched_at) if fetched_at else None, versions)
+
+
+EXPECTED_GROUP_FILE_COUNTS = {
+    "box_advanced": 11,
+    "shot_locations": 1,
+    "game_logs": 1,
+    "synergy": 20,
+    "tracking": 12,
+    "pt_defend": 6,
+    "hustle": 1,
+    "lineups": 2,
+    "matchups": 1,
+    "combine": 1,
+}
+
+
+def manifest_seasons(config: dict) -> set:
+    """Expand a manifest's inclusive start-year range to NBA season strings."""
+    if "seasons" not in config:
+        return set()
+    start = config["seasons"]["from"]
+    end = config["seasons"]["to"]
+    return {f"{year}-{str(year + 1)[-2:]}" for year in range(start, end + 1)}
+
+
+def ids_from_filenames(files: list, field: str) -> set:
+    pattern = re.compile(rf"(?:^|&){re.escape(field)}=([^&]+)(?:&|\.json$)")
+    values = set()
+    for path in files:
+        match = pattern.search(path.name)
+        if not match:
+            raise ValueError(f"cannot read {field} from raw-cache filename {path}")
+        values.add(match.group(1))
+    return values
+
+
+def raw_completeness_issues(seasons: list) -> list:
+    """Check the cache against the committed full-harvest manifest.
+
+    The smoke manifest is intentionally incomplete; callers must explicitly
+    opt into normalizing it with --allow-partial.
+    """
+    issues = []
+    failures_path = RAW_DIR / "_failures.json"
+    if failures_path.exists():
+        failures = read_json(failures_path)
+        if failures:
+            issues.append(f"{len(failures)} unresolved harvest failure(s)")
+
+    default_manifest = read_json(Path(__file__).resolve().parent /
+                                 "manifests" / "default.json")
+    expected_groups = default_manifest["groups"]
+
+    static_counts = {"static": 2, "player_index": 1}
+    for group, expected in static_counts.items():
+        actual = len(season_raw_files("_static", group))
+        if group in expected_groups and actual != expected:
+            issues.append(f"_static/{group}: {actual} file(s), expected {expected}")
+
+    for season in seasons:
+        for group, expected_count in EXPECTED_GROUP_FILE_COUNTS.items():
+            expected_here = season in manifest_seasons(expected_groups.get(group, {}))
+            files = season_raw_files(season, group)
+            if expected_here and len(files) != expected_count:
+                issues.append(
+                    f"{season}/{group}: {len(files)} file(s), expected {expected_count}"
+                )
+            elif files and len(files) != expected_count:
+                issues.append(
+                    f"{season}/{group}: ambiguous {len(files)} file(s), "
+                    f"expected {expected_count}"
+                )
+
+        shot_files = season_raw_files(season, "shot_charts")
+        shot_expected = season in manifest_seasons(expected_groups.get("shot_charts", {}))
+        base_raw = load_single(
+            season, "box_advanced", "MeasureType=Base&PerMode=Totals"
+        )
+        if shot_expected or shot_files:
+            if base_raw is None:
+                issues.append(f"{season}/shot_charts: missing Base/Totals player index")
+            else:
+                player_ids = {
+                    str(row["PLAYER_ID"])
+                    for row in rows_as_dicts(first_result_set(base_raw))
+                }
+                cached_ids = ids_from_filenames(shot_files, "PlayerID")
+                if cached_ids != player_ids:
+                    issues.append(
+                        f"{season}/shot_charts: {len(cached_ids)}/{len(player_ids)} "
+                        "player files present"
+                    )
+
+        pbp_files = season_raw_files(season, "pbp")
+        pbp_expected = season in manifest_seasons(expected_groups.get("pbp", {}))
+        game_log_raw = load_single(season, "game_logs")
+        if pbp_expected or pbp_files:
+            if game_log_raw is None:
+                issues.append(f"{season}/pbp: missing game log index")
+            else:
+                game_ids = {
+                    str(row["GAME_ID"])
+                    for row in rows_as_dicts(first_result_set(game_log_raw))
+                }
+                cached_ids = ids_from_filenames(pbp_files, "GameID")
+                if cached_ids != game_ids:
+                    issues.append(
+                        f"{season}/pbp: {len(cached_ids)}/{len(game_ids)} "
+                        "game files present"
+                    )
+
+    return sorted(set(issues))
 
 
 # ------------------------------------------------------------- contracts
@@ -467,12 +628,41 @@ def build_games(season: str):
     games = {}
     for r in rows_as_dicts(first_result_set(raw)):
         gid = r["GAME_ID"]
-        g = games.setdefault(gid, {"gameId": gid, "date": r.get("GAME_DATE")})
-        # MATCHUP is 'MIN @ LAL' for the away team, 'LAL vs. MIN' for home
-        side = "home" if "vs." in (r.get("MATCHUP") or "") else "away"
-        g[f"{side}TeamId"] = r.get("TEAM_ID")
-        g[f"{side}Score"] = r.get("PTS")
-    rows = sorted(games.values(), key=lambda g: g["gameId"])
+        g = games.setdefault(gid, {
+            "gameId": gid,
+            "date": r.get("GAME_DATE"),
+            "participants": {},
+        })
+        g["participants"][r.get("TEAM_ID")] = {
+            "teamId": r.get("TEAM_ID"),
+            "score": r.get("PTS"),
+            "matchup": r.get("MATCHUP"),
+        }
+
+    rows = []
+    for game in games.values():
+        participants = sorted(
+            game.pop("participants").values(),
+            key=lambda participant: participant["teamId"] or 0,
+        )
+        home = [p for p in participants if "vs." in (p["matchup"] or "")]
+        home_participant = home[0] if len(home) == 1 else None
+        away_participant = next(
+            (p for p in participants
+             if home_participant and p["teamId"] != home_participant["teamId"]),
+            None,
+        )
+        home_away_known = home_participant is not None and away_participant is not None
+        rows.append({
+            **game,
+            "participants": participants,
+            "homeAwayKnown": home_away_known,
+            "homeTeamId": home_participant["teamId"] if home_away_known else None,
+            "awayTeamId": away_participant["teamId"] if home_away_known else None,
+            "homeScore": home_participant["score"] if home_away_known else None,
+            "awayScore": away_participant["score"] if home_away_known else None,
+        })
+    rows.sort(key=lambda g: g["gameId"])
     return envelope(season, rows)
 
 
@@ -487,7 +677,9 @@ def clock_to_seconds(clock: str):
 def build_pbp_game(season: str, raw: dict):
     game = raw["response"]["game"]
     rows = []
-    for a in sorted(game["actions"], key=lambda a: a["actionNumber"]):
+    # PBPv3 actionNumber is duplicated and sometimes non-monotonic. The API's
+    # source array is chronological; sorting by actionNumber corrupts sequence.
+    for a in game["actions"]:
         rows.append({
             "actionNumber": a.get("actionNumber"),
             "period": a.get("period"),
@@ -547,15 +739,51 @@ CONTRACT_BUILDERS = [
 ]
 
 
-def main() -> int:
+NORMALIZER_CONTRACTS = tuple(name for name, _ in CONTRACT_BUILDERS) + ("pbp",)
+
+
+def prune_stale_contracts(expected_paths: set) -> None:
+    """Remove only normalizer-owned artifacts absent from the new projection."""
+    for contract in NORMALIZER_CONTRACTS:
+        root = NORMALIZED_DIR / contract
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = str(path.relative_to(NORMALIZED_DIR))
+            is_contract = path.name.endswith(".json") or path.name.endswith(".json.gz")
+            is_temporary = path.name.startswith(".") and path.name.endswith(".tmp")
+            if (is_contract and rel not in expected_paths) or is_temporary:
+                path.unlink()
+        for directory in sorted(
+                (p for p in root.rglob("*") if p.is_dir()),
+                key=lambda p: len(p.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+
+def main(*, allow_partial: bool = False) -> int:
     if not RAW_DIR.is_dir():
         print(f"no raw cache at {RAW_DIR}; run harvest.py first")
         return 1
 
     seasons = sorted(d.name for d in RAW_DIR.iterdir()
                      if d.is_dir() and not d.name.startswith("_"))
+    completeness_issues = raw_completeness_issues(seasons)
+    if completeness_issues:
+        label = "WARNING" if allow_partial else "ERROR"
+        print(f"{label}: raw cache is not a complete default-manifest harvest:")
+        for issue in completeness_issues:
+            print(f"  - {issue}")
+        if not allow_partial:
+            print("re-run harvest.py, or pass --allow-partial for an intentional smoke dataset")
+            return 1
+
     written = {}
-    nba_api_versions = set()
+    written_paths = set()
 
     wingspans = collect_wingspans()
     bio_index = load_bio_index()
@@ -567,36 +795,42 @@ def main() -> int:
             if payload is None:
                 continue
             rel = write_contract(f"{name}/{season}.json", payload)
+            written_paths.add(rel)
             written.setdefault(name, []).append(season)
             print(f"wrote {rel} ({len(payload['rows'])} rows)")
         for f in season_raw_files(season, "pbp"):
             raw = read_json(f)
-            nba_api_versions.add(raw.get("nba_api_version"))
             payload = build_pbp_game(season, raw)
             rel = write_contract(f"pbp/{season}/{payload['gameId']}.json", payload)
+            written_paths.add(rel)
             written.setdefault("pbp", []).append(f"{season}/{payload['gameId']}")
             print(f"wrote {rel} ({len(payload['rows'])} rows)")
-        # record library version from any raw file in the season
-        for group_dir in (RAW_DIR / season).iterdir():
-            files = sorted(group_dir.glob("*.json"))
-            if files:
-                nba_api_versions.add(read_json(files[0]).get("nba_api_version"))
 
-    import datetime
+    generated_at, nba_api_versions = raw_cache_metadata()
+    if generated_at is None:
+        print(f"no complete raw responses found under {RAW_DIR}")
+        return 1
+    prune_stale_contracts(written_paths)
     manifest = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at": generated_at,
         "nba_api_versions": sorted(v for v in nba_api_versions if v),
+        "complete": not completeness_issues,
+        "completeness_issues": completeness_issues,
         "contracts": {k: sorted(set(v)) for k, v in written.items()},
     }
-    (NORMALIZED_DIR).mkdir(parents=True, exist_ok=True)
-    with open(NORMALIZED_DIR / "manifest.json", "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, sort_keys=True, indent=1)
-        f.write("\n")
+    write_json(NORMALIZED_DIR / "manifest.json", manifest, sort_keys=True)
     print(f"\nnormalized {sum(len(v) for v in written.values())} contract files "
           f"across {len(seasons)} season(s) -> {NORMALIZED_DIR}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="normalize an intentional smoke/partial cache and mark it incomplete",
+    )
+    args = parser.parse_args()
+    raise SystemExit(main(allow_partial=args.allow_partial))

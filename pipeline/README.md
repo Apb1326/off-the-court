@@ -14,7 +14,7 @@ blocks datacenter IPs.
 pipeline/            (committed)  harvester / normalizer / crosswalk code
 data/nba/raw/        (gitignored) verbatim cached endpoint responses — the
                                   checkpoint/resume layer. Never hand-edit.
-data/nba/normalized/ (gitignored) versioned JSON contracts, schema_version 1.
+data/nba/normalized/ (gitignored) versioned JSON contracts, schema_version 3.
                                   The ONLY Python <-> TypeScript interface.
 src/data/nba/        (committed)  TS types + reader for the contracts.
 ```
@@ -47,8 +47,12 @@ pipeline/.venv/bin/python pipeline/harvest.py --manifest pipeline/manifests/smok
 # 2. Full harvest (thousands of requests — run overnight; see estimate below)
 pipeline/.venv/bin/python pipeline/harvest.py --manifest pipeline/manifests/default.json
 
-# 3. Normalize the raw cache into contracts
+# 3. Normalize the complete default-manifest cache into contracts.
+#    This fails closed if any expected source file is missing.
 pipeline/.venv/bin/python pipeline/normalize.py
+
+# For an intentional smoke/partial cache only (manifest is marked incomplete):
+pipeline/.venv/bin/python pipeline/normalize.py --allow-partial
 
 # 4. Build the BDL/ESPN -> NBA personId crosswalk (optional; needs data/players.json)
 pipeline/.venv/bin/python pipeline/crosswalk.py
@@ -127,10 +131,10 @@ at the cost that OTC "rim" = Restricted Area only and the NBA's "Mid-Range"
 The raw NBA zone columns are kept alongside the mapped ones so Stage 1/2 can
 revisit the split (e.g. using `shot_events` distances) without re-harvesting.
 
-## Normalized contracts (v1)
+## Normalized contracts (v3)
 
 Every seasonal file has the envelope
-`{ "schema_version": 1, "season": "2024-25", "rows": [...] }`.
+`{ "schema_version": 3, "season": "2024-25", "rows": [...] }`.
 Contracts: `players/`, `box_advanced/`, `shot_zones/`, `shot_events/`,
 `playtypes/`, `tracking/`, `defense/`, `hustle/`, `lineups/`, `games/`,
 `pbp/<season>/<gameId>.json`, `crosswalk.json`, `manifest.json`.
@@ -139,10 +143,16 @@ TS mirrors live in `src/data/nba/types.ts`; loaders in `src/data/nba/load.ts`.
 `normalize.py` is a pure function of the raw cache: deterministic and
 idempotent — running it twice on unchanged raw data produces byte-identical
 output (rows sorted by stable keys, sorted JSON keys, no timestamps in
-payloads; the single `generated_at` lives in `manifest.json`). Files over
+payloads; the single `generated_at` in `manifest.json` is deterministically
+derived from the latest raw-cache `fetched_at` value). Files over
 50 MB are gzipped (`.json.gz`, gzip mtime pinned to 0); the TS loaders handle
-both forms transparently. No derived analytics are computed here — rating
-math and league targets are Stage 1/2 work.
+both forms transparently. A normal run validates the committed full-harvest
+manifest, marks `complete: true`, and prunes stale normalizer-owned files;
+`--allow-partial` is reserved for smoke fixtures and marks the manifest
+incomplete. Rating math, league targets, and model-ready feature engineering
+remain Stage 1/2 work. The v3 contract retains the documented OTC shot-zone
+repartition and matchup-by-position summary as explicit schema transforms;
+the raw source columns remain available for later reprocessing.
 
 ## Crosswalk
 

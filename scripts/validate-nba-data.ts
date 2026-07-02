@@ -197,10 +197,32 @@ function main(): number {
         for (const row of env.rows) {
           if (seen.has(row.gameId)) fail(`${gamesFile}: duplicate gameId ${row.gameId}`);
           seen.add(row.gameId);
-          assertFinite(row.homeTeamId, `${gamesFile}: ${row.gameId} homeTeamId`);
-          assertFinite(row.awayTeamId, `${gamesFile}: ${row.gameId} awayTeamId`);
-          assertFinite(row.homeScore, `${gamesFile}: ${row.gameId} homeScore`);
-          assertFinite(row.awayScore, `${gamesFile}: ${row.gameId} awayScore`);
+          if (!Array.isArray(row.participants) || row.participants.length !== 2) {
+            fail(`${gamesFile}: ${row.gameId} must retain exactly two participants`);
+          }
+          const participantIds = new Set<number>();
+          for (const participant of row.participants) {
+            if (!Number.isFinite(participant.teamId)) {
+              fail(`${gamesFile}: ${row.gameId} has an invalid participant teamId`);
+            }
+            if (participantIds.has(participant.teamId)) {
+              fail(`${gamesFile}: ${row.gameId} repeats participant ${participant.teamId}`);
+            }
+            participantIds.add(participant.teamId);
+            assertFinite(participant.score, `${gamesFile}: ${row.gameId} participant score`);
+          }
+          if (row.homeAwayKnown) {
+            if (row.homeTeamId === null || row.awayTeamId === null ||
+                row.homeTeamId === row.awayTeamId ||
+                !participantIds.has(row.homeTeamId) || !participantIds.has(row.awayTeamId)) {
+              fail(`${gamesFile}: ${row.gameId} has inconsistent home/away participants`);
+            }
+            assertFinite(row.homeScore, `${gamesFile}: ${row.gameId} homeScore`);
+            assertFinite(row.awayScore, `${gamesFile}: ${row.gameId} awayScore`);
+          } else if (row.homeTeamId !== null || row.awayTeamId !== null ||
+                     row.homeScore !== null || row.awayScore !== null) {
+            fail(`${gamesFile}: ${row.gameId} must keep ambiguous home/away fields null`);
+          }
         }
       });
     }
@@ -216,10 +238,20 @@ function main(): number {
             fail(`pbp/${season}/${gameId}.json: gameId field ${game.gameId} != ${gameId}`);
           }
           if (game.rows.length === 0) fail(`pbp/${season}/${gameId}.json: zero actions`);
+          let previousPeriod = 0;
+          let previousClock = Number.POSITIVE_INFINITY;
           for (const action of game.rows) {
-            assertFinite(action.actionNumber, `pbp ${gameId} actionNumber`);
-            assertFinite(action.period, `pbp ${gameId} period`);
-            assertFinite(action.clockSeconds, `pbp ${gameId} clockSeconds`);
+            if (!Number.isFinite(action.actionNumber) || !Number.isFinite(action.period) ||
+                !Number.isFinite(action.clockSeconds)) {
+              fail(`pbp ${gameId}: action has invalid sequence fields`);
+            }
+            if (action.period < previousPeriod ||
+                (action.period === previousPeriod && action.clockSeconds! > previousClock)) {
+              fail(`pbp ${gameId}: actions are not chronological at ${action.actionNumber}`);
+            }
+            if (action.period !== previousPeriod) previousClock = Number.POSITIVE_INFINITY;
+            previousPeriod = action.period;
+            previousClock = action.clockSeconds!;
           }
         }
       });
@@ -251,6 +283,12 @@ function main(): number {
     record('manifest.json', () => {
       const manifest = loadManifest();
       if (typeof manifest.generated_at !== 'string') fail('manifest.json: missing generated_at');
+      if (manifest.complete !== true) {
+        fail(`manifest.json: incomplete normalization (${manifest.completeness_issues?.join('; ')})`);
+      }
+      if (!Array.isArray(manifest.completeness_issues) || manifest.completeness_issues.length !== 0) {
+        fail('manifest.json: complete dataset has completeness issues');
+      }
       if (manifest === null || typeof manifest.contracts !== 'object') {
         fail('manifest.json: missing contracts map');
       }
