@@ -14,7 +14,7 @@ blocks datacenter IPs.
 pipeline/            (committed)  harvester / normalizer / crosswalk code
 data/nba/raw/        (gitignored) verbatim cached endpoint responses — the
                                   checkpoint/resume layer. Never hand-edit.
-data/nba/normalized/ (gitignored) versioned JSON contracts, schema_version 1.
+data/nba/normalized/ (gitignored) versioned JSON contracts, schema_version 2.
                                   The ONLY Python <-> TypeScript interface.
 src/data/nba/        (committed)  TS types + reader for the contracts.
 ```
@@ -127,10 +127,10 @@ at the cost that OTC "rim" = Restricted Area only and the NBA's "Mid-Range"
 The raw NBA zone columns are kept alongside the mapped ones so Stage 1/2 can
 revisit the split (e.g. using `shot_events` distances) without re-harvesting.
 
-## Normalized contracts (v1)
+## Normalized contracts (v2)
 
 Every seasonal file has the envelope
-`{ "schema_version": 1, "season": "2024-25", "rows": [...] }`.
+`{ "schema_version": 2, "season": "2024-25", "rows": [...] }`.
 Contracts: `players/`, `box_advanced/`, `shot_zones/`, `shot_events/`,
 `playtypes/`, `tracking/`, `defense/`, `hustle/`, `lineups/`, `games/`,
 `pbp/<season>/<gameId>.json`, `crosswalk.json`, `manifest.json`.
@@ -139,7 +139,8 @@ TS mirrors live in `src/data/nba/types.ts`; loaders in `src/data/nba/load.ts`.
 `normalize.py` is a pure function of the raw cache: deterministic and
 idempotent — running it twice on unchanged raw data produces byte-identical
 output (rows sorted by stable keys, sorted JSON keys, no timestamps in
-payloads; the single `generated_at` lives in `manifest.json`). Files over
+payloads; the single `generated_at` in `manifest.json` is deterministically
+derived from the latest raw-cache `fetched_at` value). Files over
 50 MB are gzipped (`.json.gz`, gzip mtime pinned to 0); the TS loaders handle
 both forms transparently. No derived analytics are computed here — rating
 math and league targets are Stage 1/2 work.

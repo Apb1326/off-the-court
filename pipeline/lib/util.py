@@ -1,6 +1,7 @@
 """Shared helpers for the NBA data pipeline. Stdlib only."""
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -9,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "nba" / "raw"
 NORMALIZED_DIR = REPO_ROOT / "data" / "nba" / "normalized"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def season_str(start_year: int) -> str:
@@ -36,10 +37,18 @@ def stable_param_key(params: dict) -> str:
 
 
 def write_json(path: Path, obj, *, sort_keys: bool = False) -> None:
+    """Atomically publish JSON so cache existence always means completeness."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, sort_keys=sort_keys, indent=1)
-        f.write("\n")
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, sort_keys=sort_keys, indent=1)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_json(path: Path):

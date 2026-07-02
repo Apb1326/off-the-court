@@ -197,10 +197,32 @@ function main(): number {
         for (const row of env.rows) {
           if (seen.has(row.gameId)) fail(`${gamesFile}: duplicate gameId ${row.gameId}`);
           seen.add(row.gameId);
-          assertFinite(row.homeTeamId, `${gamesFile}: ${row.gameId} homeTeamId`);
-          assertFinite(row.awayTeamId, `${gamesFile}: ${row.gameId} awayTeamId`);
-          assertFinite(row.homeScore, `${gamesFile}: ${row.gameId} homeScore`);
-          assertFinite(row.awayScore, `${gamesFile}: ${row.gameId} awayScore`);
+          if (!Array.isArray(row.participants) || row.participants.length !== 2) {
+            fail(`${gamesFile}: ${row.gameId} must retain exactly two participants`);
+          }
+          const participantIds = new Set<number>();
+          for (const participant of row.participants) {
+            if (!Number.isFinite(participant.teamId)) {
+              fail(`${gamesFile}: ${row.gameId} has an invalid participant teamId`);
+            }
+            if (participantIds.has(participant.teamId)) {
+              fail(`${gamesFile}: ${row.gameId} repeats participant ${participant.teamId}`);
+            }
+            participantIds.add(participant.teamId);
+            assertFinite(participant.score, `${gamesFile}: ${row.gameId} participant score`);
+          }
+          if (row.homeAwayKnown) {
+            if (row.homeTeamId === null || row.awayTeamId === null ||
+                row.homeTeamId === row.awayTeamId ||
+                !participantIds.has(row.homeTeamId) || !participantIds.has(row.awayTeamId)) {
+              fail(`${gamesFile}: ${row.gameId} has inconsistent home/away participants`);
+            }
+            assertFinite(row.homeScore, `${gamesFile}: ${row.gameId} homeScore`);
+            assertFinite(row.awayScore, `${gamesFile}: ${row.gameId} awayScore`);
+          } else if (row.homeTeamId !== null || row.awayTeamId !== null ||
+                     row.homeScore !== null || row.awayScore !== null) {
+            fail(`${gamesFile}: ${row.gameId} must keep ambiguous home/away fields null`);
+          }
         }
       });
     }

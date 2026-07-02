@@ -7,11 +7,12 @@ Usage:
 Pure function of data/nba/raw/: deterministic and idempotent — running twice
 with unchanged raw data produces byte-identical output. Rows are sorted by
 stable keys, JSON keys are sorted, and no timestamps appear inside data
-payloads (a single generated_at lives in manifest.json only). Files over
+payloads (a single raw-cache-derived generated_at lives in manifest.json only). Files over
 50 MB are gzipped (.json.gz, mtime pinned to 0 for byte-stability).
 
 No derived analytics here — flattening only. Rating math, league targets,
-and aggregations are Stage 1/2 work.
+and aggregations are Stage 1/2 work. The manifest provenance timestamp is
+derived from the raw cache rather than wall-clock time.
 """
 
 import gzip
@@ -129,6 +130,20 @@ def to_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def latest_raw_fetched_at():
+    """Latest source-cache timestamp without loading every large response."""
+    timestamps = []
+    pattern = re.compile(rb'"fetched_at"\s*:\s*"([^"]+)"')
+    for path in sorted(RAW_DIR.rglob("*.json")):
+        if path.name == "_failures.json":
+            continue
+        with open(path, "rb") as f:
+            match = pattern.search(f.read(1024))
+        if match:
+            timestamps.append(match.group(1).decode("utf-8"))
+    return max(timestamps) if timestamps else None
 
 
 # ------------------------------------------------------------- contracts
@@ -467,12 +482,41 @@ def build_games(season: str):
     games = {}
     for r in rows_as_dicts(first_result_set(raw)):
         gid = r["GAME_ID"]
-        g = games.setdefault(gid, {"gameId": gid, "date": r.get("GAME_DATE")})
-        # MATCHUP is 'MIN @ LAL' for the away team, 'LAL vs. MIN' for home
-        side = "home" if "vs." in (r.get("MATCHUP") or "") else "away"
-        g[f"{side}TeamId"] = r.get("TEAM_ID")
-        g[f"{side}Score"] = r.get("PTS")
-    rows = sorted(games.values(), key=lambda g: g["gameId"])
+        g = games.setdefault(gid, {
+            "gameId": gid,
+            "date": r.get("GAME_DATE"),
+            "participants": {},
+        })
+        g["participants"][r.get("TEAM_ID")] = {
+            "teamId": r.get("TEAM_ID"),
+            "score": r.get("PTS"),
+            "matchup": r.get("MATCHUP"),
+        }
+
+    rows = []
+    for game in games.values():
+        participants = sorted(
+            game.pop("participants").values(),
+            key=lambda participant: participant["teamId"] or 0,
+        )
+        home = [p for p in participants if "vs." in (p["matchup"] or "")]
+        home_participant = home[0] if len(home) == 1 else None
+        away_participant = next(
+            (p for p in participants
+             if home_participant and p["teamId"] != home_participant["teamId"]),
+            None,
+        )
+        home_away_known = home_participant is not None and away_participant is not None
+        rows.append({
+            **game,
+            "participants": participants,
+            "homeAwayKnown": home_away_known,
+            "homeTeamId": home_participant["teamId"] if home_away_known else None,
+            "awayTeamId": away_participant["teamId"] if home_away_known else None,
+            "homeScore": home_participant["score"] if home_away_known else None,
+            "awayScore": away_participant["score"] if home_away_known else None,
+        })
+    rows.sort(key=lambda g: g["gameId"])
     return envelope(season, rows)
 
 
@@ -582,10 +626,14 @@ def main() -> int:
             if files:
                 nba_api_versions.add(read_json(files[0]).get("nba_api_version"))
 
-    import datetime
+    generated_at = latest_raw_fetched_at()
+    if generated_at is None:
+        print(f"no complete raw responses found under {RAW_DIR}")
+        return 1
     manifest = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        # Deterministic provenance: unchanged raw input yields identical bytes.
+        "generated_at": generated_at,
         "nba_api_versions": sorted(v for v in nba_api_versions if v),
         "contracts": {k: sorted(set(v)) for k, v in written.items()},
     }

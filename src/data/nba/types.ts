@@ -1,5 +1,5 @@
 /**
- * TypeScript mirrors of the v1 normalized NBA data contracts produced by
+ * TypeScript mirrors of the v2 normalized NBA data contracts produced by
  * pipeline/normalize.py (and pipeline/crosswalk.py) into data/nba/normalized/.
  *
  * These contracts are the ONLY interface between the Python pipeline and the
@@ -8,7 +8,7 @@
  * are versioned via `schema_version`.
  */
 
-export const NBA_DATA_SCHEMA_VERSION = 1;
+export const NBA_DATA_SCHEMA_VERSION = 2;
 
 /** Envelope shared by every seasonal contract file. */
 export interface SeasonEnvelope<Row> {
@@ -280,9 +280,19 @@ export interface LineupRow {
 
 // ------------------------------------------------------------------ games
 
+export interface GameParticipantRow {
+  teamId: number;
+  score: number | null;
+  matchup: string | null;
+}
+
 export interface GameRow {
   gameId: string;
   date: string | null; // YYYY-MM-DD
+  /** Always contains both teams, including neutral-site games. */
+  participants: GameParticipantRow[];
+  /** False when LeagueGameLog does not identify a designated home team. */
+  homeAwayKnown: boolean;
   homeTeamId: number | null;
   awayTeamId: number | null;
   homeScore: number | null;
