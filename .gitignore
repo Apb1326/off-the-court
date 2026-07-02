@@ -46,3 +46,7 @@ next-env.d.ts
 # python (NBA data pipeline)
 pipeline/.venv/
 __pycache__/
+
+# obsidian vault (local notes, not part of the app)
+.obsidian/
+*.base
