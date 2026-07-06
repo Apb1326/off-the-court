@@ -123,6 +123,13 @@ export interface ShotContext {
    * negative.
    */
   rushPenalty?: number;
+  /**
+   * Effort/coasting game-state response (possession.ts): negative for an
+   * offense protecting a big lead, positive for a trailing offense pressing.
+   * Additive, bounded by COAST_SHOT_EFFORT_MAX, equal-and-opposite around the
+   * lead so it is league-aggregate neutral.
+   */
+  effortMod?: number;
 }
 
 export function resolveShot(
@@ -163,10 +170,12 @@ export function resolveShot(
   const advantageMod = advRaw * advScale;
   // Forced shot under the shot-clock floor.
   const rushMod = ctx.rushPenalty ?? 0;
+  // Effort/coasting game-state response (see ShotContext.effortMod).
+  const effortMod = ctx.effortMod ?? 0;
 
   const finalProbability = Math.max(0.05, Math.min(0.95,
     basePct + shooterMod + defenderMod + fatigueMod + playTypeMod + contestMod +
-    formMod + doubleMod + momentumMod + advantageMod + rushMod
+    formMod + doubleMod + momentumMod + advantageMod + rushMod + effortMod
   ));
 
   // Block check (before shot)

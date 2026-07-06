@@ -22,6 +22,7 @@ import {
   ADVANTAGE_CREATE_PROB, ADVANTAGE_PERSIST_PROB, ADVANTAGE_SHOT_BONUS, ADVANTAGE_BONUS_DIMINISH,
   ADVANTAGE_BONUS_CEIL, SHOT_CLOCK_PRESSURE_THRESHOLD, SHOT_CLOCK_RUSH_PENALTY,
   SPACING_ADVANTAGE_COEF, SPACING_ADVANTAGE_MIN, SPACING_ADVANTAGE_MAX,
+  COAST_LEAD_START, COAST_LEAD_FULL, COAST_SHOT_EFFORT_MAX,
 } from './constants';
 
 export interface GameState {
@@ -43,6 +44,21 @@ export interface GameState {
   previousPossessionLongRebound: boolean;
   homeMomentum: number; // live hot/cold swing, decays each possession
   awayMomentum: number;
+  /**
+   * Optional diagnostic hook: chain provenance for each resolved shot.
+   * Read-only — consumes no randomness, never persisted, never read by a
+   * simulation decision path. Wired from the GameDiagObserver in index.ts.
+   */
+  diagShot?: (info: {
+    initialPlayType: PlayType;
+    terminalPlayType: PlayType;
+    passCount: number;
+    initialDoubled: boolean;
+    advantageCashed: boolean;
+    zone: ShotZone;
+    made: boolean;
+    assisted: boolean;
+  }) => void;
 }
 
 export interface PossessionResult {
@@ -241,6 +257,7 @@ export function simulatePossession(
   let assister: Player | undefined; // the player who threw the pass into the shot
   let advantageBonus = 0;           // accumulated, advantage-driven shot-quality bonus
   let passSeconds = 0;              // shot-clock burned by the extra passes
+  let passCount = 0;                // completed extra passes (diagnostic provenance only)
 
   // A double-team is two-on-the-ball, so it IS a live advantage; otherwise a real
   // drive (rim pressure that collapses the help) creates one more often than a
@@ -321,6 +338,7 @@ export function simulatePossession(
       advantageActive = state.rng.nextBool(ADVANTAGE_CREATE_PROB);
     }
 
+    passCount++;
     assister = finisher; // the thrower of THIS pass; overwritten only if a later pass lands the shot
     finisher = receiver;
     finisherDefender = selectDefender(defPlayers, receiver, state.rng, 'spot_up');
@@ -363,6 +381,14 @@ export function simulatePossession(
   // routed through the existing contest/contestBonus path as a centered
   // subtraction from the effective pressure bonus. Poor spacing → tougher.
   const spacingPressureBonus = pressure.contestBonus - SPACING_OPENNESS_COEF * spacing;
+  // Effort/coasting: a team protecting a big lead plays lower-intensity
+  // offense (and concedes easier looks on defense) while the trailing team
+  // presses — the real game's margin-compressing negative feedback. Additive,
+  // bounded, equal-and-opposite around the lead (see constants.ts), computed
+  // deterministically from the score state — no RNG, no margin target.
+  const coastRamp = Math.min(1, Math.max(0,
+    (Math.abs(scoreDiff) - COAST_LEAD_START) / (COAST_LEAD_FULL - COAST_LEAD_START)));
+  const coastMod = -Math.sign(scoreDiff) * COAST_SHOT_EFFORT_MAX * coastRamp;
   const shotResult = resolveShot(
     finisher, finisherFatigue,
     finisherDefender, finisherDefFatigue,
@@ -375,8 +401,21 @@ export function simulatePossession(
       momentum: offMomentum,
       advantageBonus: realizedAdvantageBonus,
       rushPenalty,
+      effortMod: coastMod,
     },
   );
+
+  // Diagnostic emission (observer only) — no RNG, no state mutation.
+  state.diagShot?.({
+    initialPlayType: playType,
+    terminalPlayType: finisherPlayType,
+    passCount,
+    initialDoubled: doubleTeamed,
+    advantageCashed: advantageBonus > 0,
+    zone: shotZone,
+    made: shotResult.made,
+    assisted: shotResult.made && assister !== undefined,
+  });
 
   // Record FGA
   const newState: GameState = { ...state, clock: shotClockState };
