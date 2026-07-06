@@ -76,7 +76,8 @@ export default function SimPage() {
     const res = await fetch('/api/sim', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ homeTeamId, awayTeamId, seed: Date.now() }),
+      // No seed: the API boundary chooses a valid one for a quick sim.
+      body: JSON.stringify({ homeTeamId, awayTeamId }),
     });
 
     const data = await res.json();

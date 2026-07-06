@@ -24,14 +24,14 @@ export function simulateGame(
   gameId: string,
   seasonId: string,
   date: string,
-  seed?: number,
+  seed: number,
   // Optional forced mid-game exits: playerId -> elapsed game seconds at which the
   // player leaves and does not return (used for in-game injuries). Empty by
   // default, so callers that don't pass it (calibration, determinism) get the
   // exact same game as before.
   inGameExits: Map<string, number> = new Map(),
 ): SimulationResult {
-  const rng = new SeededRNG(seed ?? Date.now());
+  const rng = new SeededRNG(seed);
   const stats = new StatsAccumulator();
   // Players removed from the game by a forced exit — never re-enter.
   const disabledPlayers = new Set<string>();

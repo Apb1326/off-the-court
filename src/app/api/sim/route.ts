@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStore } from '@/data/store';
 import { simulateGame } from '@/engine';
+import { resolveSeedFromBody } from '@/lib/seed';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { homeTeamId, awayTeamId, seed } = body;
+  const { homeTeamId, awayTeamId } = body;
 
   if (!homeTeamId || !awayTeamId) {
     return NextResponse.json({ error: 'homeTeamId and awayTeamId required' }, { status: 400 });
+  }
+
+  // Seed policy: a supplied seed must be valid; an omitted seed is chosen
+  // here at the API boundary — never inside the engine.
+  const seedRes = resolveSeedFromBody(body);
+  if (!seedRes.ok) {
+    return NextResponse.json({ error: seedRes.error }, { status: 400 });
   }
 
   if (homeTeamId === awayTeamId) {
@@ -42,7 +50,7 @@ export async function POST(request: NextRequest) {
     gameId,
     'quick-sim',
     new Date().toISOString().split('T')[0],
-    seed,
+    seedRes.seed,
   );
 
   // Save the game

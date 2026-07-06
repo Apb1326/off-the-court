@@ -8,6 +8,7 @@ import { Team } from '@/models/team';
 import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
 import { normalizePlayersForSave } from '@/transactions/contracts';
+import { resolveSeedFromBody } from '@/lib/seed';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -141,6 +142,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Seed policy: a supplied seed must be valid; an omitted seed is chosen
+    // here at the API boundary and persisted in SeasonState — never inside
+    // the engine.
+    const seedRes = resolveSeedFromBody(body);
+    if (!seedRes.ok) {
+      return NextResponse.json({ error: seedRes.error }, { status: 400 });
+    }
+
     // Snapshot the global roster template into a fresh, independent save.
     const store = getStore();
     const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
@@ -148,7 +157,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
     }
 
-    const season = createSeasonState(teams, players, { seed: body?.seed });
+    const season = createSeasonState(teams, players, { seed: seedRes.seed });
     const file = toSaveFile(season, teams, players);
     await saves.autoSave(file);
     return NextResponse.json({ state: clientState(season), advanced: 0 });

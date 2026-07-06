@@ -20,17 +20,18 @@ import { rollInjuries, tickInjuries, tickRecoveries, startRecoveries, getHealthy
 
 export interface SimulateSeasonOptions {
   seasonId?: string;
-  seed?: number;
+  /** Required: the caller (app/API boundary or script) owns seed selection. */
+  seed: number;
   schedule?: ScheduledGame[];
 }
 
 export function simulateSeason(
   teams: Team[],
   players: Player[],
-  options: SimulateSeasonOptions = {},
+  options: SimulateSeasonOptions,
 ): SeasonResult {
   const seasonId = options.seasonId ?? 'season-1';
-  const rng = new SeededRNG(options.seed ?? Date.now());
+  const rng = new SeededRNG(options.seed);
 
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const playersByTeam = new Map<string, Player[]>();
@@ -92,7 +93,8 @@ export function simulateSeason(
 
 export interface CreateSeasonOptions {
   seasonId?: string;
-  seed?: number;
+  /** Required: the caller (app/API boundary or script) owns seed selection. */
+  seed: number;
   startDate?: string;
 }
 
@@ -104,10 +106,10 @@ export interface CreateSeasonOptions {
 export function createSeasonState(
   teams: Team[],
   players: Player[],
-  options: CreateSeasonOptions = {},
+  options: CreateSeasonOptions,
 ): SeasonState {
   const seasonId = options.seasonId ?? 'season-1';
-  const seed = options.seed ?? Math.floor(Math.random() * 2_000_000_000);
+  const seed = options.seed;
   const startDate = options.startDate ?? DEFAULT_SEASON_START;
 
   const rng = new SeededRNG(seed);
