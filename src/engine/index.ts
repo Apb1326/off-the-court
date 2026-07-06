@@ -9,6 +9,30 @@ import { checkSubstitutions, findBestReplacement } from './substitution';
 import { StatsAccumulator } from './stats-accumulator';
 import { POINTS_BY_ZONE } from './constants';
 
+// ---------------------------------------------------------------------------
+// Diagnostic observer — OPTIONAL and disabled by default. Read-only: consumes
+// NO randomness, never mutates state, and adds nothing to the persisted
+// play-by-play or the returned game result, so simulation output is
+// byte-identical with or without it (covered by scripts/test-determinism.ts
+// and the profile repeat-run byte comparison). Consumed by
+// scripts/diagnose-margin.ts and scripts/diagnose-assists.ts (S1-Rb
+// calibration instruments, reusable for the S2/S3 assisted-definition work).
+// Never wire this into a simulation decision path.
+export interface GameDiagObserver {
+  /** Per-game shooting-form draws, right after assignment (playerId -> form). */
+  onForms?: (forms: ReadonlyMap<string, number>) => void;
+  /** After every possession: live momentum values (home, away). */
+  onPossession?: (homeMomentum: number, awayMomentum: number) => void;
+  /**
+   * On every dead-ball substitution opportunity: quarter, game clock (sec),
+   * current absolute margin, and how many substitutions this dead ball moved a
+   * rotation starter to the bench (garbage-time-style pulls).
+   */
+  onDeadBall?: (quarter: number, gameClock: number, margin: number, starterOutSubs: number) => void;
+  /** Chain provenance for every resolved shot (see GameState.diagShot). */
+  onShot?: NonNullable<GameState['diagShot']>;
+}
+
 export interface SimulationResult {
   game: Game;
   result: GameResult;
@@ -30,6 +54,8 @@ export function simulateGame(
   // default, so callers that don't pass it (calibration, determinism) get the
   // exact same game as before.
   inGameExits: Map<string, number> = new Map(),
+  // Optional read-only diagnostic observer — see GameDiagObserver above.
+  diag?: GameDiagObserver,
 ): SimulationResult {
   const rng = new SeededRNG(seed);
   const stats = new StatsAccumulator();
@@ -83,6 +109,7 @@ export function simulateGame(
   };
   for (const p of homePlayers) assignForm(p, HOME_COURT_FORM_EDGE);
   for (const p of awayPlayers) assignForm(p, 0);
+  diag?.onForms?.(shootingForm);
 
   // Record initial entry for plus/minus
   for (const id of [...homeLineup, ...awayLineup]) {
@@ -114,6 +141,7 @@ export function simulateGame(
     previousPossessionLongRebound: false,
     homeMomentum: 0,
     awayMomentum: 0,
+    diagShot: diag?.onShot,
   };
 
   let totalGameSeconds = 0;
@@ -174,12 +202,20 @@ export function simulateGame(
       }
     }
 
+    diag?.onPossession?.(gameState.homeMomentum, gameState.awayMomentum);
+
     // Substitutions on dead balls
     if (result.isDeadBall) {
-      processSubstitutions(
+      const starterOutSubs = processSubstitutions(
         gameState, homeTeam, awayTeam, playerMap,
         homeBench, awayBench, stats, totalGameSeconds,
         inGameExits, disabledPlayers,
+      );
+      diag?.onDeadBall?.(
+        gameState.clock.quarter,
+        gameState.clock.gameClock,
+        Math.abs(gameState.homeScore - gameState.awayScore),
+        starterOutSubs,
       );
     }
 
@@ -325,7 +361,8 @@ function processSubstitutions(
   gameSeconds: number,
   inGameExits: Map<string, number>,
   disabled: Set<string>,
-): void {
+  // Returns how many subs moved a rotation starter out (diagnostic observer).
+): number {
   // Forced mid-game exits (injuries) first, so the player is gone before the
   // fatigue/foul rotation runs. Only does work when inGameExits is non-empty.
   if (inGameExits.size > 0) {
@@ -334,6 +371,7 @@ function processSubstitutions(
   }
 
   const margin = Math.abs(state.homeScore - state.awayScore);
+  let starterOutSubs = 0; // reported to the diagnostic observer only
 
   // Home subs
   const homeSubs = checkSubstitutions(
@@ -342,6 +380,7 @@ function processSubstitutions(
     state.clock.quarter, state.clock.gameClock, true, margin,
   );
   for (const sub of homeSubs) {
+    if (homeTeam.rotation.starters.includes(sub.playerOut)) starterOutSubs++;
     stats.recordExit(sub.playerOut, state.homeScore, state.awayScore, state.homeTeamId);
     const idx = state.homeLineup.indexOf(sub.playerOut);
     if (idx >= 0) {
@@ -360,6 +399,7 @@ function processSubstitutions(
     state.clock.quarter, state.clock.gameClock, true, margin,
   );
   for (const sub of awaySubs) {
+    if (awayTeam.rotation.starters.includes(sub.playerOut)) starterOutSubs++;
     stats.recordExit(sub.playerOut, state.homeScore, state.awayScore, state.homeTeamId);
     const idx = state.awayLineup.indexOf(sub.playerOut);
     if (idx >= 0) {
@@ -370,6 +410,8 @@ function processSubstitutions(
       stats.recordEntry(sub.playerIn, state.homeScore, state.awayScore);
     }
   }
+
+  return starterOutSubs;
 }
 
 // Pulls any player whose forced-exit time has passed. If they're on the floor,

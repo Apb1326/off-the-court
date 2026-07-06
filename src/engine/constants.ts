@@ -517,6 +517,31 @@ export const SPACING_ADVANTAGE_COEF = 0.40;
 export const SPACING_ADVANTAGE_MIN = 0.25;
 export const SPACING_ADVANTAGE_MAX = 1.6;
 
+// ---------------------------------------------------------------------------
+// Effort / coasting — the real game's margin-compressing behavior (S1-Rb).
+// Real NBA final margins (2023-24..2025-26: mean abs 12.87, signed-margin SD
+// ~15.8) sit well BELOW the variance floor implied by ~102 independent
+// possessions per side: teams protect large leads with lower-intensity
+// offense and defense (coasting) while trailing teams play desperation-high
+// effort. Without this negative feedback the engine's margins random-walk to
+// a mean abs margin of ~16.8. This models that behavior as a deterministic,
+// bounded, symmetric game-state response: once a team's lead exceeds
+// COAST_LEAD_START the leading offense takes an additive make-probability
+// penalty and the trailing offense an equal bonus, ramping linearly until the
+// lead reaches COAST_LEAD_FULL and capped at COAST_SHOT_EFFORT_MAX. Equal and
+// opposite by construction, so league-aggregate scoring/FG% are untouched; it
+// reads the score only as a behavioral state (like threePointBias and the
+// garbage-time rule), never targets a margin. Sane ranges: START 8-15 pts,
+// FULL 20-30 pts, MAX 0.02-0.06 make-prob. Calibrated via `npm run profile`
+// (S1-Rb): 0.05 brings mean abs margin from 16.8 to ~13.4 vs the 12.87 ± 1.0
+// target with every other enforced stat unmoved; the implied full-coast
+// leader-vs-trailer differential (2 × 0.05 make-prob ≈ ±11 net rating per
+// 100) matches real garbage-time net-rating swings. Regression harness:
+// scripts/test-coasting.ts.
+export const COAST_LEAD_START = 8;
+export const COAST_LEAD_FULL = 25;
+export const COAST_SHOT_EFFORT_MAX = 0.05;
+
 // Late-shot-clock floor: under this many seconds the offense is forced into a
 // worse look because the alternative is a 24-second violation. The penalty is an
 // additive hit to make probability. Threshold ~4s; penalty a few points.
