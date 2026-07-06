@@ -26,7 +26,7 @@ The design goal is that **roster construction matters**. Five high-usage scorers
 
 **Stats derived from events.** The possession code contains intentional no-op `addXStats` stubs; the real accounting happens in `engine/index.ts`, where `recordEventStats` walks the `PlayByPlayEvent` stream and drives the `StatsAccumulator`. The event stream is the single source of truth for the box score.
 
-**Calibration discipline.** The engine is tuned against real NBA distributions. `npm run profile` simulates a season and prints the per-team-per-game profile next to modern-NBA targets with explicit tolerance bands; `npm run calibrate` compares against six decades of historical games by era. After any engine change, these are the acceptance test.
+**Calibration discipline.** The engine is tuned against real NBA distributions. `npm run profile` simulates a season and prints the per-team-per-game profile next to empirically derived league targets with derived tolerance bands — the targets come from real stats.nba.com data (`data/nba/normalized/`, 2023-24..2025-26 pooled) via `npx tsx scripts/derive-league-targets.ts`, with full provenance in [docs/LEAGUE_TARGETS.md](docs/LEAGUE_TARGETS.md); `npm run calibrate` compares against six decades of historical games by era. After any engine change, these are the acceptance test.
 
 ## Getting started
 
@@ -67,6 +67,7 @@ Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 | `tsx scripts/test-spacing-ab.ts` | A/B: same star with four shooters vs. four non-shooters; asserts a material rim-rate and TS% gain (exits non-zero if not met) |
 | `tsx scripts/test-defense-ab.ts` | Defensive-versatility A/B |
 | `tsx scripts/calibrate-spacing.ts` | Derives `SPACING_BASELINE_OFFBALL_FOUR` and `SPACING_SPREAD` from the real player pool |
+| `tsx scripts/derive-league-targets.ts` | Derives the profile's league targets + tolerance bands from `data/nba/normalized/`; writes `docs/LEAGUE_TARGETS.md` (`--check` verifies byte-identical; `--seasons=` overrides the 3-season default) |
 | `tsx scripts/test-sim.ts` · `test-season.ts` · `test-calendar.ts` | Single-game, full-season, and calendar smoke tests |
 
 ## Project structure
@@ -123,7 +124,7 @@ docs live in [pipeline/README.md](pipeline/README.md).
 There's no traditional unit-test suite as the primary safety net — calibration is. After any change to simulation logic:
 
 1. `npm run typecheck` — clean.
-2. `npm run profile` — every tracked stat (pace, scoring, shot mix, rebounding, assists, turnovers, margin) lands within its tolerance band. Assists and turnovers move most when chain logic changes; watch them.
+2. `npm run profile` — every ENFORCED stat (the box profile plus per-zone FG% and the six-zone/three-bucket shot mix) lands within its derived tolerance band; the script exits non-zero otherwise. Targets and bands come from `scripts/derive-league-targets.ts` (provenance: `docs/LEAGUE_TARGETS.md`). INFORMATIONAL stats (play-type distribution, assisted rates by zone, etc.) are logged with the stage that owns them, never failed on. Assists and turnovers move most when chain logic changes; watch them.
 3. `tsx scripts/test-determinism.ts` — same seed still produces an identical game.
 4. `tsx scripts/test-spacing-ab.ts` — spacing still produces a material, correctly-signed difference.
 

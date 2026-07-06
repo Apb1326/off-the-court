@@ -96,12 +96,33 @@ data payloads).
 - The normalizer computes **no derived analytics** (no rating math, no
   league targets) — that work belongs to later pipeline stages.
 
+**League calibration targets (Stage 1).** The targets `npm run profile`
+enforces are **derived from `data/nba/normalized/` by
+`npx tsx scripts/derive-league-targets.ts`**, which writes the provenance
+report `docs/LEAGUE_TARGETS.md` (seasons, sample sizes, formulas, tolerance
+derivation; `--check` verifies the committed copy byte-for-byte). Rules:
+
+- **Re-derive, never hand-edit.** When the normalized data changes, re-run
+  the script and re-transcribe; target numbers in `profile-engine.ts` carry
+  provenance annotations and are never edited free-hand.
+- **Targets ≠ base constants.** `BASE_FG_PCT_BY_ZONE` (and any constant whose
+  realized output passes through modifiers) holds tuned knobs annotated
+  against their empirical targets — never direct transcriptions of observed
+  league values. Realized output = base + the average modifier stack, which
+  does not average to zero; tune the base via profile until realized output
+  lands on target.
+- **Tier assignments are fixed per-task before tuning, never outcome-based.**
+  ENFORCED stats pass/fail the profile; INFORMATIONAL stats are logged with
+  the roadmap stage that owns closing their gap. Promoting or demoting a stat
+  based on what a retune managed to hit is prohibited; an unreachable
+  enforced target is a stop-and-surface, not a demotion.
+
 ## Verification checklist
 
 Run after any engine change and report results:
 
 - [ ] `npm run typecheck` — clean.
-- [ ] `npm run profile` — all tracked stats within tolerance of `LEAGUE_AVG` / the targets. Report before/after deltas; watch assists and turnovers when chain logic changed.
+- [ ] `npm run profile` — all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed.
 - [ ] `tsx scripts/test-determinism.ts` — same seed → identical game.
 - [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect.
 

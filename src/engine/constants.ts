@@ -23,13 +23,39 @@ export const FT_DERIVE_SCALE = 40 / FT_PCT_SLOPE; // rating points per unit of r
 export const FT_SIM_PCT_MIN = 0.45;
 export const FT_SIM_PCT_MAX = 0.95;
 
+// ---------------------------------------------------------------------------
+// Shot zones — settled six-zone mapping vs NBA shot-chart zones (Stage 1).
+// The engine zone semantics correspond to real NBA shot-chart data as:
+//
+//   rim               = Restricted Area (at-basket finishes)
+//   short_midrange    = In The Paint (Non-RA) + Mid-Range < 14 ft
+//                       (floaters / short pull-ups / hooks)
+//   long_midrange     = Mid-Range >= 14 ft
+//   corner_three      = Left + Right Corner 3
+//   above_break_three = Above the Break 3 < 27 ft
+//   deep_three        = Above the Break 3 >= 27 ft (below the 32 ft heave cut)
+//
+// Full mapping rationale + heave-exclusion rule: docs/LEAGUE_TARGETS.md and
+// scripts/derive-league-targets.ts (the single source for the empirical
+// targets the profile enforces).
+//
+// BASE_FG_PCT_BY_ZONE values are TUNED KNOBS, not transcriptions of observed
+// league FG%. Realized FG% = base + the average of the full modifier stack
+// (contest rolls skew contested-or-worse, fatigue averages negative,
+// play-type mods average slightly positive, etc.), which does not average to
+// zero — the base-vs-target offset absorbs that stack and is tuned via
+// `npm run profile`. Empirical targets (2023-24..2025-26 pooled shot_events,
+// 655,666 post-heave FGA — docs/LEAGUE_TARGETS.md):
+//   rim .6659 (n=188,112) | short_midrange .4412 (n=151,521)
+//   long_midrange .4135 (n=47,966) | corner_three .3881 (n=69,306)
+//   above_break_three .3603 (n=152,549) | deep_three .3379 (n=46,212)
 export const BASE_FG_PCT_BY_ZONE: Record<ShotZone, number> = {
-  rim: 0.645,
-  short_midrange: 0.435,
-  long_midrange: 0.415,
-  corner_three: 0.39,
-  above_break_three: 0.36,
-  deep_three: 0.32,
+  rim: 0.716,
+  short_midrange: 0.444,
+  long_midrange: 0.442,
+  corner_three: 0.375,
+  above_break_three: 0.367,
+  deep_three: 0.357,
 };
 
 export const POINTS_BY_ZONE: Record<ShotZone, number> = {
@@ -53,54 +79,98 @@ export const PLAY_TYPE_EFFICIENCY_MOD: Record<PlayType, number> = {
   putback: 0.10,
 };
 
-// Shot zone probabilities by play type
+// Shot zone probabilities by play type. Pre-multiplier weights: selectShotZone
+// scales these by player tendencies/ability and the global three-dampener
+// before drawing, so realized league shares differ from the raw weights —
+// they are tuned via `npm run profile` against the six-zone shot-mix targets
+// (docs/LEAGUE_TARGETS.md: rim .2869, short_mid .2311, long_mid .0732,
+// corner .1057, above-break .2327, deep .0705). Under the settled mapping
+// `rim` is restricted-area finishes only — floaters, short rolls, hooks and
+// runners belong to short_midrange — and each play type's profile must stay
+// recognizable as that play type's real shot diet (pool-artifact rule).
+//
+// KNOWN STAGE 2 ARTIFACT: the engine's play-type FREQUENCIES (hardcoded in
+// play-types.ts, out of Stage 1 scope) run far from Synergy reality — cut and
+// isolation are heavily over-selected, transition and pick-and-roll under-
+// selected (see the informational play-type table in `npm run profile`).
+// Fully real per-type shot diets under that skewed frequency mix would land
+// the league rim share several points high, so cut (real rim share ~.75-.85)
+// and spot_up (real rim ~.12-.15) are deliberately shaded toward
+// short_midrange/threes to the edge of narratability. When Stage 2 fixes the
+// play-type distribution, these tables should be re-tuned back toward the
+// real diets noted in the per-type comments.
 export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
   isolation: [
-    { zone: 'rim', weight: 0.35 },
-    { zone: 'short_midrange', weight: 0.25 },
-    { zone: 'long_midrange', weight: 0.15 },
-    { zone: 'above_break_three', weight: 0.20 },
-    { zone: 'deep_three', weight: 0.05 },
+    // Self-created: drives that finish at the rim, plus heavy pull-up traffic
+    // (short + long middies) and stepback/deep pull-up threes.
+    { zone: 'rim', weight: 0.22 },
+    { zone: 'short_midrange', weight: 0.33 },
+    { zone: 'long_midrange', weight: 0.13 },
+    { zone: 'above_break_three', weight: 0.22 },
+    { zone: 'deep_three', weight: 0.10 },
   ],
   pick_and_roll: [
-    { zone: 'rim', weight: 0.40 },
-    { zone: 'short_midrange', weight: 0.20 },
-    { zone: 'long_midrange', weight: 0.10 },
-    { zone: 'above_break_three', weight: 0.25 },
+    // Ball-handler rim attacks + floater/short-roll finishes; pull-up threes
+    // above the break with a small deep-pull-up tail; kick to the corner.
+    { zone: 'rim', weight: 0.28 },
+    { zone: 'short_midrange', weight: 0.34 },
+    { zone: 'long_midrange', weight: 0.06 },
+    { zone: 'above_break_three', weight: 0.23 },
     { zone: 'corner_three', weight: 0.05 },
+    { zone: 'deep_three', weight: 0.04 },
   ],
   post_up: [
-    { zone: 'rim', weight: 0.55 },
-    { zone: 'short_midrange', weight: 0.35 },
+    // Deep seals finish at the rim; hooks/fadeaways live in the short mid.
+    { zone: 'rim', weight: 0.45 },
+    { zone: 'short_midrange', weight: 0.45 },
     { zone: 'long_midrange', weight: 0.10 },
   ],
   spot_up: [
-    { zone: 'corner_three', weight: 0.35 },
-    { zone: 'above_break_three', weight: 0.45 },
-    { zone: 'long_midrange', weight: 0.15 },
-    { zone: 'deep_three', weight: 0.05 },
+    // Mostly catch-and-shoot threes (corner-heavy), with closeout attacks
+    // producing rim/short-mid finishes and one-dribble middies. Real spot-up
+    // rim share is ~.12-.15; shaded low here per the Stage 2 artifact note.
+    { zone: 'corner_three', weight: 0.34 },
+    { zone: 'above_break_three', weight: 0.35 },
+    { zone: 'long_midrange', weight: 0.05 },
+    { zone: 'deep_three', weight: 0.10 },
+    { zone: 'short_midrange', weight: 0.09 },
+    { zone: 'rim', weight: 0.07 },
   ],
   transition: [
-    { zone: 'rim', weight: 0.55 },
+    // Rim-heavy, trailing threes above the break / corners, some early
+    // pull-up middies before the defense sets.
+    { zone: 'rim', weight: 0.45 },
     { zone: 'above_break_three', weight: 0.25 },
-    { zone: 'short_midrange', weight: 0.10 },
+    { zone: 'short_midrange', weight: 0.14 },
     { zone: 'corner_three', weight: 0.10 },
+    { zone: 'long_midrange', weight: 0.04 },
+    { zone: 'deep_three', weight: 0.02 },
   ],
   cut: [
-    { zone: 'rim', weight: 0.85 },
-    { zone: 'short_midrange', weight: 0.15 },
+    // Finishes at the basket, plus dunker-spot floaters/short push shots.
+    // Real cut rim share is ~.75-.85; shaded toward short_midrange per the
+    // Stage 2 artifact note (cut is heavily over-selected by play-types.ts).
+    { zone: 'rim', weight: 0.65 },
+    { zone: 'short_midrange', weight: 0.35 },
   ],
   off_screen: [
-    { zone: 'above_break_three', weight: 0.45 },
-    { zone: 'long_midrange', weight: 0.30 },
+    // Movement shooters: above-break threes (some from deep), corner relocations,
+    // curl-and-pull middies, the occasional rim cut off the screen.
+    { zone: 'above_break_three', weight: 0.42 },
+    { zone: 'long_midrange', weight: 0.15 },
     { zone: 'corner_three', weight: 0.15 },
-    { zone: 'short_midrange', weight: 0.10 },
+    { zone: 'short_midrange', weight: 0.14 },
+    { zone: 'deep_three', weight: 0.09 },
+    { zone: 'rim', weight: 0.05 },
   ],
   handoff: [
-    { zone: 'above_break_three', weight: 0.40 },
-    { zone: 'long_midrange', weight: 0.25 },
-    { zone: 'rim', weight: 0.20 },
-    { zone: 'short_midrange', weight: 0.15 },
+    // DHO curls into threes and downhill drives; floater-range stop-offs.
+    { zone: 'above_break_three', weight: 0.38 },
+    { zone: 'long_midrange', weight: 0.12 },
+    { zone: 'rim', weight: 0.16 },
+    { zone: 'short_midrange', weight: 0.22 },
+    { zone: 'deep_three', weight: 0.06 },
+    { zone: 'corner_three', weight: 0.06 },
   ],
   putback: [
     { zone: 'rim', weight: 0.95 },
@@ -124,21 +194,30 @@ export const PLAY_TYPE_TURNOVER_RATE: Record<PlayType, number> = {
 };
 
 // Foul rate on shot attempts by zone. Rim attacks draw contact most often;
-// these are tuned alongside bonus/penalty free throws to land near the real
-// ~22 FTA per team per game.
+// these are tuned alongside bonus/penalty free throws to land on the real
+// FTA target (22.29 per team-game, 2023-24..2025-26 pooled pbp —
+// docs/LEAGUE_TARGETS.md) while keeping the FTA *composition* honest: real
+// fouled-3PA incidence is only ~2% (three-shot fouls are rare), and real rim
+// foul incidence per attempt is ~.20-.22. Rim sits slightly above that real
+// incidence because the engine's foul roll is independent of the make roll
+// (no foul-on-miss conditioning yet — a Stage 3 mechanism), which also
+// inflates and-one frequency; see the informational and-one line in
+// `npm run profile`. Do not raise the three-point rates to chase FTA.
 export const SHOOTING_FOUL_RATE_BY_ZONE: Record<ShotZone, number> = {
-  rim: 0.24,
-  short_midrange: 0.07,
-  long_midrange: 0.045,
-  corner_three: 0.05,
-  above_break_three: 0.05,
-  deep_three: 0.03,
+  rim: 0.26,
+  short_midrange: 0.10,
+  long_midrange: 0.05,
+  corner_three: 0.018,
+  above_break_three: 0.018,
+  deep_three: 0.01,
 };
 
 // Per-possession chance of a non-shooting defensive foul (reach-in, off-ball,
 // loose-ball). Only yields free throws once the defense is in the penalty,
-// which is how a big share of real FTA is generated.
-export const NON_SHOOTING_FOUL_RATE = 0.075;
+// which is how a big share of real FTA is generated. ~10-11 non-shooting
+// defensive fouls per team-game sits at the high end of the real range and
+// carries the FTA share the (now-realistic) three-point foul rates gave back.
+export const NON_SHOOTING_FOUL_RATE = 0.105;
 
 // Fatigue
 export const BASE_FATIGUE_PER_POSSESSION = 0.012;
@@ -219,21 +298,21 @@ export const INJURY_INGAME_EXIT_MAX_SEC = 2640;
 // empty, checkSubstitutions no-ops, and those 5 would play all 48 minutes.
 export const INJURY_MIN_HEALTHY_ROSTER = 8;
 
-// Rebounding. Real offensive-rebound rate is ~25%, but the per-miss live-ball
-// share that turns into a *player* rebound is lower, so 0.22 lands team OREB
-// near the real ~10/game (vs ~24% true rate including tip-outs).
-export const BASE_OFFENSIVE_REBOUND_RATE = 0.22;
+// Rebounding. Tuned so team OREB lands on the real 11.04/team-game with the
+// player-credited ORB rate near the real 25.2% ORB/(ORB+DRB)
+// (2023-24..2025-26 box_advanced — docs/LEAGUE_TARGETS.md).
+export const BASE_OFFENSIVE_REBOUND_RATE = 0.25;
 
 // Share of rebounds that are uncredited "team rebounds" (ball out of bounds,
 // kicked, etc.). Without this, every miss becomes a player rebound and team
 // totals run ~3/game above the real ~43.
 export const TEAM_REBOUND_RATE = 0.07;
 
-// Possession timing. Mean ~15s lands the league near the real ~99 possessions
-// per team per game (fewer possessions => fewer shots => realistic rebound and
-// FGA totals).
+// Possession timing. Mean ~15s lands the league near the derived FGA/pace
+// targets (89.08 FGA, 101.98 estimated poss per team-game —
+// docs/LEAGUE_TARGETS.md).
 export const BASE_POSSESSION_TIME_MIN = 8;
-export const BASE_POSSESSION_TIME_MAX = 23;
+export const BASE_POSSESSION_TIME_MAX = 22;
 export const TRANSITION_POSSESSION_TIME_MIN = 3;
 export const TRANSITION_POSSESSION_TIME_MAX = 8;
 
@@ -365,12 +444,12 @@ export const PRIMARY_PLAYER_MIN_WEIGHT = 0.01;
 // self-created shot. Seeded from realistic assisted-make rates; the league
 // assist total (~26/team/game) is the binding constraint that pins these. 0-1.
 export const PLAY_TYPE_PASS_RATE: Record<PlayType, number> = {
-  isolation: 0.22,
+  isolation: 0.24,
   pick_and_roll: 0.74,
   post_up: 0.34,
-  spot_up: 0.40,    // a spot-up that re-swings; lower than the assisted-make rate
-  transition: 0.62,
-  cut: 0.45,
+  spot_up: 0.42,    // a spot-up that re-swings; lower than the assisted-make rate
+  transition: 0.64,
+  cut: 0.48,
   off_screen: 0.74,
   handoff: 0.70,
   putback: 0.05,
@@ -444,7 +523,11 @@ export const SPACING_ADVANTAGE_MAX = 1.6;
 export const SHOT_CLOCK_PRESSURE_THRESHOLD = 4;
 export const SHOT_CLOCK_RUSH_PENALTY = -0.04;
 
-// League averages for calibration
+// SUPERSEDED: coarse hand-set league averages, kept only for reference. The
+// calibration oracle is now the derived TARGETS table in
+// scripts/profile-engine.ts (from scripts/derive-league-targets.ts;
+// provenance in docs/LEAGUE_TARGETS.md). No code consumes this constant —
+// do not tune against it.
 export const LEAGUE_AVG = {
   pace: 100,
   pointsPerGame: 112,
