@@ -12,7 +12,7 @@ Rules for anyone, human or AI, working on the simulation. They exist because the
 
 > AI coding assistants: treat these as hard constraints. When a task appears to require violating one, stop and surface the conflict instead of working around it. Work in small, reviewable diffs, and after any engine change report what you changed, the before/after `npm run profile` deltas, and the A/B result.
 
-> **Scope.** The golden rules and simulation invariants below govern `src/engine` and anything that affects a single game's outcome. Work on the **transactions / GM layer** (trades, contracts, cap, draft) is a separate surface with its own hard rules — see *Transaction-layer rules* near the end of this file and `docs/TRANSACTIONS_ROADMAP.md` for phase sequencing and scope. The determinism rule (#2) applies to **both** surfaces.
+> **Scope.** The golden rules and simulation invariants below govern `src/engine` and anything that affects a single game's outcome. `docs/ROADMAP.md` owns global sequencing across simulation, franchise, transactions, and UI. Work on the **transactions / GM layer** (trades, contracts, cap, draft) is a separate surface with its own hard rules — see *Transaction-layer rules* near the end of this file and `docs/TRANSACTIONS_ROADMAP.md` for its mechanics and phase contracts. The determinism rule (#2) applies to **both** surfaces.
 
 ## Golden rules
 
