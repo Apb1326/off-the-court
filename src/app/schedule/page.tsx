@@ -150,7 +150,8 @@ export default function SchedulePage() {
 
   const newSeason = () => {
     if (season && !confirm('Start a new season? This replaces the current one.')) return;
-    post({ action: 'new', seed: Math.floor(Math.random() * 1_000_000) });
+    // +1 keeps the UI-chosen seed within the API's supported range (min 1).
+    post({ action: 'new', seed: Math.floor(Math.random() * 1_000_000) + 1 });
   };
   const advance = (mode: AdvanceMode) => post({ action: 'advance', mode });
 

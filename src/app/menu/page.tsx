@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { SaveMetadata, GamePhase } from '@/models/save';
+import { SEED_MIN, SEED_MAX } from '@/lib/seed';
 
 /** The slice of the season GET payload the menu needs to decide on "Continue". */
 interface ActiveState {
@@ -32,9 +33,16 @@ const inputStyle: React.CSSProperties = {
   fontSize: '13px',
 };
 
+/** Force any typed value into the API's supported seed range. */
+function clampSeed(value: number): number {
+  if (!Number.isFinite(value)) return SEED_MIN;
+  return Math.min(SEED_MAX, Math.max(SEED_MIN, Math.floor(value)));
+}
+
 function randomSeed(): number {
   // UI-only randomness (seed picker). Simulation RNG is seeded server-side.
-  return Math.floor(Math.random() * 1_000_000);
+  // Must stay within the API's supported seed range (min 1, so no +0).
+  return Math.floor(Math.random() * 1_000_000) + 1;
 }
 
 function fmtInGameDate(d: string): string {
@@ -274,7 +282,7 @@ export default function MenuPage() {
                         <input
                           type="number"
                           value={newSeed}
-                          onChange={(e) => setNewSeed(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                          onChange={(e) => setNewSeed(clampSeed(Number(e.target.value)))}
                           style={{ ...inputStyle, width: '160px' }}
                         />
                         <button type="button" onClick={() => setNewSeed(randomSeed())} className="ootp-btn" title="Random seed">🎲 Reroll</button>
