@@ -1,9 +1,10 @@
 # Off the Court — Transactions Roadmap
 
-> **Status:** living, implementation-aligned design doc. Phases 1–4 and 5a are
-> implemented on `main`; the current save schema is v5. Phase 5b is the next feature
-> phase. Read alongside `AGENTS.md` (hard engineering rules) — this document does not
-> restate those rules, it assumes them. Where the two conflict, `AGENTS.md` wins.
+> **Status:** living, implementation-aligned design doc. Phases 1–5b are
+> implemented on `main`; the current save schema is v6. Phase 5c is the next transaction
+> phase, after the franchise prerequisites in `docs/ROADMAP.md`. Read alongside
+> `AGENTS.md` (hard engineering rules) and the master roadmap — this document does not
+> restate those rules. Where documents conflict, `AGENTS.md` wins.
 
 ---
 
@@ -30,7 +31,8 @@ A copy-paste acceptance checklist is at the end of this doc.
 | 3 — financial state | Implemented | `scripts/test-cap-status.ts` |
 | 4 — cap enforcement | Implemented | `scripts/test-phase4.ts` |
 | 5a — consequences/lifecycle | Implemented | `scripts/test-phase5a.ts` |
-| 5b onward | Planned | Per-phase harnesses still to be built |
+| 5b — sign-and-trade | Implemented | `scripts/test-phase5b.ts` |
+| 5c onward | Planned | Per-phase harnesses still to be built |
 
 Completed phase sections are retained intentionally. They describe the shipped contract
 that later phases must preserve, including approved game simplifications and integration
@@ -305,18 +307,20 @@ route or persisted controlled-franchise identity, so the pure seam is ready for 
 offseason/franchise-flow phase but is not wired into season advancement.
 
 **Establishes:** the deterministic consequence model for the financial events currently in
-game scope. Phase 5b remains the composition test, and future franchise flow must call the
-rollover seam before lifecycle behavior is user-facing.
+game scope. Phase 5b subsequently supplied the composition test, and future franchise flow
+must call the rollover seam before lifecycle behavior is user-facing.
 
 ---
 
 ## Phase 5b — Sign-and-trade (the composition stress test)
 
-**Status:** Planned; next feature phase.
+**Status:** Implemented. `scripts/test-phase5b.ts` is the focused executable acceptance
+harness. The implementation composes the existing ledgers and validators without a new
+persisted shape, so the save schema remains v6.
 
 **Goal:** one mechanic, deliberately isolated, because it is **the integration test of the whole financial stack** — it composes the trade engine (Phase 1) + contract instantiation (Phase 2) + salary matching (Phase 4) + exception/dead-money logic (Phase 5a), and it **triggers a hard cap** (Phase 4 event-state).
 
-**Adds:**
+**Shipped contract:**
 - **Sign-and-trade** mechanics: instantiate a new contract for a free agent *and* move them in a single atomic transaction, subject to matching, apron restrictions, and the hard-cap trigger.
 
 **Out of scope for this phase:** still no CPU initiative. The modeled core rules are
@@ -344,7 +348,7 @@ This is the transaction layer's analog of `npm run calibrate`: single-game profi
   - **Trade-churn metrics** — volume, and the oscillation/value-pump signals defined in the cross-cutting invariants.
 - Emit a machine-comparable summary so two runs can be diffed.
 
-**Baseline first:** run it with **AI trades disabled** (the world as of Phase 5b) and record the resting values. These are the control. When Phase 6 turns trades on, the assertion is "balance metrics stay within tolerance of the trade-free baseline," not "balance looks plausible" — you can't eyeball decade-scale drift.
+**Baseline first:** run it with **AI trades disabled** on the post-S2/F2/F3/F4/F5 world required by `docs/ROADMAP.md`, immediately before Phase 6, and record the resting values. These are the control. When Phase 6 turns trades on, the assertion is "balance metrics stay within tolerance of the trade-free baseline," not "balance looks plausible" — you can't eyeball decade-scale drift.
 
 **Out of scope:** any trade-AI logic. This phase only *measures*; Phase 6 supplies the thing being measured. Building the harness here keeps it from being half-born inside the Phase 6 feature prompt.
 
@@ -451,16 +455,16 @@ Acknowledged here so they're *decisions*, not surprises. None block the main arc
 - **Migration every phase.** Every phase adding persisted state ships a migration from the prior schema **and** a `scripts/` round-trip check. Schema bumps are cheap; silently broken old saves are not.
 - **Two calibration horizons.** Single-game (`profile` / `calibrate`) must stay flat through every phase — none touch the sim. From Phase 6 on, the **multi-season league-balance check** (Phase 5c harness) is the transaction layer's real acceptance test.
 - **CBA numbers are tunable constants, sourced at implementation.** Matching bands, apron/tax thresholds, exception amounts — named constants in `constants.ts`, taken from the current CBA when written, never hardcoded from memory.
-- **No value-pump loops (shared-valuation Pareto sanity).** The classic trade-AI failure is asymmetric valuation: each team scores the *same* deal as a win using its *own* model, and value is conjured from nothing. A pairwise "repeated reversing trades" check is **insufficient** — it misses two real laundering paths:
+- **No value-pump loops (shared base-value referee).** The classic trade-AI failure is asymmetric valuation plus repeated execution that transfers value systematically. A pairwise "repeated reversing trades" check is **insufficient** — it misses two real laundering paths:
   - **Cyclic laundering:** A→B→C→A. No pair ever reverses; value still pumps around the loop.
   - **Slow asymmetric bleed:** many distinct, non-reversing deals that each leak a little value in a consistent direction.
 
-  The correct guard is a **single shared valuation function** as the referee:
-  - Every executed trade must be **Pareto-sane under one shared model** — by a neutral valuation, no party comes out meaningfully behind, and the deal does **not** increase total league value (value is conserved or moved, never created). If *both* teams show a gain under the *same* model, that asymmetry is the bug, and the trade is denied.
-  - The per-team `evaluateTradeForCpu` desirability model may still differ (that's what makes teams *want* different deals) — but legality/sanity is judged by the shared model, consistent with **legality ≠ desirability**.
-  - Keep the cheap guards too, as defense in depth: rate-limit churn, and flag reversing/cyclic patterns between the same small set of teams. But treat them as symptoms; the shared-valuation Pareto check is the actual invariant.
+  The guard has three distinct checks under one versioned context-free base-value model:
+  - **Bounded per-trade imbalance:** sent and received base totals must be within named absolute and relative tolerances. This is a fairness/exploit guard, not "value creation."
+  - **Asset-universe conservation:** typed assets exist exactly once before and after execution and their summed context-free value is unchanged except for explicit transaction consequences. This catches duplication or mutation that truly creates value.
+  - **Sequence flow:** Phase 5c tracks cumulative marked-at-trade-time transfers and value-bearing cycles. A cycle is not a failure merely because it exists; it fails when value transported around it exceeds tolerance or shows repeatable laundering.
 
-  The Phase 5c league-balance harness asserts the **absence** of net league-value creation over N seasons as an explicit, machine-checked assertion — not just bounded dispersion.
+  The per-team `evaluateTradeForCpu` desirability model may still differ, allowing legitimate fit-adjusted mutual gains. The base-value checks live in shared game-facing orchestration outside the legality gate; Phase 5c supplies the normative long-horizon anti-laundering assertion.
 
 ---
 
@@ -472,7 +476,7 @@ Phase 2    Contracts                                        IMPLEMENTED
 Phase 3    Salary cap & financial state (compute only)      IMPLEMENTED
 Phase 4    Salary matching & cap enforcement                IMPLEMENTED
 Phase 5a   Dead money, exceptions & contract lifecycle      IMPLEMENTED
-Phase 5b   Sign-and-trade (composition stress test)         NEXT
+Phase 5b   Sign-and-trade (composition stress test)         IMPLEMENTED
 Phase 5c   League-balance harness (infrastructure)           PLANNED
 Phase 6    Trade AI (CPU valuation)                         PLANNED
 Phase 7    AI-initiated trades & ecosystem                  PLANNED
@@ -500,6 +504,7 @@ Before this phase is done:
     (exceptions: documented event-set state only).
 [ ] (Phase 6+) Phase 5c multi-season league-balance check passes:
     talent dispersion bounded, championship distribution non-degenerate,
-    no net league-value creation / value-pump / oscillating-trade loops.
+    asset-universe value conserved, cumulative team value flow bounded,
+    and no value-bearing laundering / oscillating-trade loops.
 [ ] Scope guard: nothing from a later phase was built early.
 ```
