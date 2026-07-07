@@ -17,7 +17,7 @@ Rules for anyone, human or AI, working on the simulation. They exist because the
 ## Golden rules
 
 1. **Simulate from true ratings, never scouted.** The sim resolves from `player.ratings`. The scouted view (`ratings/scouting.ts`) is for the GM-facing UI and AI only. Any simulation path that reads scouted values to decide an outcome is a bug.
-2. **All randomness goes through `SeededRNG`.** Never call `Math.random()` in simulation code. Determinism — same seed → byte-identical box score *and* play-by-play — is load-bearing for calibration and testing. This extends beyond the sim: any deterministic generation outside it (migration-time contract/prospect generation, AI tie-breaks) also goes through `SeededRNG`, seeded from a **stable key** (see *Transaction-layer rules*), never `Math.random()`.
+2. **All randomness goes through `SeededRNG`.** Never call `Math.random()` in simulation code. Determinism — same seed → byte-identical box score *and* play-by-play — is load-bearing for calibration and testing. This extends beyond the sim: any deterministic generation outside it (migration-time contract/prospect generation, AI tie-breaks) also goes through `SeededRNG`, seeded from a **stable key** (see *Transaction-layer rules*), never `Math.random()`. See *The seed boundary* below for where a brand-new world's seed may be chosen.
 3. **Stats are derived from the `PlayByPlayEvent` stream, never assigned directly.** Emit the event; `recordEventStats` in `engine/index.ts` drives the `StatsAccumulator`. The `addXStats` functions in `possession.ts` are intentional no-op stubs — do not "implement" them or hand-increment a stat line.
 4. **Tunable numbers live in `engine/constants.ts`, annotated.** No magic numbers in engine logic. A new knob goes there with a comment on what it does and its sane range.
 5. **Calibration is the acceptance test.** After any engine change, `npm run profile` must bring every tracked stat back within its tolerance band. A change that "works" but breaks calibration is not done.
@@ -34,6 +34,8 @@ change them together so real percentage → rating → sim percentage still roun
 **Shot math is additive and clamped.** `resolveShot` sums base zone % plus shooter, defender, fatigue, play-type, contest, form, double-team, momentum, advantage, and rush terms, then clamps to `[0.05, 0.95]`. Keep new modifiers additive and inside the clamp — no multiplicative terms that escape the bounds.
 
 **Determinism.** Any new variation must draw from `SeededRNG` and consume randomness in a stable order. A branch that sometimes draws and sometimes doesn't will desync the stream. `spacing.ts` and the versatility math are deliberately pure arithmetic (no RNG) so they don't perturb it — keep them that way. Verify with `tsx scripts/test-determinism.ts`.
+
+**The seed boundary (shipped at S1-Ra).** Public engine entry points — `simulateGame`, `simulateSeason`, `createSeasonState` — **require an explicit validated seed**; there are no ambient `Math.random()`/`Date.now()` fallbacks inside `src/engine`, without exception. A brand-new world's seed may be selected only at the **menu/API boundary** (the shared resolver in `src/lib/seed.ts`, consumed by the season/sim API routes, which validate a supplied seed or choose one when omitted), and is then **persisted** on the season; everything downstream descends from persisted seeds through `SeededRNG`. Seed lineage: **one-shot per-id generation** (e.g. migration-time contracts) seeds from a stable save-independent key such as FNV-1a of the id; **recurring season/world generation** (per-game seeds, injuries, future development) descends from the persisted world seed via `deterministicSeed(season.seed, stableKey)`. UI-only, non-persisted display noise (e.g. scouted-ratings fuzz) lives outside simulation outcomes and is exempt from the lineage rule — it renders, never persists, and never feeds a sim path.
 
 ## Possession engine (`possession.ts`)
 
@@ -69,9 +71,9 @@ These govern the **state-mutation layer on top of `SeasonState`** — trades, si
 - **Trades carry typed assets.** The payload is `TradeAsset[]` per side (players now; picks, cash, pick-swaps later). Keep the shape isolated behind one constructor so adding asset types doesn't rip up the engine.
 - **Deterministic, idempotent migrations.** Every phase that adds persisted state ships a **schema-version bump + migration** from the prior version, plus a `scripts/` round-trip check (load old → migrate → assert invariants → re-serialize). Migration run twice must be a **no-op**. Migration-time generation seeds from a **stable per-player key** (a pure, platform-stable string hash of the id — e.g. FNV-1a; not engine string-hash internals, not key-order-dependent, not folding in mutable fields) on a **dedicated RNG stream**, so it's order-independent and reproducible.
 - **CBA numbers are tunable constants, sourced at implementation.** Matching bands, apron/tax thresholds, exception amounts → named constants in `constants.ts`, taken from the *current* CBA when written, never hardcoded from memory.
-- **No value-pump loops.** Executed trades must be Pareto-sane under a **single shared valuation function** (no net league value created). A pairwise reversal check is insufficient — it misses cyclic (A→B→C→A) and slow-bleed laundering. Per-team desirability may differ; sanity is judged by the shared model.
+- **No value-pump loops (shared base-value referee).** Every executed trade is judged under a **single shared, versioned, context-free base-value model** — but keep the referee's three claims distinct (a transfer is not creation): (1) **bounded per-trade imbalance** — each side's sent/received base totals stay within named absolute and relative tolerances; a fairness/exploit guard, not conservation. (2) **Asset-universe conservation** — the same typed assets exist exactly once before and after execution and their summed context-free value is unchanged except for explicitly modeled transaction consequences; this is what actually detects duplication or mutation that creates value. (3) **Sequence-level flow** — cumulative marked-at-trade-time value flow per team and value-bearing cycle detection over N seasons (the Phase 5c harness) are the **normative** anti-laundering protections; a pairwise reversal check is insufficient (it misses cyclic A→B→C→A laundering and slow asymmetric bleed). Per-team desirability (`evaluateTradeForCpu`) may legitimately differ — fit-adjusted mutual gains are gains from trade — and stays separate from both legality and the shared referee.
 
-**Calibration for this layer.** No transaction phase touches the sim, so `npm run profile` and `npm run calibrate` must come back **unchanged** — a diff there is a bug, not a side effect. The transaction layer's real acceptance test is the **multi-season league-balance harness** (`scripts/league-balance.ts`, built in roadmap Phase 5c): from the trade-AI phases on, assert talent dispersion stays bounded, championship distribution stays non-degenerate, and no net league-value creation / oscillating-trade loops appear, all within tolerance of the trade-free baseline.
+**Calibration for this layer.** No transaction phase touches the sim, so `npm run profile` and `npm run calibrate` must come back **unchanged** — a diff there is a bug, not a side effect. The transaction layer's real acceptance test is the **multi-season league-balance harness** (`scripts/league-balance.ts`, built in roadmap Phase 5c): from the trade-AI phases on, assert talent dispersion stays bounded, championship distribution stays non-degenerate, asset-universe conservation holds, and the sequence-level value-flow and cycle metrics stay within tolerance of the trade-free baseline.
 
 ## NBA data pipeline (`pipeline/`, `data/nba/`, `src/data/nba/`)
 
@@ -122,13 +124,14 @@ derivation; `--check` verifies the committed copy byte-for-byte). Rules:
 Run after any engine change and report results:
 
 - [ ] `npm run typecheck` — clean.
-- [ ] `npm run profile` — all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed.
+- [ ] `npm run profile` — the modern engine acceptance test: all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed.
+- [ ] `npm run calibrate` — a **deterministic historical drift comparison, not pass/fail era acceptance** (its benchmark ends in 2015, so a 2023–26-tuned engine sits above its era rows by design). Engine changes report the deltas and explain their direction; the comparison stays useful precisely because it is deterministic — no silent drift.
 - [ ] `tsx scripts/test-determinism.ts` — same seed → identical game.
 - [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect.
 
 **For transaction-layer changes, additionally:**
 
-- [ ] `npm run profile` / `npm run calibrate` — **unchanged** vs. an unmodified league (the sim is untouched; any diff is a bug).
+- [ ] `npm run profile` / `npm run calibrate` — output **unchanged, byte-for-byte,** vs. an unmodified league (the sim is untouched; any diff is a bug). Calibrate's role as a drift-only comparison does not relax this: non-engine work must preserve both outputs exactly.
 - [ ] Schema bump + migration shipped; `scripts/` round-trip check passes and migration run twice is a no-op.
 - [ ] New validators are composable predicates returning a unified reason; legality stays out of `evaluateTradeForCpu`.
 - [ ] No derived value stored as an independent source of truth (event-set exceptions documented).
@@ -138,6 +141,7 @@ Run after any engine change and report results:
 ## What not to do
 
 - Don't call `Math.random()` anywhere in simulation code.
+- Don't reintroduce an ambient seed default (`Math.random()` / `Date.now()`) on an engine entry point — seeds are validated or chosen at the menu/API boundary (`src/lib/seed.ts`) and persisted.
 - Don't read scouted ratings on a simulation path.
 - Don't hand-assign stats or fill in the no-op `addXStats` stubs.
 - Don't sum player ratings to value a lineup.
@@ -153,4 +157,4 @@ Run after any engine change and report results:
 
 ## Known cleanups
 
-- `shouldDoubleTeam` in `defense.ts` has a stale doc comment referring to the open teammate being "handled by the caller via a higher assist rate." Since the chain refactor that's no longer how it works — the double-team routes into a real kick-out in `possession.ts`. The comment can be updated; the behavior is already correct.
+- None currently. (The stale `shouldDoubleTeam` doc comment in `defense.ts` was fixed in R0b.)

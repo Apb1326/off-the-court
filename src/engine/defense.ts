@@ -59,7 +59,9 @@ export function defensivePressure(system: DefensiveSystem): DefensivePressure {
  * Decide whether to send a second defender at the ball. Triggered when the
  * primary option is an elite scorer and the defense plays help-aggressive.
  * A double-team lowers the star's shot quality and raises his turnover risk,
- * but leaves a teammate open (handled by the caller via a higher assist rate).
+ * but leaves a teammate open — the caller routes the possession into a real
+ * kick-out/pass in the ball-movement chain (possession.ts), weighted toward
+ * the open player via openManWeight.
  */
 export function shouldDoubleTeam(
   primary: Player,
