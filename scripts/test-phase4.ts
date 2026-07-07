@@ -588,7 +588,8 @@ function testMigration(): void {
   };
   f.world.season.transactionLog = [cutEntry];
   const now = new Date(0).toISOString();
-  const v3: SaveFile = {
+  // A real v3 file predates F1's controlledTeamId; the migration adds it.
+  const v3 = {
     schemaVersion: 3,
     phase: derivePhase(f.world.season),
     season: f.world.season,
@@ -596,7 +597,7 @@ function testMigration(): void {
     players: f.world.players,
     createdAt: now,
     updatedAt: now,
-  };
+  } as unknown as SaveFile;
   const logBefore = snap(v3.season.transactionLog);
   const migrated = migrateSaveFile(v3);
   check('direct v3 migration reaches current schema', migrated.ok && migrated.file.schemaVersion === SAVE_SCHEMA_VERSION);

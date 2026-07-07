@@ -18,6 +18,7 @@ import { Team } from '../src/models/team';
 import { SeasonState } from '../src/models/season';
 import { SaveFile, SAVE_SCHEMA_VERSION, derivePhase } from '../src/models/save';
 import { SaveStore } from '../src/data/saves/save-store';
+import { getControlledTeamId, isControlledTeam } from '../src/franchise/controlled';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
 import { addDays } from '../src/engine/calendar';
 
@@ -39,9 +40,14 @@ function fingerprint(state: SeasonState): string {
   });
 }
 
-function buildSaveFile(season: SeasonState, teams: Team[], players: Player[]): SaveFile {
+function buildSaveFile(
+  season: SeasonState,
+  teams: Team[],
+  players: Player[],
+  controlledTeamId: string | null = null,
+): SaveFile {
   const now = new Date().toISOString();
-  return { schemaVersion: 0, phase: derivePhase(season), season, teams, players, createdAt: now, updatedAt: now };
+  return { schemaVersion: 0, phase: derivePhase(season), season, teams, players, controlledTeamId, createdAt: now, updatedAt: now };
 }
 
 async function main() {
@@ -134,6 +140,42 @@ async function main() {
   await store.deleteSave(checkpointMeta.saveId);
   const afterDelete = await store.listSaves();
   check('delete removes the slot', !afterDelete.saves.some((s) => s.saveId === checkpointMeta.saveId));
+
+  // --- F1: controlled-franchise identity persistence ---
+  const controlledTeam = teams[0];
+  const controlledSeason = createSeasonState(teams, players, { seed: SEED });
+  advanceSeason(controlledSeason, day14, teams, players);
+  const controlledFile = buildSaveFile(controlledSeason, teams, players, controlledTeam.id);
+  const controlledMeta = await store.createSave('controlled', controlledFile);
+  const controlledReload = await store.loadSave(controlledMeta.saveId);
+  check('controlled team id survives save/load',
+    controlledReload.ok && getControlledTeamId(controlledReload.file) === controlledTeam.id);
+  check('isControlledTeam matches only the controlled team',
+    controlledReload.ok && isControlledTeam(controlledReload.file, controlledTeam.id) &&
+    !isControlledTeam(controlledReload.file, teams[1].id));
+  check('controlled save summary carries the team abbreviation tag',
+    controlledMeta.summary.startsWith(`${controlledTeam.abbreviation} · `) &&
+    controlledMeta.summary.includes('games'));
+
+  // Metadata regeneration (copy to autosave rewrites metadata) keeps identity + tag.
+  await store.copyToAutosave(controlledMeta.saveId);
+  const controlledActive = (await store.loadActiveSave())!;
+  check('controlled team id survives copyToAutosave',
+    getControlledTeamId(controlledActive) === controlledTeam.id);
+  const regenerated = await store.listSaves();
+  const autoMeta = regenerated.saves.find((s) => s.isAutosave);
+  check('regenerated autosave metadata keeps the abbreviation tag',
+    !!autoMeta && autoMeta.summary.startsWith(`${controlledTeam.abbreviation} · `));
+
+  // Spectator save: null identity, league-wide summary with no team tag.
+  const spectatorFile = buildSaveFile(controlledSeason, teams, players, null);
+  const spectatorMeta = await store.createSave('spectator', spectatorFile);
+  const spectatorReload = await store.loadSave(spectatorMeta.saveId);
+  check('spectator save persists controlledTeamId === null',
+    spectatorReload.ok && getControlledTeamId(spectatorReload.file) === null);
+  check('spectator summary stays league-wide (no team tag)',
+    !spectatorMeta.summary.startsWith(`${controlledTeam.abbreviation} · `) &&
+    spectatorMeta.summary.includes('games'));
 
   await rm(tmp, { recursive: true, force: true });
 

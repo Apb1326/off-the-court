@@ -56,6 +56,7 @@ function buildV1Save(teams: Team[], players: Player[]): Record<string, unknown> 
 function buildV2Save(teams: Team[], players: Player[]): SaveFile {
   const full = createSeasonState(teams, players, { seed: 1 });
   const now = new Date().toISOString();
+  // A real v2 file predates F1's controlledTeamId; the migration adds it.
   return {
     schemaVersion: 2,
     phase: derivePhase(full),
@@ -64,7 +65,7 @@ function buildV2Save(teams: Team[], players: Player[]): SaveFile {
     players: structuredClone(players),
     createdAt: now,
     updatedAt: now,
-  };
+  } as unknown as SaveFile;
 }
 
 async function main() {

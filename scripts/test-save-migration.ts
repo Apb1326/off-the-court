@@ -1,5 +1,5 @@
 /**
- * Tests the complete save schema migration chain through schema v5.
+ * Tests the complete save schema migration chain through the current schema.
  *
  * Proves:
  *  - A pre-Phase-1 save (no free-agent pool / transaction log, schemaVersion 1) migrates to
@@ -60,6 +60,8 @@ async function main() {
     Array.isArray(m1.file.season.freeAgentPool));
   check('migrated transaction log exists and is empty',
     Array.isArray(m1.file.season.transactionLog) && m1.file.season.transactionLog.length === 0);
+  check('migrated save gains controlledTeamId: null (spectator)',
+    m1.file.controlledTeamId === null);
 
   // --- 2. Re-serialize, then migrate again: must be a no-op ---
   const roundTripped = JSON.parse(JSON.stringify(m1.file)) as SaveFile;
@@ -82,7 +84,7 @@ async function main() {
   invalid.ratings.freeThrowShooting = 79;
   invalid.potential.freeThrowShooting = 78;
   const v6 = migrateSaveFile(v5);
-  check('v5 -> v6 refresh succeeds', v6.ok && v6.file.schemaVersion === 6);
+  check('v5 -> v6 refresh succeeds', v6.ok && v6.file.schemaVersion === SAVE_SCHEMA_VERSION);
   if (v6.ok) {
     const refreshed = v6.file.players.find((player) => player.id === valid.id)!;
     const passedThrough = v6.file.players.find((player) => player.id === invalid.id)!;
@@ -94,6 +96,36 @@ async function main() {
       passedThrough.tendencies.usageRate === 0.02 &&
       passedThrough.ratings.freeThrowShooting === 79 &&
       passedThrough.potential.freeThrowShooting === 78);
+  }
+
+  // --- 3b. Direct v6 -> v7: controlled-franchise identity ---
+  const v6file = structuredClone(m1.file) as unknown as Record<string, unknown>;
+  v6file.schemaVersion = 6;
+  delete v6file.controlledTeamId; // a real v6 file predates the field
+  const m7 = migrateSaveFile(v6file as unknown as SaveFile);
+  check('v6 -> v7 migration succeeds and reports it ran', m7.ok && m7.migrated === true);
+  check('v6 -> v7 adds top-level controlledTeamId: null at current version',
+    m7.ok && m7.file.schemaVersion === SAVE_SCHEMA_VERSION && m7.file.controlledTeamId === null);
+  if (m7.ok) {
+    const strip = (f: SaveFile) => {
+      const clone = JSON.parse(JSON.stringify(f)) as Record<string, unknown>;
+      delete clone.schemaVersion;
+      delete clone.controlledTeamId;
+      return JSON.stringify(clone);
+    };
+    check('v6 -> v7 changes nothing besides version + new field',
+      strip(m7.file) === strip(v6file as unknown as SaveFile));
+    // Second run on the current v7 file: reports no migration, byte-identical.
+    const v7again = migrateSaveFile(JSON.parse(JSON.stringify(m7.file)) as SaveFile);
+    check('second run on a current v7 save reports no migration',
+      v7again.ok && v7again.migrated === false);
+    check('second run on a current v7 save is byte-identical',
+      v7again.ok && JSON.stringify(v7again.file) === JSON.stringify(m7.file));
+    // A non-null identity is preserved by the migration path (?? never clobbers).
+    const withTeam = { ...JSON.parse(JSON.stringify(m7.file)), controlledTeamId: teams[0].id } as SaveFile;
+    const withTeamAgain = migrateSaveFile(withTeam);
+    check('re-migration preserves a non-null controlledTeamId',
+      withTeamAgain.ok && withTeamAgain.file.controlledTeamId === teams[0].id);
   }
 
   // --- 4. Real SaveStore.loadSave migrates an old on-disk save ---

@@ -69,6 +69,12 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
     migrated = true;
   }
 
+  // --- v6 -> v7: F1 controlled-franchise identity ---
+  if (version < 7) {
+    working = migrateV6toV7(working);
+    migrated = true;
+  }
+
   // Normalize even current-schema saves so stale FA pools/back-references cannot
   // survive indefinitely. This is idempotent and does not require a schema bump.
   try {
@@ -207,5 +213,19 @@ function migrateV5toV6(file: SaveFile): SaveFile {
     ...file,
     schemaVersion: 6,
     players: file.players.map((player) => recomputeUsageAndFreeThrowFields(player) ?? player),
+  };
+}
+
+/**
+ * v6 -> v7 (F1): add the canonical top-level controlled-franchise identity.
+ * Pre-F1 saves had no controlled team, so they migrate to `null`
+ * (spectator/commissioner mode). Deterministic, no RNG; every other field is
+ * carried through untouched. Idempotent via `??`.
+ */
+function migrateV6toV7(file: SaveFile): SaveFile {
+  return {
+    ...file,
+    schemaVersion: 7,
+    controlledTeamId: file.controlledTeamId ?? null,
   };
 }
