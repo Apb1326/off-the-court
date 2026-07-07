@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { SaveMetadata, GamePhase } from '@/models/save';
+import type { Team } from '@/models/team';
 import { SEED_MIN, SEED_MAX } from '@/lib/seed';
 
 /** The slice of the season GET payload the menu needs to decide on "Continue". */
@@ -89,6 +90,9 @@ export default function MenuPage() {
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [newSeed, setNewSeed] = useState(randomSeed);
+  // '' = the "no team (commissioner/spectator)" choice; sent to the API as null.
+  const [newTeamId, setNewTeamId] = useState('');
+  const [teams, setTeams] = useState<Team[]>([]);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -135,7 +139,7 @@ export default function MenuPage() {
     const res = await fetch('/api/season', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'new', seed: newSeed }),
+      body: JSON.stringify({ action: 'new', seed: newSeed, controlledTeamId: newTeamId || null }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -252,8 +256,15 @@ export default function MenuPage() {
                   onClick={() => {
                     setNewSeed(randomSeed());
                     setNewName('');
+                    setNewTeamId('');
                     setShowNew(true);
                     setError(null);
+                    // Real team list for the picker; on failure the select still
+                    // offers spectator mode, which is also the default.
+                    fetch('/api/teams')
+                      .then((r) => r.json())
+                      .then((data: Team[]) => setTeams(Array.isArray(data) ? data : []))
+                      .catch(() => setTeams([]));
                   }}
                   disabled={busy}
                   className="w-full px-4 py-3 text-left flex items-center gap-3"
@@ -275,6 +286,23 @@ export default function MenuPage() {
                         style={inputStyle}
                         autoFocus
                       />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Your team</span>
+                      <select
+                        value={newTeamId}
+                        onChange={(e) => setNewTeamId(e.target.value)}
+                        style={inputStyle}
+                      >
+                        <option value="">No team (commissioner/spectator)</option>
+                        {[...teams]
+                          .sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.abbreviation} — {t.city} {t.name}
+                            </option>
+                          ))}
+                      </select>
                     </label>
                     <label className="flex flex-col gap-1">
                       <span className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Seed</span>

@@ -87,7 +87,12 @@ function nextGameDate(state: SeasonState): string | null {
 }
 
 /** Wrap a season + its rosters into a fresh SaveFile (timestamps set by the store on write). */
-function toSaveFile(season: SeasonState, teams: Team[], players: Player[]): SaveFile {
+function toSaveFile(
+  season: SeasonState,
+  teams: Team[],
+  players: Player[],
+  controlledTeamId: string | null,
+): SaveFile {
   const now = new Date().toISOString();
   const { players: normalized, freeAgentPool } =
     normalizePlayersForSave(players, season.freeAgentPool, teams);
@@ -97,9 +102,29 @@ function toSaveFile(season: SeasonState, teams: Team[], players: Player[]): Save
     season: { ...season, freeAgentPool },
     teams,
     players: normalized,
+    controlledTeamId,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/**
+ * Validate a new game's requested controlled team against the roster snapshot
+ * the save is being created from. Omitted means spectator (`null`); anything
+ * else must be an exact team id — invalid input is rejected, never coerced.
+ */
+function resolveControlledTeamId(
+  value: unknown,
+  teams: Team[],
+): { ok: true; controlledTeamId: string | null } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, controlledTeamId: null };
+  if (typeof value !== 'string') {
+    return { ok: false, error: 'controlledTeamId must be a team id string or null' };
+  }
+  if (!teams.some((t) => t.id === value)) {
+    return { ok: false, error: `controlledTeamId "${value}" does not match any team` };
+  }
+  return { ok: true, controlledTeamId: value };
 }
 
 /**
@@ -117,7 +142,8 @@ async function loadOrImportActive(): Promise<SaveFile | null> {
   if (!legacy) return null;
 
   const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
-  const file = toSaveFile(legacy, teams, players);
+  // Legacy single-save imports predate F1 and never had a controlled team.
+  const file = toSaveFile(legacy, teams, players, null);
   await saves.autoSave(file);
   return file;
 }
@@ -157,8 +183,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
     }
 
+    // Controlled-franchise identity is chosen at new-game time and validated
+    // against the exact roster snapshot this save is built from.
+    const controlledRes = resolveControlledTeamId(body?.controlledTeamId, teams);
+    if (!controlledRes.ok) {
+      return NextResponse.json({ error: controlledRes.error }, { status: 400 });
+    }
+
     const season = createSeasonState(teams, players, { seed: seedRes.seed });
-    const file = toSaveFile(season, teams, players);
+    const file = toSaveFile(season, teams, players, controlledRes.controlledTeamId);
     await saves.autoSave(file);
     return NextResponse.json({ state: clientState(season), advanced: 0 });
   }

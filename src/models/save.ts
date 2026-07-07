@@ -1,6 +1,7 @@
 import { Player } from './player';
 import { Team } from './team';
 import { SeasonState } from './season';
+import { getControlledTeamId } from '@/franchise/controlled';
 
 /**
  * Bump when the on-disk shape of a SaveFile changes in a way that older files
@@ -16,8 +17,10 @@ import { SeasonState } from './season';
  * persisted, event-set team hard-cap state.
  * v4 -> v5 (transactions Phase 5a): TPE grants and operated-under-cap history.
  * v5 -> v6: recompute usage and free-throw fields from canonical career stats.
+ * v6 -> v7 (F1): top-level `controlledTeamId` controlled-franchise identity;
+ * pre-v7 saves migrate to `null` (spectator/commissioner mode).
  */
-export const SAVE_SCHEMA_VERSION = 6;
+export const SAVE_SCHEMA_VERSION = 7;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star
@@ -44,6 +47,13 @@ export interface SaveFile {
   season: SeasonState;
   teams: Team[];
   players: Player[];
+  /**
+   * Which team the user controls — the canonical franchise identity, persisted
+   * here on the save (not on `SeasonState`: it outlives any individual season).
+   * `null` = spectator/commissioner mode with no controlled team. Production
+   * reads go through `src/franchise/controlled.ts`, never ad-hoc field access.
+   */
+  controlledTeamId: string | null;
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
 }
@@ -73,18 +83,28 @@ export function derivePhase(season: SeasonState): GamePhase {
 }
 
 /**
- * A short, human-readable summary for the save list. No franchise team exists
- * yet, so this summarizes league-wide: progress through the slate plus the
- * current leader by win percentage.
+ * A short, human-readable summary for the save list: league-wide progress
+ * through the slate plus the current leader by win percentage, prefixed with
+ * the controlled team's abbreviation when the save has one. Spectator saves
+ * (`controlledTeamId === null`) keep the plain league-wide summary.
  */
-export function buildSummary(season: SeasonState, teams: Team[]): string {
+export function buildSummary(
+  season: SeasonState,
+  teams: Team[],
+  controlledTeamId: string | null = null,
+): string {
+  const abbrev = new Map(teams.map((t) => [t.id, t.abbreviation]));
+  const controlledTag = controlledTeamId
+    ? `${abbrev.get(controlledTeamId) ?? controlledTeamId} · `
+    : '';
+
   if (season.gamesPlayed === 0) {
-    return season.gamesPlayed >= season.totalGames
+    const base = season.gamesPlayed >= season.totalGames
       ? 'Offseason'
       : 'Preseason · not started';
+    return `${controlledTag}${base}`;
   }
 
-  const abbrev = new Map(teams.map((t) => [t.id, t.abbreviation]));
   const leader = [...season.standings]
     .filter((s) => s.wins + s.losses > 0)
     .sort((a, b) => {
@@ -95,10 +115,10 @@ export function buildSummary(season: SeasonState, teams: Team[]): string {
     })[0];
 
   const progress = `${season.gamesPlayed}/${season.totalGames} games`;
-  if (!leader) return progress;
+  if (!leader) return `${controlledTag}${progress}`;
   const tag = abbrev.get(leader.teamId) ?? leader.teamId;
   const lead = `Leader ${tag} ${leader.wins}-${leader.losses}`;
-  return `${season.currentDate} · ${progress} · ${lead}`;
+  return `${controlledTag}${season.currentDate} · ${progress} · ${lead}`;
 }
 
 /** Build the metadata header for a save from its full file. */
@@ -112,6 +132,6 @@ export function metadataFor(saveId: string, name: string, isAutosave: boolean, f
     updatedAt: file.updatedAt,
     inGameDate: file.season.currentDate,
     phase: file.phase,
-    summary: buildSummary(file.season, file.teams),
+    summary: buildSummary(file.season, file.teams, getControlledTeamId(file)),
   };
 }
