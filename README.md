@@ -26,7 +26,7 @@ The design goal is that **roster construction matters**. Five high-usage scorers
 
 **Stats derived from events.** The possession code contains intentional no-op `addXStats` stubs; the real accounting happens in `engine/index.ts`, where `recordEventStats` walks the `PlayByPlayEvent` stream and drives the `StatsAccumulator`. The event stream is the single source of truth for the box score.
 
-**Calibration discipline.** The engine is tuned against real NBA distributions. `npm run profile` simulates a season and prints the per-team-per-game profile next to empirically derived league targets with derived tolerance bands — the targets come from real stats.nba.com data (`data/nba/normalized/`, 2023-24..2025-26 pooled) via `npx tsx scripts/derive-league-targets.ts`, with full provenance in [docs/LEAGUE_TARGETS.md](docs/LEAGUE_TARGETS.md); `npm run calibrate` compares against six decades of historical games by era. After any engine change, these are the acceptance test.
+**Calibration discipline.** The engine is tuned against real NBA distributions. `npm run profile` is the acceptance test: it simulates a season and checks the per-team-per-game profile against empirically derived league targets with derived tolerance bands — the targets come from real stats.nba.com data (`data/nba/normalized/`, 2023-24..2025-26 pooled) via `npx tsx scripts/derive-league-targets.ts`, with full provenance in [docs/LEAGUE_TARGETS.md](docs/LEAGUE_TARGETS.md) — and exits non-zero on any enforced failure. `npm run calibrate` is a separate, deterministic **historical drift comparison** against six decades of games by era; its benchmark ends in 2015, so a modern-tuned engine sits above its recent-era rows by design — it informs, it doesn't pass or fail a change. Non-engine work must leave both outputs byte-identical.
 
 ## Getting started
 
@@ -55,8 +55,8 @@ Wired into `package.json`:
 | `npm run seed` | Generate a synthetic league into `data/` |
 | `npm run ingest` | Ingest real data via BallDontLie |
 | `npm run download-history` | Fetch historical CSVs into `data/history/` (prerequisite for `calibrate`) |
-| `npm run calibrate` | Compare the engine to six decades of real games by era |
-| `npm run profile` | Calibration dashboard: season profile vs. modern-NBA targets with tolerance bands |
+| `npm run calibrate` | Deterministic historical drift comparison vs. six decades of real games by era (benchmark ends 2015 — informational, not pass/fail) |
+| `npm run profile` | The engine acceptance test: season profile vs. modern-NBA targets with derived tolerance bands; exits non-zero on enforced failure |
 | `npm run validate-nba-data` | Structural validation of `data/nba/normalized/` contracts (missing files are SKIPPED) |
 
 Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
@@ -74,9 +74,9 @@ Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 
 ```
 src/
-  models/        Domain types: player, team, game (PlayByPlayEvent, ShotZone, StatLine), season
+  models/        Domain types: player, team, game (PlayByPlayEvent, ShotZone, StatLine), season, save
   ratings/       Dual-layer ratings — derivation, attributes, scouting (true → scouted noise)
-  lib/           SeededRNG, UI helpers
+  lib/           SeededRNG, seed boundary resolver (seed.ts), string hashing, UI helpers
   engine/        The simulation core
     index.ts          simulateGame: game loop, momentum, home-court edge, per-game form, stat recording
     possession.ts     Possession loop + advantage-keyed ball-movement chain
@@ -86,17 +86,25 @@ src/
     turnover.ts       Live-ball turnovers and steals
     play-types.ts     Play-type / shot-zone / primary / defender selection
     tactics.ts        Game-state context: clock management, three-chasing, intentional fouls
-    rebound.ts · clock.ts · fatigue.ts · substitution.ts · schedule.ts · season.ts · calendar.ts
+    injury.ts · rebound.ts · clock.ts · fatigue.ts · substitution.ts · schedule.ts · season.ts · calendar.ts
     stats-accumulator.ts   Builds box scores from recorded events
-    constants.ts      All tunable numbers (calibration targets, chain costs, spacing/versatility params)
+    constants.ts      All tunable numbers (calibration knobs, chain costs, spacing/versatility params)
+  transactions/  GM-layer state mutation: validate-then-mutate gate, composable validators,
+                 contracts, cap/apron/tax, dead money, TPEs, exceptions, sign-and-trade,
+                 CPU evaluation stub (evaluate.ts), contract rollover seam (rollover.ts)
   data/
     store/         JSON persistence (JsonStore) and types
-    ingest/        BallDontLie client + transforms
-  app/             Next.js App Router — pages (/, game/sim, player/[id], roster, schedule)
-                   and API routes (players, teams, sim, season)
-scripts/           seed, ingest, history download, calibration, profiling, A/B + smoke tests
-data/              Generated league (gitignored): teams.json, players.json, season.json,
-                   seasons/<id>/games/*.json, history/*.csv
+    saves/         Multi-save store: per-slot folders, atomic writes, schema migrations
+    nba/           Read-only loaders/types for data/nba/normalized/ contracts
+    ingest/        BallDontLie client + transforms (legacy path; retired at Stage 2)
+  app/             Next.js App Router — pages (/, menu, league, roster, schedule,
+                   player/[id], game/sim) and API routes (players, teams, sim, season, saves)
+scripts/           seed, ingest, history download, calibration, profiling, target derivation,
+                   diagnostics, A/B + smoke tests, save-migration round-trips
+docs/              ROADMAP, TRANSACTIONS_ROADMAP, LEAGUE_TARGETS (target provenance),
+                   prompts/ (archived phase implementation prompts)
+data/              Generated league + saves (gitignored): teams.json, players.json, season.json,
+                   saves/<slot>/, seasons/<id>/games/*.json, history/*.csv, nba/ (pipeline output)
 ```
 
 ## NBA data pipeline
@@ -124,9 +132,10 @@ docs live in [pipeline/README.md](pipeline/README.md).
 There's no traditional unit-test suite as the primary safety net — calibration is. After any change to simulation logic:
 
 1. `npm run typecheck` — clean.
-2. `npm run profile` — every ENFORCED stat (the box profile plus per-zone FG% and the six-zone/three-bucket shot mix) lands within its derived tolerance band; the script exits non-zero otherwise. Targets and bands come from `scripts/derive-league-targets.ts` (provenance: `docs/LEAGUE_TARGETS.md`). INFORMATIONAL stats (play-type distribution, assisted rates by zone, etc.) are logged with the stage that owns them, never failed on. Assists and turnovers move most when chain logic changes; watch them.
-3. `tsx scripts/test-determinism.ts` — same seed still produces an identical game.
-4. `tsx scripts/test-spacing-ab.ts` — spacing still produces a material, correctly-signed difference.
+2. `npm run profile` — the acceptance test: every ENFORCED stat (the box profile plus per-zone FG%, the six-zone/three-bucket shot mix, and average margin) lands within its derived tolerance band; the script exits non-zero otherwise. Targets and bands come from `scripts/derive-league-targets.ts` (provenance: `docs/LEAGUE_TARGETS.md`). INFORMATIONAL stats (play-type distribution, assisted rates by zone, etc.) are logged with the stage that owns them, never failed on. Assists and turnovers move most when chain logic changes; watch them.
+3. `npm run calibrate` — the deterministic historical drift comparison: report the deltas and explain their direction. It cannot pass or fail a change (its benchmark ends in 2015), but non-engine work must leave its output byte-identical.
+4. `tsx scripts/test-determinism.ts` — same seed still produces an identical game.
+5. `tsx scripts/test-spacing-ab.ts` — spacing still produces a material, correctly-signed difference.
 
 If a stat drifts out of band, the fix is almost always a constant in `engine/constants.ts`, not a structural change.
 
