@@ -108,8 +108,6 @@ export function simulatePossession(
     event.points = ft.made;
     const ns = updateState(state, clock, event);
     addScore(ns, isHome, ft.made);
-    addFoulStat(ns, fouler.id);
-    addFreeThrowStats(ns, fouled.id, ft.made, ft.attempted);
     addTeamFoul(ns, !isHome, state.clock.quarter);
     ns.previousPossessionTurnover = false;
     ns.previousPossessionLongRebound = false;
@@ -137,8 +135,6 @@ export function simulatePossession(
       event.points = ft.made;
       const ns = updateState(state, clock, event);
       addScore(ns, isHome, ft.made);
-      addFoulStat(ns, fouler.id);
-      addFreeThrowStats(ns, fouled.id, ft.made, ft.attempted);
       addTeamFoul(ns, !isHome, state.clock.quarter);
       ns.previousPossessionTurnover = false;
       ns.previousPossessionLongRebound = false;
@@ -149,7 +145,6 @@ export function simulatePossession(
       `Loose-ball foul on ${fouler.firstName} ${fouler.lastName}`);
     event.foulPlayerId = fouler.id;
     const ns = updateState(state, clock, event);
-    addFoulStat(ns, fouler.id);
     addTeamFoul(ns, !isHome, state.clock.quarter);
     ns.previousPossessionTurnover = false;
     ns.previousPossessionLongRebound = false;
@@ -232,7 +227,6 @@ export function simulatePossession(
     }
 
     const newState = updateState(state, newClock, event);
-    addTurnoverStats(newState, primaryPlayer.id, turnoverResult.stealBy?.id);
     newState.previousPossessionTurnover = true;
     newState.previousPossessionLongRebound = false;
 
@@ -316,7 +310,6 @@ export function simulatePossession(
       event.turnoverType = toType;
       if (stolen) event.stealPlayerId = stealer.id;
       const ns = updateState(state, toClock, event);
-      addTurnoverStats(ns, finisher.id, stolen ? stealer.id : undefined);
       ns.previousPossessionTurnover = true;
       ns.previousPossessionLongRebound = false;
       return { state: ns, switchPossession: true, isDeadBall: false };
@@ -428,13 +421,10 @@ export function simulatePossession(
     event.blockPlayerId = finisherDefender.id;
 
     const updatedState = updateState(newState, shotClockState, event);
-    addShotStats(updatedState, finisher.id, shotZone, false, false);
-    addBlockStat(updatedState, finisherDefender.id);
 
     // Rebound
     const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
     if (rebResult.rebounder) {
-      addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
       event.reboundPlayerId = rebResult.rebounder.id;
     }
     event.reboundType = rebResult.type;
@@ -464,8 +454,6 @@ export function simulatePossession(
 
     const updatedState = updateState(newState, shotClockState, event);
     addScore(updatedState, isHome, ftResult.made);
-    addFoulStat(updatedState, finisherDefender.id);
-    addFreeThrowStats(updatedState, finisher.id, ftResult.made, ftResult.attempted);
     addTeamFoul(updatedState, !isHome, state.clock.quarter);
 
     updatedState.previousPossessionTurnover = false;
@@ -492,15 +480,11 @@ export function simulatePossession(
     if (assister) event.assistPlayerId = assister.id;
 
     const updatedState = updateState(newState, shotClockState, event);
-    addShotStats(updatedState, finisher.id, shotZone, true, false);
     addScore(updatedState, isHome, shotResult.points);
-    if (assister) addAssistStat(updatedState, assister.id);
 
     // And-one
     if (shotResult.fouled) {
       const ftResult = resolveFreeThrows(finisher, finisherFatigue, 1, state.rng);
-      addFreeThrowStats(updatedState, finisher.id, ftResult.made, ftResult.attempted);
-      addFoulStat(updatedState, finisherDefender.id);
       addTeamFoul(updatedState, !isHome, state.clock.quarter);
       addScore(updatedState, isHome, ftResult.made);
       totalPoints += ftResult.made;
@@ -523,12 +507,10 @@ export function simulatePossession(
   event.shotMade = false;
 
   const updatedState = updateState(newState, shotClockState, event);
-  addShotStats(updatedState, finisher.id, shotZone, false, false);
 
   // Rebound
   const rebResult = resolveRebound(offPlayers, defPlayers, state.fatigue, state.fatigue, state.rng);
   if (rebResult.rebounder) {
-    addReboundStat(updatedState, rebResult.rebounder.id, rebResult.type);
     event.reboundPlayerId = rebResult.rebounder.id;
     event.description += `. ${rebResult.rebounder.firstName} ${rebResult.rebounder.lastName} ${rebResult.type} rebound`;
   } else {
@@ -645,15 +627,6 @@ function addTeamFoul(state: GameState, isHome: boolean, quarter: number): void {
     state.teamFouls.away[idx] = (state.teamFouls.away[idx] ?? 0) + 1;
   }
 }
-
-// Stat tracking stubs - these modify the stats accumulator in the main game loop
-function addShotStats(_state: GameState, _playerId: string, _zone: ShotZone, _made: boolean, _assisted: boolean): void {}
-function addBlockStat(_state: GameState, _playerId: string): void {}
-function addReboundStat(_state: GameState, _playerId: string, _type: 'offensive' | 'defensive'): void {}
-function addTurnoverStats(_state: GameState, _playerId: string, _stealById?: string): void {}
-function addFoulStat(_state: GameState, _playerId: string): void {}
-function addFreeThrowStats(_state: GameState, _playerId: string, _made: number, _attempted: number): void {}
-function addAssistStat(_state: GameState, _playerId: string): void {}
 
 function describeShotZone(zone: ShotZone): string {
   switch (zone) {
