@@ -110,6 +110,26 @@ function main(): number {
       });
     }
 
+    const defenseFile = `defense/${season}.json`;
+    if (hasNormalizedFile(defenseFile)) {
+      record(`${defenseFile} (category coverage)`, () => {
+        const env = loadDefense(season);
+        const categories = new Set<string>();
+        for (const row of env.rows) {
+          for (const category of Object.keys(row.defended)) categories.add(category);
+        }
+        for (const category of [...categories].sort()) {
+          const lines = env.rows
+            .map((row) => row.defended[category])
+            .filter((line): line is NonNullable<typeof line> => line !== undefined);
+          const finiteDfa = lines.filter((line) => Number.isFinite(line.dFga)).length;
+          if (lines.length > 25 && finiteDfa / lines.length < 0.95) {
+            fail(`${defenseFile}: ${category} has ${finiteDfa}/${lines.length} finite dFga rows; likely null scaffold`);
+          }
+        }
+      });
+    }
+
     const shotZonesFile = `shot_zones/${season}.json`;
     if (hasNormalizedFile(shotZonesFile)) {
       record(`${shotZonesFile} (zone sums)`, () => {

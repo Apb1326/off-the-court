@@ -513,6 +513,24 @@ DEFEND_CATEGORY_KEYS = {
     "Greater Than 15Ft": "greaterThan15Ft",
 }
 
+# LeagueDashPTDefend renames the defended makes/attempts/percent columns for
+# each category.  Keep the source mapping explicit so a newly null-scaffolded
+# category fails closed instead of silently producing an incomplete contract.
+DEFEND_CATEGORY_COLUMNS = {
+    "Overall": {"dFgm": "D_FGM", "dFga": "D_FGA", "dFgPct": "D_FG_PCT",
+                "normalFgPct": "NORMAL_FG_PCT", "pctPlusMinus": "PCT_PLUSMINUS"},
+    "3 Pointers": {"dFgm": "FG3M", "dFga": "FG3A", "dFgPct": "FG3_PCT",
+                   "normalFgPct": "NS_FG3_PCT", "pctPlusMinus": "PLUSMINUS"},
+    "2 Pointers": {"dFgm": "FG2M", "dFga": "FG2A", "dFgPct": "FG2_PCT",
+                   "normalFgPct": "NS_FG2_PCT", "pctPlusMinus": "PLUSMINUS"},
+    "Less Than 6Ft": {"dFgm": "FGM_LT_06", "dFga": "FGA_LT_06", "dFgPct": "LT_06_PCT",
+                      "normalFgPct": "NS_LT_06_PCT", "pctPlusMinus": "PLUSMINUS"},
+    "Less Than 10Ft": {"dFgm": "FGM_LT_10", "dFga": "FGA_LT_10", "dFgPct": "LT_10_PCT",
+                       "normalFgPct": "NS_LT_10_PCT", "pctPlusMinus": "PLUSMINUS"},
+    "Greater Than 15Ft": {"dFgm": "FGM_GT_15", "dFga": "FGA_GT_15", "dFgPct": "GT_15_PCT",
+                           "normalFgPct": "NS_GT_15_PCT", "pctPlusMinus": "PLUSMINUS"},
+}
+
 
 def build_defense(season: str):
     defend_files = season_raw_files(season, "pt_defend")
@@ -530,19 +548,31 @@ def build_defense(season: str):
 
     for f in defend_files:
         raw = read_json(f)
-        category = DEFEND_CATEGORY_KEYS.get(raw["params"]["DefenseCategory"],
-                                            snake_to_camel(raw["params"]["DefenseCategory"]))
-        for r in rows_as_dicts(first_result_set(raw)):
+        source_category = raw["params"]["DefenseCategory"]
+        category = DEFEND_CATEGORY_KEYS.get(source_category,
+                                            snake_to_camel(source_category))
+        result_set = first_result_set(raw)
+        columns = DEFEND_CATEGORY_COLUMNS.get(source_category)
+        if columns is None:
+            raise ValueError(f"no defended column mapping for category {source_category!r}")
+        headers = set(result_set["headers"])
+        missing = sorted(set(columns.values()) - headers)
+        if missing:
+            raise ValueError(
+                f"{season} {source_category}: defended headers missing {missing}; "
+                f"headers={result_set['headers']}"
+            )
+        for r in rows_as_dicts(result_set):
             e = entry(r["CLOSE_DEF_PERSON_ID"], r.get("PLAYER_NAME"),
                       r.get("PLAYER_LAST_TEAM_ID"))
             e["defended"][category] = {
                 "gp": r.get("GP"),
                 "freq": r.get("FREQ"),
-                "dFgm": r.get("D_FGM"),
-                "dFga": r.get("D_FGA"),
-                "dFgPct": r.get("D_FG_PCT"),
-                "normalFgPct": r.get("NORMAL_FG_PCT"),
-                "pctPlusMinus": r.get("PCT_PLUSMINUS"),
+                "dFgm": r.get(columns["dFgm"]),
+                "dFga": r.get(columns["dFga"]),
+                "dFgPct": r.get(columns["dFgPct"]),
+                "normalFgPct": r.get(columns["normalFgPct"]),
+                "pctPlusMinus": r.get(columns["pctPlusMinus"]),
             }
 
     if matchup_raw is not None:
