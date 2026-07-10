@@ -19,6 +19,7 @@ import { Player, Position, PerGameStats, SeasonStats } from '../src/models/playe
 import { Team } from '../src/models/team';
 import { FREE_AGENT_TEAM_ID, ROSTER_MIN, ROSTER_MAX } from '../src/transactions/constants';
 import {
+  blendScore,
   FREE_THROW_MEAN_TOLERANCE,
   FREE_THROW_TARGET_SD,
   freeThrowPctFromRating,
@@ -279,6 +280,12 @@ function assertS2bStatisticalContract(players: Player[], ownerByPlayer: Map<stri
     check(Math.abs(ratingToModifier(rating) - expectedModifier[rating]) < 1e-12,
       `ratingToModifier(${rating}) no longer matches the declared engine value`);
   }
+
+  const isolateMetric = (target: string) => (id: string): number => id === target ? 1 : 0;
+  check(blendScore('ballHandling', isolateMetric('handling.turnoverRatio')) === -0.55,
+    'ballHandling blend no longer consumes handling.turnoverRatio at weight -0.55');
+  check(blendScore('offensiveIQ', isolateMetric('iq.turnoverRatio')) === -0.35,
+    'offensiveIQ blend no longer consumes iq.turnoverRatio at weight -0.35');
 
   const defenseR = pearson(
     rostered.map((player) => player.ratings.perimeterDefense),

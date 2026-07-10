@@ -553,14 +553,14 @@ export function freeThrowRatingFromPct(pct: number): number {
   return 40 + (pct - FT_LEAGUE_AVG_PCT) * FT_DERIVE_SCALE;
 }
 
-function blendScore(rating: RatingKey, standardized: (id: string) => number): number {
+export function blendScore(rating: RatingKey, standardized: (id: string) => number): number {
   switch (rating) {
     case 'outsideShooting': return 0.85 * standardized('outside.accuracy') + 0.15 * standardized('outside.volume');
     case 'midrangeShooting': return 0.85 * standardized('mid.accuracy') + 0.15 * standardized('mid.volume');
     case 'interiorScoring': return 0.85 * standardized('interior.accuracy') + 0.15 * standardized('interior.volume');
-    case 'ballHandling': return -0.55 * standardized('handling.turnovers') + 0.25 * standardized('handling.astTo') + 0.20 * standardized('handling.passesPerMin');
+    case 'ballHandling': return -0.55 * standardized('handling.turnoverRatio') + 0.25 * standardized('handling.astTo') + 0.20 * standardized('handling.passesPerMin');
     case 'passing': return 0.55 * standardized('passing.astPct') + 0.30 * standardized('passing.adjustedAstPerPass') + 0.15 * standardized('passing.passesPerMin');
-    case 'offensiveIQ': return 0.45 * standardized('iq.astTo') - 0.35 * standardized('iq.turnovers') + 0.20 * standardized('iq.secondaryAstPerPass');
+    case 'offensiveIQ': return 0.45 * standardized('iq.astTo') - 0.35 * standardized('iq.turnoverRatio') + 0.20 * standardized('iq.secondaryAstPerPass');
     case 'perimeterDefense': return 0.70 * standardized('perimeter.defended3ptDelta') - 0.30 * standardized('defense.guardMatchup');
     case 'interiorDefense': return 0.70 * standardized('interior.defendedLessThan6FtDelta') - 0.30 * standardized('defense.centerMatchup');
     case 'defensiveIQ': return 0.60 * standardized('defIQ.defendedDelta') - 0.20 * standardized('defense.allMatchup') + 0.20 * standardized('defense.deflectionsPerMin');
