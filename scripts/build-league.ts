@@ -311,7 +311,7 @@ interface CoverageSets {
   hustle: Set<number>;
 }
 
-function personIdSet(contract: string, rows: { personId: number }[]): Set<number> {
+function personIdSet(rows: { personId: number }[]): Set<number> {
   const s = new Set<number>();
   for (const r of rows) s.add(r.personId);
   return s;
@@ -332,7 +332,7 @@ function loadCoverageSets(): CoverageSets {
     loader: (s: string) => { rows: T[] },
   ): Set<number> => {
     if (!hasNormalizedFile(`${contract}/${BUILD_SEASON}.json`)) return new Set<number>();
-    return personIdSet(contract, loader(BUILD_SEASON).rows);
+    return personIdSet(loader(BUILD_SEASON).rows);
   };
   return {
     playtypes: load('playtypes', loadPlayTypes),
@@ -555,8 +555,6 @@ function buildLeague(): BuildResult {
       health: { healthy: true },
       careerStats,
     };
-    player.contract = generateContractForPlayer(player);
-
     built.push({
       player,
       personId: boxRow.personId,
@@ -653,8 +651,6 @@ function buildLeague(): BuildResult {
       offensiveSystem: candidateOffensiveSystem(),
       defensiveSystem: candidateDefensiveSystem(),
     };
-    // Fill starters / rotation order / minute targets from the shared helper.
-    setupRotation(team, kept.map((bp) => bp.player));
     teams.push(team);
   }
 
@@ -670,9 +666,6 @@ function buildLeague(): BuildResult {
   const rotationPlayers = rosteredPlayers.filter((bp) => rotationLevelIds.has(bp.player.id));
   assertS2bCoverageGates(rosteredPlayers, rotationPlayers, coverage);
 
-  // S2b replaces only ratings/potential.  Contracts above deliberately remain
-  // generated from the S2a placeholder construction so contract outputs are
-  // not an accidental, out-of-scope side effect of a candidate rating refresh.
   const activePlayers = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'players.json'), 'utf-8')) as Player[];
   if (activePlayers.length === 0) stop('active data/players.json is empty; cannot establish S2b SD diagnostics');
   const derivationInput: NbaDerivationInput = {
@@ -691,6 +684,15 @@ function buildLeague(): BuildResult {
     if (!ratings) stop(`S2b ratings missing personId ${bp.personId}`);
     bp.player.ratings = ratings;
     bp.player.potential = derivePotential(ratings, bp.player.age, bp.player.experience);
+  }
+
+  // Contracts, rotations, and FA desired contracts all consume the same S2b
+  // ratings. Roster membership and the rotation-level derivation population
+  // were established earlier from gp*mpg and season-end teamId only.
+  for (const bp of built) bp.player.contract = generateContractForPlayer(bp.player);
+  for (const team of teams) {
+    const rosterPlayers = team.roster.map((id) => rosteredById.get(id)?.player).filter((p): p is Player => p !== undefined);
+    setupRotation(team, rosterPlayers);
   }
   const ratingsReport = renderRatingsContract(derivationInput, derivation);
 
