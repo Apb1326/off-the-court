@@ -1,8 +1,9 @@
 # Off the Court — Transactions Roadmap
 
 > **Status:** living, implementation-aligned design doc. Phases 1–5b are
-> implemented on `main`; the current save schema is v6. Phase 5c is the next transaction
-> phase, after the franchise prerequisites in `docs/ROADMAP.md`. Read alongside
+> implemented on `main`; the repository's current save schema is **v7** (F1).
+> Phase 5b itself added no persisted shape and last shipped on schema v6. Phase 5c is the
+> next transaction unit, gated on **S2d, F2, F3, F4c, and F5** in `docs/ROADMAP.md`. Read alongside
 > `AGENTS.md` (hard engineering rules) and the master roadmap — this document does not
 > restate those rules. Where documents conflict, `AGENTS.md` wins.
 
@@ -16,7 +17,7 @@ Transactions are a **state-mutation layer on top of `SeasonState`**. The hard pa
 
 **Every phase, before it is considered done:**
 
-1. `npm run profile` and `npm run calibrate` pass **unchanged** on an unmodified league. No phase here touches the sim, so single-game distributions must stay flat. A diff in profiling output is a bug, not an expected side effect.
+1. `npm run profile` and `npm run calibrate` complete with output **unchanged** on an unmodified league. No phase here touches the sim, so single-game distributions must stay flat. A diff in profiling output is a bug, not an expected side effect; `calibrate` remains a drift comparison, not a pass/fail era-acceptance test.
 2. Any new persisted state ships a **schema bump + migration** from the prior version **and** a `scripts/` round-trip check (load old save → migrate → assert invariants → re-serialize).
 3. All generated data and tie-breaks go through `SeededRNG`. Never `Math.random`. Transactions themselves are deterministic.
 
@@ -302,9 +303,9 @@ distinction, or stretch ceiling. Signing-exception contracts stay flat. Disabled
 Exception remains deferred.
 
 **Out of scope for this phase:** sign-and-trade (Phase 5b), waiver claims, CPU initiative,
-UI, and app/franchise rollover integration. The app currently has no offseason rollover
-route or persisted controlled-franchise identity, so the pure seam is ready for a future
-offseason/franchise-flow phase but is not wired into season advancement.
+UI, and app/franchise rollover integration. **At Phase 5a landing,** the app had no
+offseason rollover route or persisted controlled-franchise identity; F1 later supplied the
+latter (schema v7), while F3 still owns wiring this pure seam into season advancement.
 
 **Establishes:** the deterministic consequence model for the financial events currently in
 game scope. Phase 5b subsequently supplied the composition test, and future franchise flow
@@ -315,8 +316,9 @@ must call the rollover seam before lifecycle behavior is user-facing.
 ## Phase 5b — Sign-and-trade (the composition stress test)
 
 **Status:** Implemented. `scripts/test-phase5b.ts` is the focused executable acceptance
-harness. The implementation composes the existing ledgers and validators without a new
-persisted shape, so the save schema remains v6.
+harness. The implementation composed the existing ledgers and validators without a new
+persisted shape, so it remained on schema v6 at landing; the repository later advanced to
+schema v7 through F1.
 
 **Goal:** one mechanic, deliberately isolated, because it is **the integration test of the whole financial stack** — it composes the trade engine (Phase 1) + contract instantiation (Phase 2) + salary matching (Phase 4) + exception/dead-money logic (Phase 5a), and it **triggers a hard cap** (Phase 4 event-state).
 
@@ -341,14 +343,14 @@ the main arc shifts from rules to agency and long-horizon balance.
 This is the transaction layer's analog of `npm run calibrate`: single-game profiling can stay perfectly flat while a decade of AI trades quietly wrecks competitive balance. That failure is invisible to `profile`/`calibrate` and needs its own tool.
 
 **Adds (a `tsx scripts/` tool, e.g. `scripts/league-balance.ts`):**
-- Sim **N seasons** (N tunable; default large enough to expose drift) on a fixed seed, with a flag to enable/disable AI trades.
-- Compute and report, per run:
+- Sim **N seasons** (N tunable; default large enough to expose drift) on a declared fixed **seed suite**, with a flag to enable/disable AI trades. Keep one named smoke seed for fast regression checks; full acceptance runs every committed suite seed.
+- Run paired trade-free and trades-on worlds for each seed, then compute and report per seed:
   - **Talent dispersion** — spread/Gini of team talent over time.
   - **Championship / playoff distribution** — entropy of titles and playoff appearances across teams.
   - **Trade-churn metrics** — volume, and the oscillation/value-pump signals defined in the cross-cutting invariants.
-- Emit a machine-comparable summary so two runs can be diffed.
+- Emit a machine-comparable summary with per-seed values, paired deltas, and declared aggregate median/tail bounds. Asset-universe conservation, duplicate absence, and deterministic reruns are hard invariants for **every** seed, never aggregate statistics.
 
-**Baseline first:** run it with **AI trades disabled** on the post-S2/F2/F3/F4/F5 world required by `docs/ROADMAP.md`, immediately before Phase 6, and record the resting values. These are the control. When Phase 6 turns trades on, the assertion is "balance metrics stay within tolerance of the trade-free baseline," not "balance looks plausible" — you can't eyeball decade-scale drift.
+**Baseline first:** run the paired **trade-free suite** on the post-**S2d/F2/F3/F4c/F5** world required by `docs/ROADMAP.md`, immediately before Phase 6, and record the resting values. These are the control. When Phase 6 turns trades on, the assertion is "paired balance deltas stay within the declared per-seed and aggregate bounds," not "balance looks plausible" — you can't eyeball decade-scale drift.
 
 **Out of scope:** any trade-AI logic. This phase only *measures*; Phase 6 supplies the thing being measured. Building the harness here keeps it from being half-born inside the Phase 6 feature prompt.
 
@@ -363,17 +365,18 @@ This is the transaction layer's analog of `npm run calibrate`: single-game profi
 **Adds:**
 - **Player valuation model** — a trade-value number per player from ratings, age, potential (`derivePotential` output is a natural input), and **contract** (salary vs. production: a good player on a bad contract is worth less). This is the basketball-judgment core and **deserves its own calibration pass.**
 - **Team-context valuation** — the same player is worth more to a team that needs the position/role. **Reuse the lineup-fit and positional-scarcity logic from the sim engine** rather than inventing a parallel notion of value.
+- **Information policy (v1):** the shared base-value referee and CPU desirability use true ratings. This is an explicit omniscient-front-office simplification; U1 scouted ratings affect only the controlled user's display and never legality, referee value, or CPU valuation. Team-scoped CPU scouting is deferred and would require re-calibrating Phase 6 against a fresh 5c suite.
 - **Acceptance logic** — `evaluateTradeForCpu` decides desirability only: accept when
   incoming value clears the outgoing-value threshold and fits the team's situation, and
   otherwise reject with a reason. The separate execution path still runs the shared Phase
   4/5a legality gate before mutation; do not duplicate or move legality into valuation.
-- **Counter-offers** (optional stretch) — propose an adjustment instead of binary accept/reject.
+- **No counter-offer generation here.** Phase 6 returns a desirability verdict and reason only. Persisted proposals arrive in Phase 7; accept/reject/counter UI arrives in U1a.
 
 **Out of scope for this phase:** the CPU still doesn't *initiate*. It only evaluates trades put in front of it. Proactive proposals are Phase 7.
 
 **Trade-value is a derived analytic — keep it out of the rating pipeline.** It must never feed back into the sim's player ratings, or it will perturb calibration. It reads ratings; it does not write them.
 
-**Acceptance is the Phase 5c league-balance harness, re-run with AI trades enabled.** Assert all metrics stay within tolerance of the trade-free baseline recorded in 5c. The specific degeneracy guards are defined in the cross-cutting invariants (value-pump / Pareto-sanity). Trade AI can wreck league balance over a simulated decade even if single-game sim is untouched — this multi-season check is the transaction layer's analog of `npm run calibrate`.
+**Acceptance is the Phase 5c league-balance harness, re-run with AI trades enabled for the full paired seed suite.** Assert every hard invariant and all declared per-seed/aggregate bounds against the trade-free baseline recorded in 5c. The specific degeneracy guards are defined in the cross-cutting invariants (value-pump / Pareto-sanity). Trade AI can wreck league balance over a simulated decade even if single-game sim is untouched — this multi-season check is the transaction layer's analog of `npm run calibrate`.
 
 **Establishes:** CPU teams can now reason about value.
 
@@ -388,9 +391,9 @@ This is the transaction layer's analog of `npm run calibrate`: single-game profi
   > **Proposal generation is its own concern, distinct from evaluation (Phase 6).** The search space is combinatorially explosive — do **not** brute-force all combinations. Bound it with heuristics (target teams with complementary surplus/need, cap-compatible partners first).
 - **CPU free-agent signing** during the offseason (Phase 6 valuation + Phase 4 cap room).
 - **Trade-deadline behavior** — contenders buy, rebuilders sell (the value-driven layer on top of the Phase 4 temporal-legality gate).
-- **Offer inbox** for the controlled team (incoming proposals to accept / reject / counter).
+- **Persisted offer/inbox events** for the controlled team. This phase owns proposal creation, expiry, and state transitions; **U1a** owns the offer-inbox and trade-workspace UI that renders and acts on those events.
 
-**Out of scope for this phase:** no new *rules*. This is agency on top of the Phase 4–6 machinery, not new legality or financial logic.
+**Out of scope for this phase:** no new *rules* and no transaction UI. This is agency on top of the Phase 4–6 machinery, not new legality, financial logic, or a parallel client-state model.
 
 **Establishes:** transactions are no longer player-driven only. This is what makes a franchise mode feel like a living league. Re-run the Phase 5c league-balance harness with proactive trading on — proposal generation is a new way to introduce churn and degeneracy.
 
@@ -416,17 +419,16 @@ This is the transaction layer's analog of `npm run calibrate`: single-game profi
 
 ---
 
-## Phase 8 — The draft
+## Phase 8 — The draft (ordered program)
 
-**Goal:** sequenced late because a meaningful draft depends on most prior machinery — rookie-scale contracts (Phase 2), cap holds for picks, draft-pick *assets* that can themselves be traded (extends the trade engine to non-player assets — a real structural addition, cheap **if** you asset-typed the payload in Phase 1), and prospect valuation (an extension of Phase 6).
+**Goal:** sequenced late because a meaningful draft depends on most prior machinery — rookie-scale contracts (Phase 2), cap holds for picks, draft-pick *assets* that can themselves be traded (extends the trade engine to non-player assets — a real structural addition, cheap **if** you asset-typed the payload in Phase 1), and prospect valuation (an extension of Phase 6). It is intentionally split: lottery/order, assets, prospects, and execution have different invariants and should not share one unreviewable diff.
 
-**Adds:**
-- **Draft-pick assets** as tradeable entities in `SeasonState` — the big new state shape. Slots cleanly into `TradeAsset[]` if you took that fork in Phase 1; otherwise this is where the trade-engine refactor lands.
-- **Prospect generation + scouting uncertainty** — potential known only fuzzily (a natural fit for the existing potential model **with noise**; the noise goes through `SeededRNG`).
-- **Draft event** in the season cycle; **rookie-scale auto-contracts** on selection.
-- **Pick protections / swaps** — the genuinely fiddly part. Model as predicates, the same way apron rules are isolated. Include the **Stepien rule** (no trading consecutive future first-rounders) as one such predicate, and treat **pick swaps** as a distinct asset type from outright **pick conveyance**.
+1. **T-8a — draft order and pick ledger.** Add the canonical persisted pick ledger and explicit F3 rollover carry-forward. Resolve both rounds deterministically from regular-season standings, playoff finish, named current-NBA lottery constants sourced at implementation, and stable tiebreakers. Lottery draws use a dedicated `SeededRNG(deterministicSeed(season.seed, draftId))` stream; the same completed season must always yield the same order. Ship a fixed-season lottery/order harness before a prospect or tradeable-pick mechanic.
+2. **T-8b — pick assets and predicates.** Extend `TradeAsset[]` with pick conveyance, then add protections, swaps, and Stepien predicates behind the single asset constructor and shared execution/referee path. Pick ownership must exist exactly once before and after every transaction and survive rollover; a swap is distinct from conveyance.
+3. **T-8c — empirical prospects and contracts.** `combine` (2000–25) and `players` (draftYear/round/pick) joined to `box_advanced` careers produce pick-value curves and measurable-vs-outcome priors. `tsx scripts/derive-pick-value.ts` follows the S1/F4 derivation discipline, including busts in survivor-bias treatment and held-out validation. Prospect potential is deterministic uncertainty over the existing F4 model; selected players receive rookie-scale contracts.
+4. **T-8d — draft event and integration.** Run the deterministic selection event in the F3 seam between rollover and free agency, then replace F4's replacement-level generation as the normal league inflow (leaving it as a final safety fallback). Any draft UI consumes this persisted event contract rather than inventing client state.
 
-**Out of scope for this phase:** keep scouting uncertainty as fuzz over the existing potential model — don't build a parallel prospect-rating system.
+**Out of scope for this program:** a parallel prospect-rating system, historical draft-class replays, and unmodeled CBA exotica beyond the named pick predicates.
 
 ---
 
@@ -477,11 +479,11 @@ Phase 3    Salary cap & financial state (compute only)      IMPLEMENTED
 Phase 4    Salary matching & cap enforcement                IMPLEMENTED
 Phase 5a   Dead money, exceptions & contract lifecycle      IMPLEMENTED
 Phase 5b   Sign-and-trade (composition stress test)         IMPLEMENTED
-Phase 5c   League-balance harness (infrastructure)           PLANNED
+Phase 5c   League-balance harness (paired seed suite)        PLANNED — gated by S2d/F2/F3/F4c/F5
 Phase 6    Trade AI (CPU valuation)                         PLANNED
 Phase 7    AI-initiated trades & ecosystem                  PLANNED
 Phase 7.5  Restricted free agency                          PLANNED
-Phase 8    The draft                                        PLANNED
+Phase 8    Draft order, assets, prospects, event             PLANNED — T-8a through T-8d
 ```
 
 ---
@@ -502,9 +504,10 @@ Before this phase is done:
     (not nested conditionals); legality stays separate from desirability.
 [ ] No derived value is stored as an independent source of truth
     (exceptions: documented event-set state only).
-[ ] (Phase 6+) Phase 5c multi-season league-balance check passes:
+[ ] (Phase 6+) Phase 5c paired-seed multi-season league-balance check passes:
     talent dispersion bounded, championship distribution non-degenerate,
     asset-universe value conserved, cumulative team value flow bounded,
-    and no value-bearing laundering / oscillating-trade loops.
+    no value-bearing laundering / oscillating-trade loops, and every seed's
+    hard invariants plus declared aggregate tail bounds hold.
 [ ] Scope guard: nothing from a later phase was built early.
 ```
