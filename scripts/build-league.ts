@@ -10,7 +10,7 @@
  *
  * Invocation (mirrors scripts/derive-league-targets.ts):
  *   npm run build-league            -> write the two candidate JSONs + report, print provenance
- *   npm run build-league -- --check -> rebuild in memory, byte-compare all three files, exit non-zero on any diff
+ *   npm run build-league -- --check -> rebuild in memory, byte-compare candidate + both reports, exit non-zero on any diff
  *
  * Determinism: no Math.random, no Date.now, no timestamps in output; sorted
  * iteration everywhere; fixed float formatting; objects built with a fixed key
@@ -18,10 +18,8 @@
  * (contracts) descends from SeededRNG(fnv1a(player.id)) inside the shared
  * transaction-layer helpers — this file introduces no randomness of its own.
  *
- * PLACEHOLDER ratings/tendencies/potential: this unit reuses the EXISTING
- * legacy heuristics (deriveRatings/deriveTendencies/derivePotential) so the
- * artifact is structurally complete and comparable. S2b replaces ratings
- * derivation; S2c replaces tendencies. Do not tune against this pool.
+ * S2b derives ratings from normalized contracts and recomputes potential from
+ * those ratings. Tendencies remain the S2a legacy placeholders until S2c.
  */
 
 import * as fs from 'fs';
@@ -30,6 +28,14 @@ import * as path from 'path';
 import { Player, Position, PerGameStats, SeasonStats } from '../src/models/player';
 import { Team, OffensiveSystem, DefensiveSystem, NBA_TEAMS } from '../src/models/team';
 import { deriveRatings, deriveTendencies, derivePotential } from '../src/ratings/derivation';
+import {
+  deriveNbaRatings,
+  NbaDerivationInput,
+  NbaDerivationPlayer,
+  RECENT_SEASONS,
+  renderRatingsContract,
+  ShotEventSeasonAggregate,
+} from '../src/ratings/nba-derivation';
 import { generateContractForPlayer, normalizePlayersForSave } from '../src/transactions/contracts';
 import { FREE_AGENT_TEAM_ID, ROSTER_MIN, ROSTER_MAX } from '../src/transactions/constants';
 import { setupRotation } from '../src/lib/rotation';
@@ -43,8 +49,10 @@ import {
   loadTracking,
   loadDefense,
   loadHustle,
+  loadShotEvents,
+  loadShotZones,
 } from '../src/data/nba/load';
-import { BoxAdvancedRow, NbaPlayerRow } from '../src/data/nba/types';
+import { BoxAdvancedRow, NbaPlayerRow, ShotEventRow } from '../src/data/nba/types';
 
 // --- Fixed build policy (annotated constants; no magic numbers) ---
 
@@ -58,6 +66,8 @@ const TEAMS_PATH = path.join(CANDIDATE_DIR, 'teams.json');
 const PLAYERS_PATH = path.join(CANDIDATE_DIR, 'players.json');
 /** Committed coverage report (docs/ is not gitignored; data/ is). */
 const COVERAGE_PATH = path.join(process.cwd(), 'docs', 'S2A_LEAGUE_COVERAGE.md');
+/** S2b's generated statistical contract. */
+const RATINGS_CONTRACT_PATH = path.join(process.cwd(), 'docs', 'S2B_RATINGS_CONTRACT.md');
 
 /** Unit conversions from normalized (cm/kg) to the Player model (inches/lbs). */
 const CM_PER_INCH = 2.54;
@@ -294,6 +304,8 @@ function resolveExperience(fromYear: number | null, playerId: string, fallbacks:
 
 interface CoverageSets {
   playtypes: Set<number>;
+  shotZones: Set<number>;
+  shotEvents: Set<number>;
   tracking: Set<number>;
   defense: Set<number>;
   hustle: Set<number>;
@@ -303,6 +315,15 @@ function personIdSet(contract: string, rows: { personId: number }[]): Set<number
   const s = new Set<number>();
   for (const r of rows) s.add(r.personId);
   return s;
+}
+
+function indexByPersonId<T extends { personId: number }>(contract: string, rows: readonly T[]): Map<number, T> {
+  const out = new Map<number, T>();
+  for (const row of rows) {
+    if (out.has(row.personId)) stop(`duplicate personId ${row.personId} in ${contract}/${BUILD_SEASON}`);
+    out.set(row.personId, row);
+  }
+  return out;
 }
 
 function loadCoverageSets(): CoverageSets {
@@ -315,10 +336,73 @@ function loadCoverageSets(): CoverageSets {
   };
   return {
     playtypes: load('playtypes', loadPlayTypes),
+    shotZones: load('shot_zones', loadShotZones),
+    shotEvents: hasNormalizedFile(`shot_events/${BUILD_SEASON}.json`)
+      ? new Set(loadShotEvents(BUILD_SEASON).rows.map((row) => row.playerId))
+      : new Set<number>(),
     tracking: load('tracking', loadTracking),
     defense: load('defense', loadDefense),
     hustle: load('hustle', loadHustle),
   };
+}
+
+function emptyZoneAggregate(): ShotEventSeasonAggregate {
+  const empty = () => ({ fgm: 0, fga: 0 });
+  return {
+    season: '', midrangeUnder14: empty(), longMidrange: empty(),
+    aboveBreakThree: empty(), deepThree: empty(),
+  };
+}
+
+/** Exact Stage-1 zone semantics and heave rule, candidate-only aggregation. */
+function classifyShotEvent(row: ShotEventRow): keyof Omit<ShotEventSeasonAggregate, 'season'> | 'heave' | 'covered_by_shot_zones' {
+  if (row.shotZoneBasic === null || row.shotDistance === null) {
+    stop(`shot_events ${row.gameId}/${row.gameEventId} lacks shotZoneBasic or shotDistance`);
+  }
+  const seconds = row.minutesRemaining * 60 + row.secondsRemaining;
+  if (row.shotZoneBasic === 'Backcourt' || (row.shotDistance >= 32 && seconds <= 3)) return 'heave';
+  switch (row.shotZoneBasic) {
+    case 'Restricted Area': return 'covered_by_shot_zones';
+    case 'In The Paint (Non-RA)': return 'covered_by_shot_zones';
+    case 'Mid-Range': return row.shotDistance < 14 ? 'midrangeUnder14' : 'longMidrange';
+    case 'Left Corner 3':
+    case 'Right Corner 3': return 'covered_by_shot_zones';
+    case 'Above the Break 3': return row.shotDistance >= 27 ? 'deepThree' : 'aboveBreakThree';
+    default: stop(`shot_events ${row.gameId}/${row.gameEventId} has unknown zone "${row.shotZoneBasic}"`);
+  }
+}
+
+function loadShotEventAggregates(): Map<number, ShotEventSeasonAggregate[]> {
+  const byPerson = new Map<number, Map<string, ShotEventSeasonAggregate>>();
+  for (const season of RECENT_SEASONS) {
+    for (const row of loadShotEvents(season).rows) {
+      let seasons = byPerson.get(row.playerId);
+      if (!seasons) { seasons = new Map(); byPerson.set(row.playerId, seasons); }
+      let aggregate = seasons.get(season);
+      if (!aggregate) { aggregate = emptyZoneAggregate(); aggregate.season = season; seasons.set(season, aggregate); }
+      const zone = classifyShotEvent(row);
+      if (zone === 'heave' || zone === 'covered_by_shot_zones') continue;
+      aggregate[zone].fga++;
+      if (row.made) aggregate[zone].fgm++;
+    }
+  }
+  return new Map([...byPerson.entries()].map(([personId, seasons]) => [
+    personId,
+    [...seasons.values()].sort((a, b) => a.season.localeCompare(b.season)),
+  ]));
+}
+
+function loadShotZonesByPerson(): Map<number, { season: string; row: ReturnType<typeof loadShotZones>['rows'][number] }[]> {
+  const byPerson = new Map<number, { season: string; row: ReturnType<typeof loadShotZones>['rows'][number] }[]>();
+  for (const season of RECENT_SEASONS) {
+    for (const row of loadShotZones(season).rows) {
+      const rows = byPerson.get(row.personId) ?? [];
+      rows.push({ season, row });
+      byPerson.set(row.personId, rows);
+    }
+  }
+  for (const rows of byPerson.values()) rows.sort((a, b) => a.season.localeCompare(b.season));
+  return byPerson;
 }
 
 // --- Core build ---
@@ -328,6 +412,7 @@ interface BuiltPlayer {
   personId: number;
   bio: NbaPlayerRow;
   boxSeasons: string[];
+  derivation: NbaDerivationPlayer;
   score: number; // gp * mpg (2025-26)
   gp2026: number;
 }
@@ -336,6 +421,7 @@ interface BuildResult {
   teamsJson: string;
   playersJson: string;
   report: string;
+  ratingsReport: string;
   summary: {
     teamCount: number;
     rostered: number;
@@ -343,6 +429,32 @@ interface BuildResult {
     eligible: number;
     excludedNoActivity: number;
   };
+}
+
+function assertS2bCoverageGates(
+  rostered: BuiltPlayer[],
+  rotation: BuiltPlayer[],
+  coverage: CoverageSets,
+): void {
+  const contracts: { name: string; covered: (player: BuiltPlayer) => boolean; existingGate: boolean }[] = [
+    { name: 'box_advanced', covered: (player) => player.boxSeasons.length >= 1, existingGate: true },
+    { name: 'tracking', covered: (player) => coverage.tracking.has(player.personId), existingGate: true },
+    { name: 'defense', covered: (player) => coverage.defense.has(player.personId), existingGate: true },
+    { name: 'hustle', covered: (player) => coverage.hustle.has(player.personId), existingGate: true },
+    { name: 'shot_zones', covered: (player) => coverage.shotZones.has(player.personId), existingGate: false },
+    { name: 'shot_events', covered: (player) => coverage.shotEvents.has(player.personId), existingGate: false },
+  ];
+  for (const contract of contracts) {
+    const rotationCovered = rotation.filter(contract.covered).length;
+    const rosteredCovered = rostered.filter(contract.covered).length;
+    if (rotationCovered / rotation.length < 0.99) {
+      stop(`${contract.name} rotation-level coverage ${rotationCovered}/${rotation.length} is below the S2b 99% gate`);
+    }
+    if (contract.existingGate && rotationCovered !== rotation.length) {
+      stop(`${contract.name} rotation-level coverage regressed from S2a's committed 100% (${rotationCovered}/${rotation.length})`);
+    }
+    if (rosteredCovered === 0) stop(`${contract.name} has no rostered coverage`);
+  }
 }
 
 function buildLeague(): BuildResult {
@@ -379,6 +491,11 @@ function buildLeague(): BuildResult {
   const nbaByAbbrev = new Map(NBA_TEAMS.map((t) => [t.abbreviation, t]));
 
   const coverage = loadCoverageSets();
+  const trackingByPerson = indexByPersonId('tracking', loadTracking(BUILD_SEASON).rows);
+  const defenseByPerson = indexByPersonId('defense', loadDefense(BUILD_SEASON).rows);
+  const hustleByPerson = indexByPersonId('hustle', loadHustle(BUILD_SEASON).rows);
+  const shotZonesByPerson = loadShotZonesByPerson();
+  const shotEventAggregates = loadShotEventAggregates();
   const fallbacks: FallbackEntry[] = [];
 
   // Eligibility: a 2025-26 box_advanced row + a resolvable identity.
@@ -440,7 +557,28 @@ function buildLeague(): BuildResult {
     };
     player.contract = generateContractForPlayer(player);
 
-    built.push({ player, personId: boxRow.personId, bio, boxSeasons: careerSeasons, score: gp2026 * mpg2026, gp2026 });
+    built.push({
+      player,
+      personId: boxRow.personId,
+      bio,
+      boxSeasons: careerSeasons,
+      derivation: {
+        personId: boxRow.personId,
+        id,
+        position,
+        heightCm: bio.heightCm,
+        weightKg: bio.weightKg,
+        wingspanCm: bio.wingspanCm,
+        boxSeasons: careerSeasons.map((season) => ({ season, row: boxByPerson.get(boxRow.personId)!.get(season)! })),
+        shotZoneSeasons: shotZonesByPerson.get(boxRow.personId) ?? [],
+        shotEventSeasons: shotEventAggregates.get(boxRow.personId) ?? [],
+        tracking: trackingByPerson.get(boxRow.personId),
+        defense: defenseByPerson.get(boxRow.personId),
+        hustle: hustleByPerson.get(boxRow.personId),
+      },
+      score: gp2026 * mpg2026,
+      gp2026,
+    });
   }
 
   // Exclusions: players-contract entries with no 2025-26 box row.
@@ -528,6 +666,34 @@ function buildLeague(): BuildResult {
     if (bp.boxSeasons.length < 1) stop(`rostered player ${bp.player.id} has zero box_advanced seasons (invariant)`);
   }
 
+  const rosteredPlayers = [...rosteredById.values()].sort((a, b) => a.personId - b.personId);
+  const rotationPlayers = rosteredPlayers.filter((bp) => rotationLevelIds.has(bp.player.id));
+  assertS2bCoverageGates(rosteredPlayers, rotationPlayers, coverage);
+
+  // S2b replaces only ratings/potential.  Contracts above deliberately remain
+  // generated from the S2a placeholder construction so contract outputs are
+  // not an accidental, out-of-scope side effect of a candidate rating refresh.
+  const activePlayers = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'players.json'), 'utf-8')) as Player[];
+  if (activePlayers.length === 0) stop('active data/players.json is empty; cannot establish S2b SD diagnostics');
+  const derivationInput: NbaDerivationInput = {
+    players: built.map((bp) => bp.derivation),
+    rosteredPersonIds: new Set(rosteredPlayers.map((bp) => bp.personId)),
+    activeRatings: activePlayers.map((player) => player.ratings),
+  };
+  let derivation;
+  try {
+    derivation = deriveNbaRatings(derivationInput);
+  } catch (error) {
+    stop(`S2b ratings derivation failed: ${(error as Error).message}`);
+  }
+  for (const bp of built) {
+    const ratings = derivation.ratingsByPerson.get(bp.personId);
+    if (!ratings) stop(`S2b ratings missing personId ${bp.personId}`);
+    bp.player.ratings = ratings;
+    bp.player.potential = derivePotential(ratings, bp.player.age, bp.player.experience);
+  }
+  const ratingsReport = renderRatingsContract(derivationInput, derivation);
+
   // Canonicalize contracts / desired contracts / FA teamIds via the save boundary.
   const allPlayers = built.map((bp) => bp.player);
   const { players: normalizedPlayers } = normalizePlayersForSave(allPlayers, [], teams);
@@ -556,6 +722,7 @@ function buildLeague(): BuildResult {
     teamsJson,
     playersJson,
     report,
+    ratingsReport,
     summary: {
       teamCount: teams.length,
       rostered: rosteredCount,
@@ -603,6 +770,8 @@ function renderCoverageTable(title: string, population: BuiltPlayer[], coverage:
     '| --- | --- | --- |',
     coverageRow('box_advanced (≥1 season)', population, (bp) => bp.boxSeasons.length >= 1),
     coverageRow('playtypes (2025-26)', population, (bp) => coverage.playtypes.has(bp.personId)),
+    coverageRow('shot_zones (2025-26)', population, (bp) => coverage.shotZones.has(bp.personId)),
+    coverageRow('shot_events (2025-26)', population, (bp) => coverage.shotEvents.has(bp.personId)),
     coverageRow('tracking (2025-26)', population, (bp) => coverage.tracking.has(bp.personId)),
     coverageRow('defense (2025-26)', population, (bp) => coverage.defense.has(bp.personId)),
     coverageRow('hustle (2025-26)', population, (bp) => coverage.hustle.has(bp.personId)),
@@ -641,13 +810,12 @@ function renderReport(a: RenderArgs): string {
   out.push('');
   out.push(`- Normalized schema version: **${a.manifest.schema_version}**`);
   out.push(`- box_advanced season window consumed: **${seasonWindow}** (${a.boxSeasons.length} seasons)`);
-  out.push(`- Built season (eligibility + placeholder ratings): **${BUILD_SEASON}**`);
+  out.push(`- Built season (eligibility + S2b-derived ratings): **${BUILD_SEASON}**`);
   out.push(`- nba_api version(s): **${[...a.manifest.nba_api_versions].sort().join(', ') || '(none)'}**`);
   out.push('- Builder invocation: `npm run build-league` (identity/league-construction only; S2a)');
   out.push('');
-  out.push('> **Ratings/tendencies/potential in the candidate are legacy-heuristic PLACEHOLDERS**');
-  out.push('> (existing `deriveRatings`/`deriveTendencies`/`derivePotential`). S2b replaces ratings;');
-  out.push('> S2c replaces tendencies. Do not tune against this pool.');
+  out.push('> **Ratings are S2b-derived from normalized NBA contracts; potential is recomputed from those ratings.**');
+  out.push('> Tendencies remain legacy-heuristic placeholders until S2c. Do not tune the active engine against this candidate.');
   out.push('');
   out.push('## League shape');
   out.push('');
@@ -744,6 +912,7 @@ function main(): void {
       cmp('data/league-candidate/teams.json', TEAMS_PATH, result.teamsJson),
       cmp('data/league-candidate/players.json', PLAYERS_PATH, result.playersJson),
       cmp('docs/S2A_LEAGUE_COVERAGE.md', COVERAGE_PATH, result.report),
+      cmp('docs/S2B_RATINGS_CONTRACT.md', RATINGS_CONTRACT_PATH, result.ratingsReport),
     ].every(Boolean);
     if (!ok) process.exitCode = 1;
     return;
@@ -754,11 +923,13 @@ function main(): void {
   fs.writeFileSync(PLAYERS_PATH, result.playersJson, 'utf-8');
   fs.mkdirSync(path.dirname(COVERAGE_PATH), { recursive: true });
   fs.writeFileSync(COVERAGE_PATH, result.report, 'utf-8');
+  fs.writeFileSync(RATINGS_CONTRACT_PATH, result.ratingsReport, 'utf-8');
 
   const s = result.summary;
   console.log(`Wrote ${TEAMS_PATH}`);
   console.log(`Wrote ${PLAYERS_PATH}`);
   console.log(`Wrote ${COVERAGE_PATH}`);
+  console.log(`Wrote ${RATINGS_CONTRACT_PATH}`);
   console.log(
     `League: ${s.teamCount} teams | ${s.eligible} eligible | ${s.rostered} rostered | ` +
       `${s.freeAgents} free agents | ${s.excludedNoActivity} excluded (no 2025-26 activity)`,

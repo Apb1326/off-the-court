@@ -7,13 +7,12 @@
 
 - Normalized schema version: **3**
 - box_advanced season window consumed: **1996-97 … 2025-26** (30 seasons)
-- Built season (eligibility + placeholder ratings): **2025-26**
+- Built season (eligibility + S2b-derived ratings): **2025-26**
 - nba_api version(s): **1.11.4**
 - Builder invocation: `npm run build-league` (identity/league-construction only; S2a)
 
-> **Ratings/tendencies/potential in the candidate are legacy-heuristic PLACEHOLDERS**
-> (existing `deriveRatings`/`deriveTendencies`/`derivePotential`). S2b replaces ratings;
-> S2c replaces tendencies. Do not tune against this pool.
+> **Ratings are S2b-derived from normalized NBA contracts; potential is recomputed from those ratings.**
+> Tendencies remain legacy-heuristic placeholders until S2c. Do not tune the active engine against this candidate.
 
 ## League shape
 
@@ -36,6 +35,8 @@ Coverage that S2b/S2c will gate on. Two populations: **all rostered** players, a
 | --- | --- | --- |
 | box_advanced (≥1 season) | 450/450 | 100.0% |
 | playtypes (2025-26) | 414/450 | 92.0% |
+| shot_zones (2025-26) | 450/450 | 100.0% |
+| shot_events (2025-26) | 450/450 | 100.0% |
 | tracking (2025-26) | 450/450 | 100.0% |
 | defense (2025-26) | 450/450 | 100.0% |
 | hustle (2025-26) | 450/450 | 100.0% |
@@ -49,6 +50,8 @@ Average box_advanced seasons per player: 5.83
 | --- | --- | --- |
 | box_advanced (≥1 season) | 270/270 | 100.0% |
 | playtypes (2025-26) | 270/270 | 100.0% |
+| shot_zones (2025-26) | 270/270 | 100.0% |
+| shot_events (2025-26) | 270/270 | 100.0% |
 | tracking (2025-26) | 270/270 | 100.0% |
 | defense (2025-26) | 270/270 | 100.0% |
 | hustle (2025-26) | 270/270 | 100.0% |

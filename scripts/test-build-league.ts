@@ -1,10 +1,10 @@
 /**
- * S2a — validation + determinism harness for the league candidate.
+ * S2a/S2b — validation + determinism harness for the league candidate.
  *
  * The app's JSON loader only parses and casts, so a "round-trip through the
  * load path" proves nothing. This harness performs EXPLICIT runtime assertions
  * on the emitted candidate, then verifies byte-idempotence:
- *   build -> hash all three files -> rebuild -> hashes identical -> `--check` exits 0.
+ *   build -> hash candidate plus both generated reports -> rebuild -> hashes identical -> `--check` exits 0.
  *
  * It shells out to the builder with `node --import tsx` (the same node binary,
  * PATH-independent) so it exercises the real CLI. It introduces no randomness.
@@ -18,13 +18,24 @@ import * as path from 'path';
 import { Player, Position, PerGameStats, SeasonStats } from '../src/models/player';
 import { Team } from '../src/models/team';
 import { FREE_AGENT_TEAM_ID, ROSTER_MIN, ROSTER_MAX } from '../src/transactions/constants';
+import {
+  FREE_THROW_MEAN_TOLERANCE,
+  FREE_THROW_TARGET_SD,
+  freeThrowPctFromRating,
+  freeThrowRatingFromPct,
+  RATING_KEYS,
+  RATING_MEAN_TOLERANCE,
+  RATING_SD_TOLERANCE,
+  ratingToModifierForReport,
+} from '../src/ratings/nba-derivation';
 
 const ROOT = process.cwd();
 const BUILD_SCRIPT = path.join(ROOT, 'scripts', 'build-league.ts');
 const TEAMS_PATH = path.join(ROOT, 'data', 'league-candidate', 'teams.json');
 const PLAYERS_PATH = path.join(ROOT, 'data', 'league-candidate', 'players.json');
 const COVERAGE_PATH = path.join(ROOT, 'docs', 'S2A_LEAGUE_COVERAGE.md');
-const ALL_FILES = [TEAMS_PATH, PLAYERS_PATH, COVERAGE_PATH];
+const RATINGS_CONTRACT_PATH = path.join(ROOT, 'docs', 'S2B_RATINGS_CONTRACT.md');
+const ALL_FILES = [TEAMS_PATH, PLAYERS_PATH, COVERAGE_PATH, RATINGS_CONTRACT_PATH];
 
 const POSITIONS: Position[] = ['PG', 'SG', 'SF', 'PF', 'C'];
 const CONTRACT_TYPES = new Set(['rookie_scale', 'veteran', 'max', 'minimum', 'two_way']);
@@ -36,6 +47,15 @@ function check(cond: boolean, msg: string): void {
 }
 function isFiniteNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
+}
+
+function average(values: readonly number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values: readonly number[]): number {
+  const avg = average(values);
+  return Math.sqrt(average(values.map((value) => (value - avg) ** 2)));
 }
 
 function runBuilder(args: string[]): number {
@@ -101,8 +121,9 @@ function assertPlayerShape(p: Player, rostered: boolean): void {
   check(isFiniteNum(p.scoutingAccuracy), `player ${p.id}: scoutingAccuracy`);
 
   // Ratings & potential in 1..80; all finite.
-  for (const [k, v] of Object.entries(p.ratings ?? {})) {
-    check(isFiniteNum(v) && v >= 1 && v <= 80, `player ${p.id}: rating ${k}=${v} out of [1,80]`);
+  for (const k of RATING_KEYS) {
+    const v = p.ratings?.[k];
+    check(isFiniteNum(v) && Number.isInteger(v) && v >= 1 && v <= 80, `player ${p.id}: rating ${k}=${v} must be an integer in [1,80]`);
   }
   for (const [k, v] of Object.entries(p.potential ?? {})) {
     check(isFiniteNum(v) && v >= 1 && v <= 80, `player ${p.id}: potential ${k}=${v} out of [1,80]`);
@@ -177,7 +198,7 @@ function assertTeamShape(t: Team, playersById: Map<string, Player>): void {
   }
 }
 
-function runAssertions(): void {
+function runAssertions(): { players: Player[]; ownerByPlayer: Map<string, string> } {
   const teams: Team[] = JSON.parse(fs.readFileSync(TEAMS_PATH, 'utf-8'));
   const players: Player[] = JSON.parse(fs.readFileSync(PLAYERS_PATH, 'utf-8'));
 
@@ -209,6 +230,42 @@ function runAssertions(): void {
   }
 
   console.log(`Assertions: ${teams.length} teams, ${players.length} players, ${ownerByPlayer.size} rostered.`);
+  return { players, ownerByPlayer };
+}
+
+function assertS2bStatisticalContract(players: Player[], ownerByPlayer: Map<string, string>): void {
+  const rostered = players.filter((player) => ownerByPlayer.has(player.id));
+  const active: Player[] = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'players.json'), 'utf-8'));
+  for (const rating of RATING_KEYS) {
+    const values = rostered.map((player) => player.ratings[rating]);
+    const targetSd = rating === 'freeThrowShooting'
+      ? FREE_THROW_TARGET_SD
+      : standardDeviation(active.map((player) => player.ratings[rating]));
+    const meanTolerance = rating === 'freeThrowShooting' ? FREE_THROW_MEAN_TOLERANCE : RATING_MEAN_TOLERANCE;
+    check(Math.abs(average(values) - 40) <= meanTolerance,
+      `${rating}: rostered mean ${average(values).toFixed(3)} outside 40 ± ${meanTolerance}`);
+    check(Math.abs(standardDeviation(values) - targetSd) <= RATING_SD_TOLERANCE,
+      `${rating}: rostered SD ${standardDeviation(values).toFixed(3)} outside target ${targetSd.toFixed(3)} ± ${RATING_SD_TOLERANCE}`);
+  }
+
+  // Continuous FT inverse closure and the <= half-rating-step post-rounding bound.
+  // Values are inside the representable 1..80 inverse range; lower engine
+  // clamps cannot round-trip through a rating below the model's floor.
+  for (const pct of [0.55, 0.60, 0.663, 0.781, 0.842, 0.95]) {
+    const continuous = freeThrowRatingFromPct(pct);
+    check(Math.abs(freeThrowPctFromRating(continuous) - pct) < 1e-12,
+      `FT continuous inverse failed at ${pct}`);
+    const quantized = Math.max(1, Math.min(80, Math.round(continuous)));
+    check(Math.abs(freeThrowPctFromRating(quantized) - pct) <= 0.003125 + 1e-12,
+      `FT post-quantization closure exceeds half step at ${pct}`);
+  }
+
+  // The report-only local mirror must stay consciously aligned to the private engine formula.
+  const expectedModifier: Record<number, number> = { 1: -0.10307578125, 40: 0, 80: 0.10625 };
+  for (const rating of [1, 40, 80]) {
+    check(Math.abs(ratingToModifierForReport(rating) - expectedModifier[rating]) < 1e-12,
+      `ratingToModifierForReport(${rating}) no longer matches the declared engine mirror`);
+  }
 }
 
 function main(): void {
@@ -226,7 +283,8 @@ function main(): void {
   }
 
   console.log('== runtime assertions ==');
-  runAssertions();
+  const assertionData = runAssertions();
+  assertS2bStatisticalContract(assertionData.players, assertionData.ownerByPlayer);
 
   console.log('== determinism: hash -> rebuild -> hash ==');
   const h1 = ALL_FILES.map(hashFile);
