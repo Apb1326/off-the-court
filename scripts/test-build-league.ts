@@ -23,11 +23,12 @@ import {
   FREE_THROW_TARGET_SD,
   freeThrowPctFromRating,
   freeThrowRatingFromPct,
+  PERIMETER_INTERIOR_DEFENSE_R_MAX,
   RATING_KEYS,
   RATING_MEAN_TOLERANCE,
   RATING_SD_TOLERANCE,
-  ratingToModifierForReport,
 } from '../src/ratings/nba-derivation';
+import { ratingToModifier } from '../src/engine/shot';
 
 const ROOT = process.cwd();
 const BUILD_SCRIPT = path.join(ROOT, 'scripts', 'build-league.ts');
@@ -56,6 +57,17 @@ function average(values: readonly number[]): number {
 function standardDeviation(values: readonly number[]): number {
   const avg = average(values);
   return Math.sqrt(average(values.map((value) => (value - avg) ** 2)));
+}
+
+function pearson(a: readonly number[], b: readonly number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+  const ma = average(a); const mb = average(b);
+  let numerator = 0; let aa = 0; let bb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const da = a[i] - ma; const db = b[i] - mb;
+    numerator += da * db; aa += da * da; bb += db * db;
+  }
+  return aa > 0 && bb > 0 ? numerator / Math.sqrt(aa * bb) : 0;
 }
 
 function runBuilder(args: string[]): number {
@@ -260,11 +272,23 @@ function assertS2bStatisticalContract(players: Player[], ownerByPlayer: Map<stri
       `FT post-quantization closure exceeds half step at ${pct}`);
   }
 
-  // The report-only local mirror must stay consciously aligned to the private engine formula.
+  // The report consumes the engine implementation directly; these values guard
+  // the export against accidental formula drift.
   const expectedModifier: Record<number, number> = { 1: -0.10307578125, 40: 0, 80: 0.10625 };
   for (const rating of [1, 40, 80]) {
-    check(Math.abs(ratingToModifierForReport(rating) - expectedModifier[rating]) < 1e-12,
-      `ratingToModifierForReport(${rating}) no longer matches the declared engine mirror`);
+    check(Math.abs(ratingToModifier(rating) - expectedModifier[rating]) < 1e-12,
+      `ratingToModifier(${rating}) no longer matches the declared engine value`);
+  }
+
+  const defenseR = pearson(
+    rostered.map((player) => player.ratings.perimeterDefense),
+    rostered.map((player) => player.ratings.interiorDefense),
+  );
+  check(defenseR <= PERIMETER_INTERIOR_DEFENSE_R_MAX,
+    `perimeterDefense/interiorDefense r=${defenseR.toFixed(3)} exceeds ceiling ${PERIMETER_INTERIOR_DEFENSE_R_MAX}`);
+  const report = fs.readFileSync(RATINGS_CONTRACT_PATH, 'utf-8');
+  for (const field of ['strength.strength.bmi', 'strength.strength.wingspanRatio', 'athleticism.athleticism.wingspanRatio']) {
+    check(!report.includes(`| ${field} |`), `measured biometric metric ${field} appeared in shrinkage fallback log`);
   }
 }
 

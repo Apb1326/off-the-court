@@ -22,8 +22,8 @@ const CONTEST_MODIFIER: Record<ContestLevel, number> = {
   heavily_contested: -0.10,
 };
 
-function ratingToModifier(rating: number): number {
-  // Sigmoid-like curve: rating 40 (avg) -> 0, rating 80 -> +0.078, rating 1 -> -0.10.
+export function ratingToModifier(rating: number): number {
+  // Sigmoid-like curve: rating 40 (avg) -> 0, rating 80 -> +0.10625, rating 1 -> -0.1031.
   // The shooter and defender modifiers compound on every shot, so the per-side
   // swing is kept modest — otherwise an elite-vs-poor mismatch produces shot
   // probabilities far outside what real NBA efficiency gaps support, which in

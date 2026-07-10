@@ -17,6 +17,7 @@ import {
   FT_SIM_PCT_MAX,
   FT_SIM_PCT_MIN,
 } from '../engine/constants';
+import { ratingToModifier } from '../engine/shot';
 
 export const RATING_KEYS = [
   'outsideShooting', 'midrangeShooting', 'interiorScoring', 'freeThrowShooting',
@@ -38,11 +39,11 @@ export const RECENT_SEASON_WEIGHTS: Record<(typeof RECENT_SEASONS)[number], numb
 /** Full-career stamina/durability window gives each older season this decay. */
 export const FULL_WINDOW_SEASON_DECAY = 0.85;
 /** Per-rating pseudo-sample prior strength.  Higher = more small-sample pull. */
-export const SHRINKAGE_K: Record<RatingKey, number> = {
+export const SHRINKAGE_K: Partial<Record<RatingKey, number>> = {
   outsideShooting: 240, midrangeShooting: 160, interiorScoring: 200, freeThrowShooting: 40,
   ballHandling: 400, passing: 400, offensiveIQ: 400,
   perimeterDefense: 300, interiorDefense: 300, defensiveIQ: 350, steal: 350, block: 350,
-  athleticism: 900, strength: 1, rebounding: 400, stamina: 180, durability: 180,
+  athleticism: 900, rebounding: 400, stamina: 180, durability: 180,
 };
 /** Log a shrinkage application below this effective sample size. */
 export const FULL_CONFIDENCE_SAMPLE = 80;
@@ -53,6 +54,8 @@ export const RATING_SD_TOLERANCE = 1.0;
 export const FREE_THROW_TARGET_SD = 8.25;
 /** The FTA-weighted league anchor and unweighted player check population differ. */
 export const FREE_THROW_MEAN_TOLERANCE = 2.25;
+/** Weak-link defense needs distinct perimeter/interior signals, not one interchangeable rating. */
+export const PERIMETER_INTERIOR_DEFENSE_R_MAX = 0.70;
 
 export interface ZoneAggregate {
   fgm: number;
@@ -93,6 +96,7 @@ interface Metric {
   label: string;
   value: number;
   n: number;
+  exempt?: boolean;
 }
 
 interface PlayerWork {
@@ -365,7 +369,7 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
   const ft = aggregateBoxMetric(player, (row) => row.perGame.ftPct, (row) => n(row.perGame.fta) * n(row.gp));
   const astPct = aggregateBoxMetric(player, (row) => row.advanced?.astPct, (row) => row.advanced?.poss);
   const astTo = aggregateBoxMetric(player, (row) => row.advanced?.astTo, (row) => row.advanced?.poss);
-  const tov100 = aggregateBoxMetric(player, (row) => row.per100?.tov, (row) => row.advanced?.poss);
+  const tovPct = aggregateBoxMetric(player, (row) => row.advanced?.tmTovPct, (row) => row.advanced?.poss);
   const rebPct = aggregateBoxMetric(player, (row) => row.advanced?.rebPct, (row) => row.advanced?.poss);
   const stl100 = aggregateBoxMetric(player, (row) => row.per100?.stl, (row) => row.advanced?.poss);
   const blk100 = aggregateBoxMetric(player, (row) => row.per100?.blk, (row) => row.advanced?.poss);
@@ -373,9 +377,19 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
   const fullGp = aggregateFullGamesPlayed(player);
 
   const overall = player.defense?.defended.overall;
-  const defendedDelta = metric(
+  const defendedOverallDelta = metric(
     'defense.delta.source', 'defense.defended.overall.normalFgPct - dFgPct',
     n(overall?.normalFgPct) - n(overall?.dFgPct), n(overall?.dFga),
+  );
+  const defendedThree = player.defense?.defended.threePointers;
+  const defendedThreeDelta = metric(
+    'perimeter.defended3ptDelta', 'defense.defended.threePointers.normalFgPct - dFgPct',
+    n(defendedThree?.normalFgPct) - n(defendedThree?.dFgPct), n(defendedThree?.dFga),
+  );
+  const defendedLessThan6 = player.defense?.defended.lessThan6Ft;
+  const defendedLessThan6Delta = metric(
+    'interior.defendedLessThan6FtDelta', 'defense.defended.lessThan6Ft.normalFgPct - dFgPct',
+    n(defendedLessThan6?.normalFgPct) - n(defendedLessThan6?.dFgPct), n(defendedLessThan6?.dFga),
   );
   const guardMatchup = matchupRate(player.defense, 'G');
   guardMatchup.id = 'defense.guardMatchup'; guardMatchup.label = 'defense.matchupsByOppPosition[G*].matchupFgPct';
@@ -397,6 +411,8 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
   const heightMeters = n(player.heightCm) / 100;
   const bmi = heightMeters > 0 && n(player.weightKg) > 0 ? n(player.weightKg) / (heightMeters * heightMeters) : 0;
   const wingspanRatio = n(player.heightCm) > 0 ? wingspanCm / n(player.heightCm) : 0;
+  const measuredBmi = heightMeters > 0 && n(player.weightKg) > 0;
+  const measuredWingspanRatio = n(player.heightCm) > 0 && finite(player.wingspanCm) && player.wingspanCm > 0;
 
   return {
     outsideShooting: [
@@ -413,7 +429,7 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
     ],
     freeThrowShooting: [metric('ft.accuracy', 'box_advanced.perGame.ftPct', ft.value, ft.n)],
     ballHandling: [
-      metric('handling.turnovers', 'box_advanced.per100.tov (lower is better)', tov100.value, tov100.n),
+      metric('handling.turnoverRatio', 'box_advanced.advanced.tmTovPct (lower is better)', tovPct.value, tovPct.n),
       metric('handling.astTo', 'box_advanced.advanced.astTo', astTo.value, astTo.n),
       metric('handling.passesPerMin', 'tracking.passing.passesMade / min', passingMin > 0 ? passingPasses / passingMin : 0, passingMin),
     ],
@@ -424,19 +440,19 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
     ],
     offensiveIQ: [
       metric('iq.astTo', 'box_advanced.advanced.astTo', astTo.value, astTo.n),
-      metric('iq.turnovers', 'box_advanced.per100.tov (lower is better)', tov100.value, tov100.n),
+      metric('iq.turnoverRatio', 'box_advanced.advanced.tmTovPct (lower is better)', tovPct.value, tovPct.n),
       metric('iq.secondaryAstPerPass', 'tracking.passing.secondaryAst / passesMade', passingPasses > 0 ? passingSecondaries / passingPasses : 0, passingPasses),
     ],
     perimeterDefense: [
-      { ...defendedDelta, id: 'perimeter.defendedDelta' },
+      defendedThreeDelta,
       guardMatchup,
     ],
     interiorDefense: [
-      { ...defendedDelta, id: 'interior.defendedDelta' },
+      defendedLessThan6Delta,
       centerMatchup,
     ],
     defensiveIQ: [
-      { ...defendedDelta, id: 'defIQ.defendedDelta' },
+      { ...defendedOverallDelta, id: 'defIQ.defendedDelta' },
       allMatchup,
       metric('defense.deflectionsPerMin', 'hustle.deflections / min', hustleMin > 0 ? deflections / hustleMin : 0, hustleMin),
     ],
@@ -445,11 +461,11 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
     athleticism: [
       metric('athleticism.speed', 'tracking.speedDistance.avgSpeed', speed, speedMin),
       metric('athleticism.distancePerMin', 'tracking.speedDistance.distFeet / min', speedMin > 0 ? distFeet / speedMin : 0, speedMin),
-      metric('athleticism.wingspanRatio', 'NbaPlayerRow.wingspanCm / heightCm', wingspanRatio, 1),
+      { ...metric('athleticism.wingspanRatio', 'NbaPlayerRow.wingspanCm / heightCm', wingspanRatio, measuredWingspanRatio ? 1 : 0), exempt: measuredWingspanRatio },
     ],
     strength: [
-      metric('strength.bmi', 'NbaPlayerRow.weightKg / heightCm squared', bmi, bmi > 0 ? 1 : 0),
-      metric('strength.wingspanRatio', 'NbaPlayerRow.wingspanCm / heightCm', wingspanRatio, wingspanRatio > 0 ? 1 : 0),
+      { ...metric('strength.bmi', 'NbaPlayerRow.weightKg / heightCm squared', bmi, measuredBmi ? 1 : 0), exempt: measuredBmi },
+      { ...metric('strength.wingspanRatio', 'NbaPlayerRow.wingspanCm / heightCm', wingspanRatio, measuredWingspanRatio ? 1 : 0), exempt: measuredWingspanRatio },
     ],
     rebounding: [
       metric('rebounding.rebPct', 'box_advanced.advanced.rebPct', rebPct.value, rebPct.n),
@@ -457,11 +473,9 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
     ],
     stamina: [
       metric('stamina.mpg', 'box_advanced.mpg full-window recency-weighted', fullMpg.value, fullMpg.n),
-      metric('stamina.gp', 'box_advanced.gp full-window recency-weighted', fullGp.value, fullGp.n),
     ],
     durability: [
       metric('durability.gp', 'box_advanced.gp full-window recency-weighted', fullGp.value, fullGp.n),
-      metric('durability.mpg', 'box_advanced.mpg full-window recency-weighted', fullMpg.value, fullMpg.n),
     ],
   };
 }
@@ -531,13 +545,6 @@ function pearson(a: readonly number[], b: readonly number[]): number {
   return aa > EPSILON && bb > EPSILON ? numerator / Math.sqrt(aa * bb) : 0;
 }
 
-export function ratingToModifierForReport(rating: number): number {
-  // Intentional local mirror of src/engine/shot.ts's private ratingToModifier.
-  // It exists solely for this candidate-report histogram; engine code never imports it.
-  const centered = (rating - 40) / 40;
-  return centered * 0.085 * (1 + 0.25 * Math.abs(centered));
-}
-
 export function freeThrowPctFromRating(rating: number): number {
   return clamp(FT_LEAGUE_AVG_PCT + ((rating - 40) / 40) * FT_PCT_SLOPE, FT_SIM_PCT_MIN, FT_SIM_PCT_MAX);
 }
@@ -554,16 +561,16 @@ function blendScore(rating: RatingKey, standardized: (id: string) => number): nu
     case 'ballHandling': return -0.55 * standardized('handling.turnovers') + 0.25 * standardized('handling.astTo') + 0.20 * standardized('handling.passesPerMin');
     case 'passing': return 0.55 * standardized('passing.astPct') + 0.30 * standardized('passing.adjustedAstPerPass') + 0.15 * standardized('passing.passesPerMin');
     case 'offensiveIQ': return 0.45 * standardized('iq.astTo') - 0.35 * standardized('iq.turnovers') + 0.20 * standardized('iq.secondaryAstPerPass');
-    case 'perimeterDefense': return 0.70 * standardized('perimeter.defendedDelta') - 0.30 * standardized('defense.guardMatchup');
-    case 'interiorDefense': return 0.70 * standardized('interior.defendedDelta') - 0.30 * standardized('defense.centerMatchup');
+    case 'perimeterDefense': return 0.70 * standardized('perimeter.defended3ptDelta') - 0.30 * standardized('defense.guardMatchup');
+    case 'interiorDefense': return 0.70 * standardized('interior.defendedLessThan6FtDelta') - 0.30 * standardized('defense.centerMatchup');
     case 'defensiveIQ': return 0.60 * standardized('defIQ.defendedDelta') - 0.20 * standardized('defense.allMatchup') + 0.20 * standardized('defense.deflectionsPerMin');
     case 'steal': return standardized('steal.per100');
     case 'block': return standardized('block.per100');
     case 'athleticism': return 0.60 * standardized('athleticism.speed') + 0.25 * standardized('athleticism.distancePerMin') + 0.15 * standardized('athleticism.wingspanRatio');
     case 'strength': return 0.75 * standardized('strength.bmi') + 0.25 * standardized('strength.wingspanRatio');
     case 'rebounding': return 0.80 * standardized('rebounding.rebPct') + 0.20 * standardized('rebounding.boxOutsPerMin');
-    case 'stamina': return 0.70 * standardized('stamina.mpg') + 0.30 * standardized('stamina.gp');
-    case 'durability': return 0.75 * standardized('durability.gp') + 0.25 * standardized('durability.mpg');
+    case 'stamina': return standardized('stamina.mpg');
+    case 'durability': return standardized('durability.gp');
     case 'freeThrowShooting': return standardized('ft.accuracy');
   }
 }
@@ -618,13 +625,25 @@ export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult
       for (const item of player.metrics[rating]) {
         const isFreeThrow = item.id === 'ft.accuracy';
         const prior = isFreeThrow ? leagueFtPrior : (priors.get(item.id)?.get(player.input.position) ?? 0);
-        const weight = item.n / (item.n + SHRINKAGE_K[rating]);
+        if (item.exempt) {
+          player.shrunk.set(item.id, item.value);
+          continue;
+        }
+        const k = SHRINKAGE_K[rating];
+        if (item.n > 0 && k === undefined) throw new Error(`S2b metric ${item.id} has no shrinkage k for ${rating}`);
+        const weight = item.n > 0 && k !== undefined ? item.n / (item.n + k) : 0;
         player.shrunk.set(item.id, weight * item.value + (1 - weight) * prior);
         if (item.n < FULL_CONFIDENCE_SAMPLE) {
+          const isBiometric = item.id === 'strength.bmi'
+            || item.id === 'strength.wingspanRatio'
+            || item.id === 'athleticism.wingspanRatio';
+          if (isBiometric && item.id !== 'strength.bmi') continue;
           fallbackLog.push({
             playerId: player.input.id,
-            field: `${rating}.${item.id}`,
-            reason: `${item.label}: n=${item.n.toFixed(1)} < ${FULL_CONFIDENCE_SAMPLE}; ${isFreeThrow ? 'league FTA-weighted' : 'position'} prior weight ${(1 - weight).toFixed(3)}`,
+            field: isBiometric ? 'strength.bmi.missingMeasurement' : `${rating}.${item.id}`,
+            reason: isBiometric
+              ? `${item.label}: n=0 substitution; position prior used because height/weight measurement is unavailable`
+              : `${item.label}: n=${item.n.toFixed(1)} < ${FULL_CONFIDENCE_SAMPLE}; ${isFreeThrow ? 'league FTA-weighted' : 'position'} prior weight ${(1 - weight).toFixed(3)}`,
           });
         }
       }
@@ -707,7 +726,7 @@ export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult
 }
 
 function matrixLines(title: string, players: readonly { values: Record<RatingKey, number> }[]): string[] {
-  const headers = RATING_KEYS.map((key) => key.replace(/([A-Z])/g, '$1').slice(0, 8).padEnd(8)).join(' ');
+  const headers = RATING_KEYS.map((key) => key.slice(0, 8).padEnd(8)).join(' ');
   const lines = [`### ${title}`, '', '```text', `         ${headers}`];
   for (const row of RATING_KEYS) {
     const values = RATING_KEYS.map((column) => pearson(
@@ -752,19 +771,19 @@ const RATING_DOCUMENTATION: Record<RatingKey, string> = {
   midrangeShooting: 'shot_zones paint-non-RA plus shot_events <14-ft / >=14-ft midrange efficiency (85%) + attempt volume (15%); three-season recency window; k=160; percentile-to-truncated-normal.',
   interiorScoring: 'shot_zones rim plus Stage-1 short-mid efficiency (85%) + attempt volume (15%); three-season recency window; k=200; percentile-to-truncated-normal.',
   freeThrowShooting: 'box_advanced ftPct, FTA-weighted three-season shrinkage; k=40; exact FT inverse then integer quantization (no percentile map).',
-  ballHandling: 'per100 turnover burden (negative 55%), AST/TO (25%), tracking passes/min (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
+  ballHandling: 'usage-normalized tmTovPct turnover ratio (negative 55%), AST/TO (25%), tracking passes/min (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
   passing: 'AST% (55%), tracking adjusted assists/pass (30%), passes/min (15%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
-  offensiveIQ: 'AST/TO (45%), per100 turnover burden negative (35%), secondary assists/pass (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
-  perimeterDefense: 'defended overall expected-minus-allowed FG% (70%) plus guard matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
-  interiorDefense: 'defended overall expected-minus-allowed FG% (70%) plus center matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
+  offensiveIQ: 'AST/TO (45%), usage-normalized tmTovPct turnover ratio negative (35%), secondary assists/pass (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
+  perimeterDefense: 'defended three-pointers expected-minus-allowed FG% (70%) plus guard matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
+  interiorDefense: 'defended less-than-6-ft expected-minus-allowed FG% (70%) plus center matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
   defensiveIQ: 'defended FG delta (60%), all-matchup FG% negative (20%), deflections/min (20%); 2025-26 defense/hustle; k=350; percentile-to-truncated-normal.',
   steal: 'box_advanced per100 steals, possession-weighted three-season rate; k=350; percentile-to-truncated-normal.',
   block: 'box_advanced per100 blocks, possession-weighted three-season rate; k=350; percentile-to-truncated-normal.',
-  athleticism: 'tracking average speed (60%), distance/min (25%), wingspan/height (15%); 2025-26 tracking and deterministic wingspan fallback; k=900; percentile-to-truncated-normal.',
-  strength: 'BMI (75%) plus wingspan/height (25%); 2025-26 biometrics and deterministic wingspan fallback; k=1; percentile-to-truncated-normal.',
+  athleticism: 'tracking average speed (60%), distance/min (25%), measured wingspan/height (15%); 2025-26 tracking and deterministic wingspan fallback; measured biometrics bypass shrinkage; k=900 for non-biometric inputs; percentile-to-truncated-normal. avgSpeed measures movement volume/speed in role, not athletic ceiling; accepted for S2b because no better harvested source exists.',
+  strength: 'measured BMI (75%) plus measured wingspan/height (25%); 2025-26 biometrics and deterministic wingspan fallback; measured biometrics bypass shrinkage; missing measurements use position priors; percentile-to-truncated-normal.',
   rebounding: 'reb% (80%) plus hustle box-outs/min (20%); three-season box + 2025-26 hustle; k=400; percentile-to-truncated-normal.',
-  stamina: 'full-window recency-weighted mpg (70%) + games played (30%), season decay 0.85; k=180; percentile-to-truncated-normal.',
-  durability: 'full-window recency-weighted games played (75%) + mpg (25%), season decay 0.85; k=180; percentile-to-truncated-normal.',
+  stamina: 'full-window recency-weighted mpg only, season decay 0.85; k=180; percentile-to-truncated-normal.',
+  durability: 'full-window recency-weighted games played only, season decay 0.85; k=180; percentile-to-truncated-normal. Known limitation: DNP-CD and role conflation remains; F4/Horizon owns future availability modeling.',
 };
 
 export function renderRatingsContract(input: NbaDerivationInput, result: NbaDerivationResult): string {
@@ -776,7 +795,7 @@ export function renderRatingsContract(input: NbaDerivationInput, result: NbaDeri
   const out: string[] = [];
   out.push('# S2b — NBA Ratings Statistical Contract');
   out.push('', '> Generated by `scripts/build-league.ts` (`npm run build-league`). Regenerate; never hand-edit.', '> `--check` byte-compares this file against a fresh derivation.', '');
-  out.push('## Provenance', '', '- Normalized schema version: **3**', `- Recent windows: **${RECENT_SEASONS.join(', ')}** with weights **0.55 / 0.30 / 0.15** (newest first).`, `- Full-window stamina/durability seasonal decay: **${FULL_WINDOW_SEASON_DECAY}**.`, `- Eligible percentile population: **${players.length}**; rostered check population: **${rostered.length}**.`, '- Percentile ties: ascending `personId`.', `- Shrinkage: position-conditional rostered prior; weight = n / (n + k); FT explicitly uses the rostered league FTA-weighted prior; full-confidence log threshold n=${FULL_CONFIDENCE_SAMPLE}.`, `- FT inverse: rating = 40 + (pct - ${FT_LEAGUE_AVG_PCT}) × ${FT_DERIVE_SCALE}; engine clamps ${FT_SIM_PCT_MIN}..${FT_SIM_PCT_MAX}.`, '');
+  out.push('## Provenance', '', '- Normalized schema version: **3**', `- Recent windows: **${RECENT_SEASONS.join(', ')}** with weights **0.55 / 0.30 / 0.15** (newest first).`, `- Full-window stamina/durability seasonal decay: **${FULL_WINDOW_SEASON_DECAY}**.`, `- Eligible percentile population: **${players.length}**; rostered check population: **${rostered.length}**.`, '- Percentile ties: ascending `personId`.', `- Shrinkage: position-conditional rostered prior; weight = n / (n + k); measured biometric metrics bypass shrinkage; FT explicitly uses the rostered league FTA-weighted prior; full-confidence log threshold n=${FULL_CONFIDENCE_SAMPLE}.`, `- FT inverse: rating = 40 + (pct - ${FT_LEAGUE_AVG_PCT}) × ${FT_DERIVE_SCALE}; engine clamps ${FT_SIM_PCT_MIN}..${FT_SIM_PCT_MAX}.`, '- Tail policy: retain the percentile-to-truncated-normal map with no discrete top-end target. Its compressed star separation versus the heuristic pool is an explicit S2b decision; S2d owns behavioral evaluation of profile bands and team-strength spread and whether a fatter-tailed remap is needed.', '- Non-FT target SDs remain active-pool compatibility priors to keep modifier spread unchanged through activation, not empirical truth; the existing floor is Math.max(4, active-pool SD). There is no deliberate deviation for S2d to absorb beyond the mapping itself.', '');
   out.push('## Per-rating derivation policy', '', '| Rating | Inputs, formula, window, shrinkage, mapping |', '| --- | --- |');
   for (const rating of RATING_KEYS) out.push(`| ${rating} | ${RATING_DOCUMENTATION[rating]} |`);
   out.push('', '## Center, spread, and tails', '', '| Rating | Derived mean | Target SD | Derived SD | p1 | p99 | Derived 75+ | Current 75+ |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
@@ -796,11 +815,16 @@ export function renderRatingsContract(input: NbaDerivationInput, result: NbaDeri
   out.push('', '### Largest correlation deltas', '', '| Comparison | Rating pair | Left r | Right r | Absolute delta |', '| --- | --- | ---: | ---: | ---: |');
   for (const delta of correlationDeltas(derived, raw)) out.push(`| derived vs raw | ${delta.pair} | ${delta.left.toFixed(2)} | ${delta.right.toFixed(2)} | ${delta.delta.toFixed(2)} |`);
   for (const delta of correlationDeltas(derived, current)) out.push(`| derived vs current | ${delta.pair} | ${delta.left.toFixed(2)} | ${delta.right.toFixed(2)} | ${delta.delta.toFixed(2)} |`);
-  out.push('', 'Derived-vs-raw deltas are attributable to discrete 1–80 quantization, the FT inverse exception, and target-spread normalization after the monotone rank map. Derived-vs-current deltas are expected and intentional: the current pool is position-heuristic output, while this candidate uses sampled NBA metrics. No engine behavior is asserted here; S2d owns the activated-pool behavioral backstop.');
-  out.push('', '## Modifier histograms', '', 'Fixed bins use the local documented mirror of the private engine modifier formula. Counts compare the rostered candidate to the active pool.', '');
+  const defenseCorrelation = pearson(
+    rostered.map((player) => result.ratingsByPerson.get(player.personId)!.perimeterDefense),
+    rostered.map((player) => result.ratingsByPerson.get(player.personId)!.interiorDefense),
+  );
+  out.push('', `- Enforced defense split check: Pearson r(perimeterDefense, interiorDefense) = **${defenseCorrelation.toFixed(3)}**, ceiling **${PERIMETER_INTERIOR_DEFENSE_R_MAX.toFixed(2)}**.`, '');
+  out.push('Derived-vs-raw deltas are attributable to discrete 1–80 quantization, the FT inverse exception, and target-spread normalization after the monotone rank map. Derived-vs-current deltas are expected and intentional: the current pool is position-heuristic output, while this candidate uses sampled NBA metrics. No engine behavior is asserted here; S2d owns the activated-pool behavioral backstop.');
+  out.push('', '## Modifier histograms', '', 'Fixed bins use the exported engine modifier formula. Counts compare the rostered candidate to the active pool.', '');
   for (const rating of RATING_KEYS) {
-    const candidateCounts = histogram(rostered.map((player) => ratingToModifierForReport(result.ratingsByPerson.get(player.personId)![rating])));
-    const activeCounts = histogram(input.activeRatings.map((player) => ratingToModifierForReport(player[rating])));
+    const candidateCounts = histogram(rostered.map((player) => ratingToModifier(result.ratingsByPerson.get(player.personId)![rating])));
+    const activeCounts = histogram(input.activeRatings.map((player) => ratingToModifier(player[rating])));
     out.push(`### ${rating}`, '', '```text', 'bin              candidate  current');
     const labels = ['< -0.11', '-0.11..-0.08', '-0.08..-0.05', '-0.05..-0.02', '-0.02..0.01', '0.01..0.04', '0.04..0.07', '0.07..0.10', '>= 0.10'];
     for (let i = 0; i < labels.length; i++) out.push(`${labels[i].padEnd(15)} ${String(candidateCounts[i]).padStart(9)} ${String(activeCounts[i]).padStart(8)}`);
