@@ -1,10 +1,11 @@
-import { Player } from '@/models/player';
+import { Player, Position } from '@/models/player';
 import { Team } from '@/models/team';
-import { Game, GameResult, BoxScore, PlayByPlayEvent, ShotZone } from '@/models/game';
+import { Game, GameResult, BoxScore, PlayByPlayEvent, ShotZone, PlayType } from '@/models/game';
 import { SeededRNG } from '@/lib/rng';
 import { ClockState, initClock, isEndOfPeriod, nextPeriod, isRegulationOver, resetShotClock } from './clock';
 import { accumulateFatigue, recoverFatigue } from './fatigue';
 import { GameState, simulatePossession } from './possession';
+import { LegacyPlayTypeSelectionFactor, PlayTypeSelectionConfig, LEGACY_PLAY_TYPE_SELECTION } from './play-types';
 import { checkSubstitutions, findBestReplacement } from './substitution';
 import { StatsAccumulator } from './stats-accumulator';
 import { POINTS_BY_ZONE } from './constants';
@@ -31,6 +32,24 @@ export interface GameDiagObserver {
   onDeadBall?: (quarter: number, gameClock: number, margin: number, starterOutSubs: number) => void;
   /** Chain provenance for every resolved shot (see GameState.diagShot). */
   onShot?: NonNullable<GameState['diagShot']>;
+  /** Initial play-type decision, before the shot-clock and primary-player stages. */
+  onInitialSelection?: (info: {
+    initialPlayType: PlayType;
+    ballHandlerId: string;
+    isTransitionOpportunity: boolean;
+    previousPossessionWasTurnover: boolean;
+    previousPossessionWasLongRebound: boolean;
+    transitionChance: number;
+    breakdown: ReadonlyArray<LegacyPlayTypeSelectionFactor>;
+  }) => void;
+  /** Primary actor after selectPrimaryPlayer, before any chain transformation. */
+  onPrimarySelection?: (info: {
+    initialPlayType: PlayType;
+    primaryPlayerId: string;
+    primaryPosition: Position;
+  }) => void;
+  /** Every emitted event, including non-terminal fouls for denominator auditing. */
+  onEvent?: (event: Readonly<PlayByPlayEvent>) => void;
 }
 
 export interface SimulationResult {
@@ -56,6 +75,8 @@ export function simulateGame(
   inGameExits: Map<string, number> = new Map(),
   // Optional read-only diagnostic observer — see GameDiagObserver above.
   diag?: GameDiagObserver,
+  // Candidate-only S2c1-R selector. Omitted callers retain the legacy path.
+  playTypeSelection: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
 ): SimulationResult {
   const rng = new SeededRNG(seed);
   const stats = new StatsAccumulator();
@@ -142,6 +163,9 @@ export function simulateGame(
     homeMomentum: 0,
     awayMomentum: 0,
     diagShot: diag?.onShot,
+    diagInitialSelection: diag?.onInitialSelection,
+    diagPrimarySelection: diag?.onPrimarySelection,
+    playTypeSelection,
   };
 
   let totalGameSeconds = 0;
@@ -190,6 +214,7 @@ export function simulateGame(
     if (lastEvent) {
       updateMomentum(gameState, isHome, lastEvent);
       recordEventStats(stats, lastEvent);
+      diag?.onEvent?.(lastEvent);
       // Mirror the foul into the live foul map so checkSubstitutions can foul a
       // player out. Box-score fouls are still derived from the event stream in
       // recordEventStats above; this is the in-game state, not a second stats

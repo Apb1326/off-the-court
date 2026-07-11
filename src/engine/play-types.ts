@@ -10,6 +10,11 @@ import {
   SPACING_RIM_DETER_RELIEF_COEF,
   VERSATILITY_HUNT_COEF,
   PRIMARY_PLAYER_MIN_WEIGHT,
+  CANDIDATE_TRANSITION_ELIGIBLE_RATE,
+  CANDIDATE_SELECTOR_MIN_WEIGHT,
+  CANDIDATE_SYSTEM_MODIFIER_STRENGTH,
+  CANDIDATE_POSITION_MODIFIER_STRENGTH,
+  CANDIDATE_SITUATION_MODIFIER_STRENGTH,
 } from './constants';
 import { computeVersatility } from './spacing';
 
@@ -21,10 +26,99 @@ const POSITION_PLAY_WEIGHTS: Record<Position, Partial<Record<PlayType, number>>>
   C: { post_up: 1.5, pick_and_roll: 1.2, cut: 1.0, putback: 2.0, spot_up: 0.5 },
 };
 
-interface GameSituation {
+export interface LegacyPlayTypeSelectionFactor {
+  playType: PlayType;
+  systemFactor: number;
+  tendency: number;
+  tendencyFactor: number;
+  positionFactor: number;
+  situationFactor: number;
+  finalWeight: number;
+}
+
+/** Read-only decomposition of the legacy selector, used by S2c1 diagnostics. */
+export function explainLegacyPlayTypeSelection(
+  ballHandler: Player,
+  system: OffensiveSystem,
+  situation: GameSituation,
+): LegacyPlayTypeSelectionFactor[] {
+  const playTypes: PlayType[] = [
+    'isolation', 'pick_and_roll', 'post_up', 'spot_up',
+    'cut', 'off_screen', 'handoff',
+  ];
+
+  return playTypes.map((pt) => {
+    let systemFactor = 1.0;
+    switch (pt) {
+      case 'isolation': systemFactor = 0.6 + system.isolationEmphasis * 0.8; break;
+      case 'pick_and_roll': systemFactor = 0.8 + system.screeningEmphasis * 0.6; break;
+      case 'post_up': systemFactor = 0.4 + system.postPlayEmphasis * 1.0; break;
+      case 'spot_up': systemFactor = 0.8 + system.threePointEmphasis * 0.6; break;
+      case 'cut': systemFactor = 0.6 + system.screeningEmphasis * 0.4; break;
+      case 'off_screen': systemFactor = 0.5 + system.threePointEmphasis * 0.5; break;
+      case 'handoff': systemFactor = 0.5 + system.screeningEmphasis * 0.3; break;
+    }
+    const tendency = getPlayerTendencyForPlay(ballHandler, pt);
+    const tendencyFactor = 0.5 + tendency * 2.0;
+    const positionFactor = POSITION_PLAY_WEIGHTS[ballHandler.position]?.[pt] ?? 0.8;
+    let situationFactor = 1.0;
+    if (situation.quarter >= 4 && Math.abs(situation.scoreDiff) <= 5 && situation.gameClock < 120) {
+      if (pt === 'isolation') situationFactor *= 1.5;
+      if (pt === 'pick_and_roll') situationFactor *= 1.2;
+    }
+    if (situation.scoreDiff < -15 && (pt === 'spot_up' || pt === 'off_screen')) {
+      situationFactor *= 1.4;
+    }
+    return {
+      playType: pt,
+      systemFactor,
+      tendency,
+      tendencyFactor,
+      positionFactor,
+      situationFactor,
+      finalWeight: Math.max(0.01, systemFactor * tendencyFactor * positionFactor * situationFactor),
+    };
+  });
+}
+
+export interface GameSituation {
   scoreDiff: number; // positive = offense winning
   gameClock: number;
   quarter: number;
+}
+
+export type PlayTypeSelectionMode = 'legacy' | 'candidate';
+export interface PlayTypeSelectionConfig {
+  readonly mode: PlayTypeSelectionMode;
+}
+
+export const LEGACY_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'legacy' });
+export const CANDIDATE_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'candidate' });
+
+/** Candidate-only decomposition: derived tendency is the base share, with
+ * bounded system, position, and situation modifiers around it. */
+export function explainCandidatePlayTypeSelection(
+  onCourtPlayers: Player[],
+  system: OffensiveSystem,
+  situation: GameSituation,
+): LegacyPlayTypeSelectionFactor[] {
+  const legacyFactors = explainLegacyPlayTypeSelection(onCourtPlayers[0], system, situation);
+  return legacyFactors.map((legacy) => {
+    const tendency = weightedCandidateTendency(onCourtPlayers, legacy.playType);
+    const positionFactor = weightedPositionFactor(onCourtPlayers, legacy.playType);
+    const systemModifier = 1 + CANDIDATE_SYSTEM_MODIFIER_STRENGTH * (legacy.systemFactor - 1);
+    const positionModifier = 1 + CANDIDATE_POSITION_MODIFIER_STRENGTH * (positionFactor - 1);
+    const situationModifier = 1 + CANDIDATE_SITUATION_MODIFIER_STRENGTH * (legacy.situationFactor - 1);
+    return {
+      playType: legacy.playType,
+      systemFactor: systemModifier,
+      tendency,
+      tendencyFactor: tendency,
+      positionFactor: positionModifier,
+      situationFactor: situationModifier,
+      finalWeight: Math.max(CANDIDATE_SELECTOR_MIN_WEIGHT, tendency * systemModifier * positionModifier * situationModifier),
+    };
+  });
 }
 
 export function selectPlayType(
@@ -33,6 +127,8 @@ export function selectPlayType(
   situation: GameSituation,
   isTransitionOpportunity: boolean,
   rng: SeededRNG,
+  config: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
+  onCourtPlayers: Player[] = [ballHandler],
 ): PlayType {
   if (isTransitionOpportunity) {
     return 'transition';
@@ -42,6 +138,20 @@ export function selectPlayType(
     'isolation', 'pick_and_roll', 'post_up', 'spot_up',
     'cut', 'off_screen', 'handoff',
   ];
+
+  if (config.mode === 'candidate') {
+    const legacyFactors = explainLegacyPlayTypeSelection(ballHandler, system, situation);
+    const weights = playTypes.map((pt) => {
+      const legacy = legacyFactors.find((row) => row.playType === pt)!;
+      const tendency = Math.max(CANDIDATE_SELECTOR_MIN_WEIGHT, weightedCandidateTendency(onCourtPlayers, pt));
+      const positionFactor = weightedPositionFactor(onCourtPlayers, pt);
+      const systemModifier = 1 + CANDIDATE_SYSTEM_MODIFIER_STRENGTH * (legacy.systemFactor - 1);
+      const positionModifier = 1 + CANDIDATE_POSITION_MODIFIER_STRENGTH * (positionFactor - 1);
+      const situationModifier = 1 + CANDIDATE_SITUATION_MODIFIER_STRENGTH * (legacy.situationFactor - 1);
+      return tendency * systemModifier * positionModifier * situationModifier;
+    });
+    return rng.weightedChoice(playTypes, weights);
+  }
 
   const weights = playTypes.map((pt) => {
     let w = 1.0;
@@ -82,7 +192,30 @@ export function selectPlayType(
   return rng.weightedChoice(playTypes, weights);
 }
 
-function getPlayerTendencyForPlay(player: Player, playType: PlayType): number {
+function weightedCandidateTendency(players: Player[], playType: PlayType): number {
+  const totalUsage = players.reduce((sum, player) => sum + player.tendencies.usageRate, 0);
+  return players.reduce((sum, player) => sum + getCandidateTendencyForPlay(player, playType) * player.tendencies.usageRate, 0)
+    / Math.max(CANDIDATE_SELECTOR_MIN_WEIGHT, totalUsage);
+}
+
+function weightedPositionFactor(players: Player[], playType: PlayType): number {
+  const totalUsage = players.reduce((sum, player) => sum + player.tendencies.usageRate, 0);
+  return players.reduce((sum, player) => {
+    const factor = POSITION_PLAY_WEIGHTS[player.position]?.[playType] ?? 0.8;
+    return sum + factor * player.tendencies.usageRate;
+  }, 0) / Math.max(CANDIDATE_SELECTOR_MIN_WEIGHT, totalUsage);
+}
+
+function getCandidateTendencyForPlay(player: Player, playType: PlayType): number {
+  if (playType === 'pick_and_roll') {
+    // Synergy exposes the same PnR possession through the ball-handler and
+    // roll-man role rows. Their sum is the player's mapped PnR share.
+    return player.tendencies.pickAndRollBallHandlerFreq + player.tendencies.pickAndRollScreenerFreq;
+  }
+  return getPlayerTendencyForPlay(player, playType);
+}
+
+export function getPlayerTendencyForPlay(player: Player, playType: PlayType): number {
   switch (playType) {
     case 'isolation': return player.tendencies.isolationFreq;
     case 'pick_and_roll': return player.tendencies.pickAndRollBallHandlerFreq;
@@ -244,11 +377,27 @@ export function checkTransitionOpportunity(
   previousPossessionWasTurnover: boolean,
   previousPossessionWasLongRebound: boolean,
   rng: SeededRNG,
+  config: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
 ): boolean {
   if (!previousPossessionWasTurnover && !previousPossessionWasLongRebound) {
     return false;
   }
+  if (config.mode === 'candidate') {
+    return rng.nextBool(getCandidateTransitionOpportunityChance(offensivePlayers));
+  }
+  return rng.nextBool(getLegacyTransitionOpportunityChance(offensivePlayers));
+}
+
+export function getCandidateTransitionOpportunityChance(offensivePlayers: Player[]): number {
+  const totalUsage = offensivePlayers.reduce((sum, player) => sum + player.tendencies.usageRate, 0);
+  const transitionTendency = offensivePlayers.reduce(
+    (sum, player) => sum + player.tendencies.transitionFreq * player.tendencies.usageRate,
+    0,
+  ) / Math.max(CANDIDATE_SELECTOR_MIN_WEIGHT, totalUsage);
+  return Math.max(0, Math.min(1, transitionTendency / CANDIDATE_TRANSITION_ELIGIBLE_RATE));
+}
+
+export function getLegacyTransitionOpportunityChance(offensivePlayers: Player[]): number {
   const avgAthleticism = offensivePlayers.reduce((sum, p) => sum + p.ratings.athleticism, 0) / offensivePlayers.length;
-  const transitionChance = 0.15 + (avgAthleticism / 80) * 0.25;
-  return rng.nextBool(transitionChance);
+  return 0.15 + (avgAthleticism / 80) * 0.25;
 }

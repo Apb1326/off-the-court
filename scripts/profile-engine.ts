@@ -25,6 +25,7 @@ import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
+import { CANDIDATE_PLAY_TYPE_SELECTION } from '../src/engine/play-types';
 import { generateSchedule } from '../src/engine/schedule';
 import { selectLatestCareerStats } from '../src/ratings/derivation';
 import { loadLeaguePool } from './league-pool';
@@ -222,7 +223,10 @@ async function main() {
     if (homePlayers.length < 5 || awayPlayers.length < 5) continue;
 
     const gameSeed = rng.nextInt(1, 2_000_000_000);
-    const sim = simulateGame(home, away, homePlayers, awayPlayers, sg.id, 'profile', `day-${sg.day}`, gameSeed);
+    const sim = simulateGame(
+      home, away, homePlayers, awayPlayers, sg.id, 'profile', `day-${sg.day}`, gameSeed,
+      new Map(), undefined, pool.alternate ? CANDIDATE_PLAY_TYPE_SELECTION : undefined,
+    );
     gamesPlayed++;
 
     for (const side of [sim.boxScore.homeTeam, sim.boxScore.awayTeam]) {

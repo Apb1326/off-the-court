@@ -31,6 +31,12 @@ The derivation layer must honor the same 40-centered convention. The
 `engine/constants.ts` form the free-throw derivation/resolution inverse pair;
 change them together so real percentage → rating → sim percentage still round-trips.
 
+**Candidate selector guard (S2c1-R).** The legacy/default play-type selector and
+emitted finisher labels remain the active runtime behavior until S2d. The
+explicit candidate selection configuration is evaluation-only and must be
+threaded from the alternate-pool profiling seam; do not infer it from data
+paths, player IDs, or environment state, and do not activate it globally early.
+
 **Shot math is additive and clamped.** `resolveShot` sums base zone % plus shooter, defender, fatigue, play-type, contest, form, double-team, momentum, advantage, and rush terms, then clamps to `[0.05, 0.95]`. Keep new modifiers additive and inside the clamp — no multiplicative terms that escape the bounds.
 
 **Determinism.** Any new variation must draw from `SeededRNG` and consume randomness in a stable order. A branch that sometimes draws and sometimes doesn't will desync the stream. `spacing.ts` and the versatility math are deliberately pure arithmetic (no RNG) so they don't perturb it — keep them that way. Verify with `tsx scripts/test-determinism.ts`.

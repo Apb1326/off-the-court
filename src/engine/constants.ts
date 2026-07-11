@@ -439,6 +439,21 @@ export const MAX_EXTRA_PASSES = 2;
 // posWeight * skillFit combinations. Must be > 0 to keep weightedChoice sane.
 export const PRIMARY_PLAYER_MIN_WEIGHT = 0.01;
 
+// S2c1-R candidate-only selector knobs. The legacy selector remains unchanged
+// until S2d. Candidate transitionFreq is an unconditional possession share;
+// this denominator converts it to a probability conditional on the existing
+// turnover/long-rebound transition precursor gate (measured at ~40% in the
+// S2c1 diagnosis). Re-measure if that upstream gate changes.
+export const CANDIDATE_TRANSITION_ELIGIBLE_RATE = 0.40;
+// A tiny finite floor keeps malformed-but-valid zero-frequency vectors safe for
+// weightedChoice without creating meaningful mass in a category with no signal.
+export const CANDIDATE_SELECTOR_MIN_WEIGHT = 0.0001;
+// Candidate system/position/situation effects remain centered modifiers around
+// the derived tendency rather than replacing it. These are bounded in [0, 1].
+export const CANDIDATE_SYSTEM_MODIFIER_STRENGTH = 0.25;
+export const CANDIDATE_POSITION_MODIFIER_STRENGTH = 0.25;
+export const CANDIDATE_SITUATION_MODIFIER_STRENGTH = 0.25;
+
 // Base probability the ball moves to a teammate after an action of this type,
 // i.e. how much this action tends to generate a pass-to-a-finisher rather than a
 // self-created shot. Seeded from realistic assisted-make rates; the league
