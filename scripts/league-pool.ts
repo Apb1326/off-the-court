@@ -23,17 +23,25 @@ function parseLeagueDir(argv: readonly string[]): string | undefined {
 function validatePool(teams: Team[], players: Player[], directory: string): void {
   if (!Array.isArray(teams) || teams.length !== 30) throw new Error(`Invalid league directory ${directory}: teams.json must contain exactly 30 teams`);
   if (!Array.isArray(players)) throw new Error(`Invalid league directory ${directory}: players.json must contain an array`);
-  const ids = new Set(players.map((player) => player?.id).filter((id): id is string => typeof id === 'string'));
+  const byId = new Map(players.map((player) => [player?.id, player]).filter((entry): entry is [string, Player] => typeof entry[0] === 'string'));
+  const ids = new Set(byId.keys());
   if (ids.size !== players.length) throw new Error(`Invalid league directory ${directory}: players.json has duplicate or missing player ids`);
   const teamIds = new Set(teams.map((team) => team?.id).filter((id): id is string => typeof id === 'string'));
   if (teamIds.size !== 30) throw new Error(`Invalid league directory ${directory}: teams.json has duplicate or missing team ids`);
+  const rosterOwners = new Map<string, string>();
   for (const team of teams) {
     if (!Array.isArray(team.roster) || !team.rotation || !Array.isArray(team.rotation.starters) || !Array.isArray(team.rotation.rotationOrder)) {
       throw new Error(`Invalid league directory ${directory}: team ${team?.id ?? '<unknown>'} lacks roster/rotation`);
     }
     if (team.roster.length < 5 || team.rotation.starters.length !== 5) throw new Error(`Invalid league directory ${directory}: team ${team.id} lacks a playable rotation`);
-    for (const id of [...team.roster, ...team.rotation.starters, ...team.rotation.rotationOrder]) {
+    for (const id of team.roster) {
       if (!ids.has(id)) throw new Error(`Invalid league directory ${directory}: team ${team.id} references missing player ${id}`);
+      if (rosterOwners.has(id)) throw new Error(`Invalid league directory ${directory}: player ${id} appears on both ${rosterOwners.get(id)} and ${team.id}`);
+      if (byId.get(id)!.teamId !== team.id) throw new Error(`Invalid league directory ${directory}: rostered player ${id} has teamId ${byId.get(id)!.teamId}, expected ${team.id}`);
+      rosterOwners.set(id, team.id);
+    }
+    for (const id of [...team.rotation.starters, ...team.rotation.rotationOrder]) {
+      if (!team.roster.includes(id)) throw new Error(`Invalid league directory ${directory}: team ${team.id} rotation references non-roster player ${id}`);
     }
   }
 }

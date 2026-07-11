@@ -84,7 +84,7 @@ Turnover-type mix: real subtype mix in docs/LEAGUE_TARGETS.md (NBA subtypes do n
 
 Player-level distribution
 ------------------------------------------------------------------------
-Usage rate roster min/mean/max: 0.100 / 0.178 / 0.356 (14 at 0.10 floor)
+Usage rate roster min/mean/max: 0.100 / 0.180 / 0.400 (14 at 0.10 floor)
 Usage vs sim FGA/min Spearman: 0.323 (n=330, min 500 sim minutes)
 Sim PPG vs real PPG Pearson:   0.620 (n=287, real MPG >= 15, sim minutes >= 500)
 Team top-scorer points share:  17.2% (real reference 19-22%)

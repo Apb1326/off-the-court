@@ -14,7 +14,7 @@
 
 | Population | Eligible | Rostered | Rotation-level | Synergy covered | Shot covered | Usage covered |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Candidate | 582 | 450 | 270 | 392 | 426 | 582 |
+| Candidate | 582 | 450 | 270 | 392 | 426 | 547 |
 
 ## Frequency-scale convention
 
@@ -36,6 +36,7 @@
 | nba_1626192 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1627746 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1627746 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1627746 | usageRate | recent box_advanced sample 50.5 below S2b validity gate 80; legacy estimate |
 | nba_1628365 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1628365 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1628380 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -95,6 +96,7 @@
 | nba_1630619 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1630621 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1630621 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1630621 | usageRate | recent box_advanced sample 52.8 below S2b validity gate 80; legacy estimate |
 | nba_1630625 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1630625 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1630639 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -110,6 +112,7 @@
 | nba_1630699 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1630828 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1630828 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1630828 | usageRate | recent box_advanced sample 25.3 below S2b validity gate 80; legacy estimate |
 | nba_1630846 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1630846 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1631102 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -130,6 +133,7 @@
 | nba_1631120 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1631127 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631127 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1631127 | usageRate | recent box_advanced sample 53.9 below S2b validity gate 80; legacy estimate |
 | nba_1631132 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631132 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1631159 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -138,10 +142,13 @@
 | nba_1631199 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631205 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631205 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1631205 | usageRate | recent box_advanced sample 44.0 below S2b validity gate 80; legacy estimate |
 | nba_1631210 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631210 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1631210 | usageRate | recent box_advanced sample 79.0 below S2b validity gate 80; legacy estimate |
 | nba_1631211 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631211 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1631211 | usageRate | recent box_advanced sample 22.0 below S2b validity gate 80; legacy estimate |
 | nba_1631214 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631214 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1631216 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -159,6 +166,7 @@
 | nba_1631451 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1631457 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631457 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1631457 | usageRate | recent box_advanced sample 27.0 below S2b validity gate 80; legacy estimate |
 | nba_1631466 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1631466 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641723 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -185,12 +193,14 @@
 | nba_1641755 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641761 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641761 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641761 | usageRate | recent box_advanced sample 39.1 below S2b validity gate 80; legacy estimate |
 | nba_1641763 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641771 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641771 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641778 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641780 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641780 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641780 | usageRate | recent box_advanced sample 64.4 below S2b validity gate 80; legacy estimate |
 | nba_1641787 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641787 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641790 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -199,18 +209,23 @@
 | nba_1641794 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641801 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641801 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641801 | usageRate | recent box_advanced sample 55.8 below S2b validity gate 80; legacy estimate |
 | nba_1641803 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641803 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641803 | usageRate | recent box_advanced sample 26.4 below S2b validity gate 80; legacy estimate |
 | nba_1641807 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641807 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641807 | usageRate | recent box_advanced sample 27.5 below S2b validity gate 80; legacy estimate |
 | nba_1641809 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641809 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641810 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641810 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641813 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641813 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641813 | usageRate | recent box_advanced sample 30.8 below S2b validity gate 80; legacy estimate |
 | nba_1641815 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641815 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1641815 | usageRate | recent box_advanced sample 52.3 below S2b validity gate 80; legacy estimate |
 | nba_1641816 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1641816 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1641869 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -226,8 +241,10 @@
 | nba_1642260 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642280 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642280 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642280 | usageRate | recent box_advanced sample 24.4 below S2b validity gate 80; legacy estimate |
 | nba_1642282 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642282 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642282 | usageRate | recent box_advanced sample 31.4 below S2b validity gate 80; legacy estimate |
 | nba_1642352 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642353 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642354 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -239,16 +256,19 @@
 | nba_1642359 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642362 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642362 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642362 | usageRate | recent box_advanced sample 74.8 below S2b validity gate 80; legacy estimate |
 | nba_1642367 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642367 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642368 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642368 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642368 | usageRate | recent box_advanced sample 52.3 below S2b validity gate 80; legacy estimate |
 | nba_1642380 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642380 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642384 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642384 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642389 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642389 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642389 | usageRate | recent box_advanced sample 55.7 below S2b validity gate 80; legacy estimate |
 | nba_1642396 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642400 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642400 | shot mix | below 100 post-heave FGA; position fallback |
@@ -261,12 +281,14 @@
 | nba_1642419 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642434 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642434 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642434 | usageRate | recent box_advanced sample 77.7 below S2b validity gate 80; legacy estimate |
 | nba_1642443 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642443 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642449 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642449 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642468 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642468 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642468 | usageRate | recent box_advanced sample 2.8 below S2b validity gate 80; legacy estimate |
 | nba_1642484 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642484 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642490 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -277,6 +299,7 @@
 | nba_1642530 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642855 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642855 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642855 | usageRate | recent box_advanced sample 8.3 below S2b validity gate 80; legacy estimate |
 | nba_1642862 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642862 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642863 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -289,22 +312,27 @@
 | nba_1642882 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642884 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642884 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642884 | usageRate | recent box_advanced sample 31.9 below S2b validity gate 80; legacy estimate |
 | nba_1642885 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642886 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642886 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642905 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642910 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642910 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642910 | usageRate | recent box_advanced sample 50.1 below S2b validity gate 80; legacy estimate |
 | nba_1642911 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642911 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642911 | usageRate | recent box_advanced sample 41.8 below S2b validity gate 80; legacy estimate |
 | nba_1642917 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642917 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642917 | usageRate | recent box_advanced sample 43.5 below S2b validity gate 80; legacy estimate |
 | nba_1642918 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642918 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642933 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642933 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642935 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642935 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642935 | usageRate | recent box_advanced sample 14.3 below S2b validity gate 80; legacy estimate |
 | nba_1642938 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642938 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642939 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -315,6 +343,7 @@
 | nba_1642950 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642951 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642951 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1642951 | usageRate | recent box_advanced sample 34.7 below S2b validity gate 80; legacy estimate |
 | nba_1642955 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1642955 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1642959 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -327,22 +356,28 @@
 | nba_1643016 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1643024 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643024 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643024 | usageRate | recent box_advanced sample 53.4 below S2b validity gate 80; legacy estimate |
 | nba_1643047 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643047 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643047 | usageRate | recent box_advanced sample 46.8 below S2b validity gate 80; legacy estimate |
 | nba_1643052 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643052 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1643060 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643060 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643060 | usageRate | recent box_advanced sample 29.2 below S2b validity gate 80; legacy estimate |
 | nba_1643133 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643133 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643133 | usageRate | recent box_advanced sample 62.7 below S2b validity gate 80; legacy estimate |
 | nba_1643141 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643141 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643141 | usageRate | recent box_advanced sample 36.9 below S2b validity gate 80; legacy estimate |
 | nba_1643158 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643158 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1643253 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643253 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_1643257 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_1643257 | shot mix | below 100 post-heave FGA; position fallback |
+| nba_1643257 | usageRate | recent box_advanced sample 24.8 below S2b validity gate 80; legacy estimate |
 | nba_200768 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
 | nba_200768 | shot mix | below 100 post-heave FGA; position fallback |
 | nba_201145 | play-type frequencies | below 100 mapped Synergy possessions; position fallback |
@@ -380,20 +415,20 @@ Derived-data comparison only: these are not claims about the simulated candidate
 
 | Play type | Candidate share | Synergy target | Delta |
 | --- | ---: | ---: | ---: |
-| pick_and_roll (both fields) | 0.2322 | 0.2540 | -0.0218 |
-| isolation | 0.0685 | 0.0819 | -0.0134 |
-| post_up | 0.0356 | 0.0424 | -0.0068 |
-| spot_up | 0.2854 | 0.2561 | 0.0293 |
-| transition | 0.2062 | 0.1966 | 0.0096 |
-| cut | 0.0918 | 0.0732 | 0.0186 |
-| off_screen | 0.0351 | 0.0408 | -0.0057 |
-| handoff | 0.0452 | 0.0550 | -0.0098 |
+| pick_and_roll (both fields) | 0.2378 | 0.2540 | -0.0162 |
+| isolation | 0.0842 | 0.0819 | 0.0023 |
+| post_up | 0.0384 | 0.0424 | -0.0040 |
+| spot_up | 0.2679 | 0.2561 | 0.0118 |
+| transition | 0.2055 | 0.1966 | 0.0089 |
+| cut | 0.0737 | 0.0732 | 0.0005 |
+| off_screen | 0.0411 | 0.0408 | 0.0003 |
+| handoff | 0.0514 | 0.0550 | -0.0036 |
 
 | Shot bucket | Candidate share | Target | Delta |
 | --- | ---: | ---: | ---: |
-| rimRate | 0.3026 | 0.2869 | 0.0157 |
-| midrangeRate | 0.2788 | 0.3043 | -0.0255 |
-| threePointRate | 0.4187 | 0.4088 | 0.0099 |
+| rimRate | 0.2831 | 0.2869 | -0.0038 |
+| midrangeRate | 0.3031 | 0.3043 | -0.0012 |
+| threePointRate | 0.4138 | 0.4088 | 0.0050 |
 
 ## Standing caveats
 
