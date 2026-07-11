@@ -4,6 +4,7 @@ import { OffensiveSystem } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
 import {
   PLAY_TYPE_SHOT_ZONES,
+  PLAY_TYPE_SHOT_ZONES_REAL,
   SPACING_RIM_FREQ_COEF,
   SPACING_MID_FREQ_COEF,
   SPACING_THREE_FREQ_COEF,
@@ -88,12 +89,15 @@ export interface GameSituation {
 }
 
 export type PlayTypeSelectionMode = 'legacy' | 'candidate';
+export type ShotZoneTableSelection = 'shaded' | 'real';
 export interface PlayTypeSelectionConfig {
   readonly mode: PlayTypeSelectionMode;
+  /** Explicit evaluation input; never inferred from a pool path or environment. */
+  readonly shotZones: ShotZoneTableSelection;
 }
 
-export const LEGACY_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'legacy' });
-export const CANDIDATE_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'candidate' });
+export const LEGACY_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'legacy', shotZones: 'shaded' });
+export const CANDIDATE_PLAY_TYPE_SELECTION: PlayTypeSelectionConfig = Object.freeze({ mode: 'candidate', shotZones: 'shaded' });
 
 /** Candidate-only decomposition: derived tendency is the base share, with
  * bounded system, position, and situation modifiers around it. */
@@ -243,8 +247,9 @@ export function selectShotZone(
   playType: PlayType,
   rng: SeededRNG,
   ctx: ShotZoneContext = {},
+  selection: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
 ): ShotZone {
-  const zoneOptions = PLAY_TYPE_SHOT_ZONES[playType];
+  const zoneOptions = (selection.shotZones === 'real' ? PLAY_TYPE_SHOT_ZONES_REAL : PLAY_TYPE_SHOT_ZONES)[playType];
   const zones = zoneOptions.map((z) => z.zone);
   const outside = shooter.ratings.outsideShooting / 80;
   const threeBias = ctx.threePointBias ?? 1;

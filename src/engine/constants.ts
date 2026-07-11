@@ -89,16 +89,12 @@ export const PLAY_TYPE_EFFICIENCY_MOD: Record<PlayType, number> = {
 // runners belong to short_midrange — and each play type's profile must stay
 // recognizable as that play type's real shot diet (pool-artifact rule).
 //
-// KNOWN STAGE 2 ARTIFACT: the engine's play-type FREQUENCIES (hardcoded in
-// play-types.ts, out of Stage 1 scope) run far from Synergy reality — cut and
-// isolation are heavily over-selected, transition and pick-and-roll under-
-// selected (see the informational play-type table in `npm run profile`).
-// Fully real per-type shot diets under that skewed frequency mix would land
-// the league rim share several points high, so cut (real rim share ~.75-.85)
-// and spot_up (real rim ~.12-.15) are deliberately shaded toward
-// short_midrange/threes to the edge of narratability. When Stage 2 fixes the
-// play-type distribution, these tables should be re-tuned back toward the
-// real diets noted in the per-type comments.
+// KNOWN STAGE 2 ARTIFACT: this shaded table is the legacy-active Stage-1
+// compensation. It stays the sole default table through S2c2 because the
+// active pool's legacy play-type frequencies need it for the accepted profile.
+// S2c2's candidate-only `_REAL` table restores the documented cut/spot-up
+// diets; S2d must promote `_REAL` to the sole table and delete this shaded
+// compensation rather than silently collapsing the two tables early.
 export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
   isolation: [
     // Self-created: drives that finish at the rim, plus heavy pull-up traffic
@@ -175,6 +171,29 @@ export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: nu
   putback: [
     { zone: 'rim', weight: 0.95 },
     { zone: 'short_midrange', weight: 0.05 },
+  ],
+};
+
+/**
+ * Candidate/S2d target diets locked by S2c2 (2026-07-11). The seven
+ * unshaded play types are structurally shared with the legacy-active table.
+ * Cut restores the .75-.85 rim midpoint. Spot-up restores the .12-.15 rim
+ * midpoint; its added .060 rim mass comes proportionally from the .880 shaded
+ * short-mid/corner/above-break/deep total: each weight × (.880-.060)/.880.
+ */
+export const PLAY_TYPE_SHOT_ZONES_REAL: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
+  ...PLAY_TYPE_SHOT_ZONES,
+  cut: [
+    { zone: 'rim', weight: 0.800 },
+    { zone: 'short_midrange', weight: 0.200 },
+  ],
+  spot_up: [
+    { zone: 'corner_three', weight: 0.317 },
+    { zone: 'above_break_three', weight: 0.326 },
+    { zone: 'long_midrange', weight: 0.050 },
+    { zone: 'deep_three', weight: 0.093 },
+    { zone: 'short_midrange', weight: 0.084 },
+    { zone: 'rim', weight: 0.130 },
   ],
 };
 

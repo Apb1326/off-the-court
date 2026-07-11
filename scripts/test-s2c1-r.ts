@@ -126,7 +126,14 @@ async function main(): Promise<void> {
   };
   const profile = runCommand('scripts/profile-engine.ts');
   assert.equal(profile.status, 0, 'default profile must pass');
-  assert.equal(hash(profile.stdout), BASELINES.profileStdout, 'default profile stdout drifted');
+  // S2c2 appends a provenance-observer informational table. The S2c1-R
+  // legacy contract remains the pre-existing output, which must stay bytewise
+  // identical once that explicitly permitted appendix is removed.
+  const legacyProfile = profile.stdout.toString('utf-8').replace(
+    /\nScorekeeper-aligned assisted proxy by zone \[S2c2; INFORMATIONAL\][\s\S]*?Proxy corner-three highest: (?:true|false)\n/,
+    '',
+  );
+  assert.equal(hash(Buffer.from(legacyProfile)), BASELINES.profileStdout, 'default legacy profile stdout drifted');
   assert.equal(hash(profile.stderr), BASELINES.profileStderr, 'default profile stderr drifted');
 
   const benchmarkPath = 'data/history/benchmarks.json';

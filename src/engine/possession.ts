@@ -402,7 +402,7 @@ export function simulatePossession(
     threePointBias: threePointBias(ctx),
     rimDeterrence,
     spacing,
-  });
+  }, state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION);
   // More spacing → the on-ball defender gets less help → a softer contest,
   // routed through the existing contest/contestBonus path as a centered
   // subtraction from the effective pressure bonus. Poor spacing → tougher.
