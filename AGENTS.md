@@ -128,13 +128,16 @@ derivation; `--check` verifies the committed copy byte-for-byte). Rules:
 
 ## Verification checklist
 
-Run after any engine change and report results:
+Run after any engine change and report results. (Environment: node lives under nvm, not on PATH — see `CLAUDE.md`'s quickstart; if the `tsx` CLI hits sandbox `listen EPERM`, use `node --import tsx <script>`.)
 
-- [ ] `npm run typecheck` — clean.
-- [ ] `npm run profile` — the modern engine acceptance test: all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed.
-- [ ] `npm run calibrate` — a **deterministic historical drift comparison, not pass/fail era acceptance** (its benchmark ends in 2015, so a 2023–26-tuned engine sits above its era rows by design). Engine changes report the deltas and explain their direction; the comparison stays useful precisely because it is deterministic — no silent drift.
-- [ ] `tsx scripts/test-determinism.ts` — same seed → identical game.
-- [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect.
+- [ ] `npm run typecheck` — clean. (Seconds; no output on success.)
+- [ ] `npm run profile` — the modern engine acceptance test: all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed. (~2–3 min — a full 1,290-game season; success ends with `PASS (32 of 32 enforced stats within tolerance)` and exit 0. The INFORMATIONAL tables printed after the PASS line never gate; ⚠️ OUT flags on enforced rows are *expected and non-gating* in alternate-pool/candidate runs, which print an `INFORMATIONAL — alternate pool` banner.)
+- [ ] `npm run calibrate` — a **deterministic historical drift comparison, not pass/fail era acceptance** (its benchmark ends in 2015, so a 2023–26-tuned engine sits above its era rows by design). Engine changes report the deltas and explain their direction; the comparison stays useful precisely because it is deterministic — no silent drift. (~1 min; prints era benchmark tables, a 400-game engine row, and `Saved data/history/benchmarks.json`; exit 0.)
+- [ ] `tsx scripts/test-determinism.ts` — same seed → identical game. (Seconds; every seed line must end `IDENTICAL`, final line `DETERMINISM PASSED`.)
+- [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect. (Seconds; success ends `SPACING A/B PASSED`; exits non-zero if the effect is missing or wrong-signed.)
+- [ ] Byte-identity claims are proven by stdout SHA-256, never by eyeballing: capture with `npm run <cmd> --silent > out` (**the npm banner poisons hashes without `--silent`**) and compare against the recorded baselines in `docs/PROJECT_STATUS.md`; when a phase legitimately changes output, record the fresh post-acceptance hashes there in the same change.
+
+Note: `profile`, `calibrate`, and the harnesses consume the **gitignored** `data/` artifacts (active pool, `data/nba/normalized/`, history CSVs) that exist only on the working machine. If they're missing, stop and surface — never regenerate them just to make a command run.
 
 **For transaction-layer changes, additionally:**
 
@@ -161,6 +164,7 @@ Run after any engine change and report results:
 - Don't put legality logic inside `evaluateTradeForCpu`, or rewrite an append-only transaction-log entry.
 - Don't use `Math.random()` or a platform-dependent hash in migrations or AI tie-breaks — `SeededRNG` from a stable key.
 - Don't build a later roadmap phase's mechanics early.
+- Don't put interpretive status text ("X is blocked", "phase complete") in generated reports — generated artifacts carry measurements and provenance only; status and interpretation live in `docs/ROADMAP.md` and `docs/PROJECT_STATUS.md`. (The docs map in `CLAUDE.md` lists which files are generated.)
 
 ## Known cleanups
 
