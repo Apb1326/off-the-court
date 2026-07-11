@@ -1,0 +1,31 @@
+/** S2c1 candidate-only real-data tendency derivation. Pure, deterministic, and inactive. */
+import { PlayerTendencies, Position } from '../models/player';
+import { BoxAdvancedRow, PlayTypeRow, ShotEventRow } from '../data/nba/types';
+import { classifyShot } from '../data/nba/shot-classification';
+import { RECENT_SEASONS, RECENT_SEASON_WEIGHTS } from './nba-derivation';
+
+export const TENDENCY_MIN_SYNERGY_POSS = 100; // avoids treating sparse single-play samples as a player diet
+export const TENDENCY_MIN_SHOT_FGA = 100; // post-heave attempts required before individual shot mix is trusted
+export const TENDENCY_USAGE_MIN = 0.10; // matches the legacy engine-consumable usage clamp
+export const TENDENCY_USAGE_MAX = 0.40;
+const FIELDS = ['isolationFreq','pickAndRollBallHandlerFreq','pickAndRollScreenerFreq','postUpFreq','spotUpFreq','transitionFreq','cutFreq','offScreenFreq','handoffFreq'] as const;
+type FreqField = typeof FIELDS[number];
+const MAP: Record<string, FreqField> = { Isolation:'isolationFreq', PRBallHandler:'pickAndRollBallHandlerFreq', PRRollMan:'pickAndRollScreenerFreq', Postup:'postUpFreq', Spotup:'spotUpFreq', Transition:'transitionFreq', Cut:'cutFreq', OffScreen:'offScreenFreq', Handoff:'handoffFreq' };
+export interface TendencyInput { personId:number; id:string; position:Position; boxSeasons: readonly {season:string;row:BoxAdvancedRow}[]; raw: { gamesPlayed:number; minutesPerGame:number; stats:{fieldGoalsAttempted:number;freeThrowsAttempted:number;assists:number;rebounds:number} } }
+export interface TendencyResult { tendencies:Map<number,PlayerTendencies>; fallbackLog:{playerId:string;field:string;reason:string}[]; coveredSynergy:number; coveredShots:number; coveredUsage:number; }
+const empty = (): Record<FreqField,number> => Object.fromEntries(FIELDS.map(k=>[k,0])) as Record<FreqField,number>;
+const finite=(x:unknown):x is number=>typeof x==='number'&&Number.isFinite(x);
+export function deriveNbaTendencies(input: readonly TendencyInput[], playtypes: readonly PlayTypeRow[], shots: readonly ShotEventRow[]): TendencyResult {
+ const pBy=new Map<number,PlayTypeRow[]>(); for(const r of playtypes) if(r.typeGrouping==='offensive'){const a=pBy.get(r.personId)??[];a.push(r);pBy.set(r.personId,a)}
+ const sBy=new Map<number,ShotEventRow[]>(); for(const r of shots){const a=sBy.get(r.playerId)??[];a.push(r);sBy.set(r.playerId,a)}
+ const freq=new Map<number,Record<FreqField,number>>(), mix=new Map<number,[number,number,number]>();
+ const groupFreq=new Map<Position,{v:Record<FreqField,number>;n:number}>(), groupMix=new Map<Position,{v:[number,number,number];n:number}>();
+ for(const p of input){const f=empty();let n=0; for(const r of pBy.get(p.personId)??[]){const k=MAP[r.playType];if(k&&finite(r.poss)&&r.poss>0){f[k]+=r.poss;n+=r.poss}} if(n>=TENDENCY_MIN_SYNERGY_POSS){for(const k of FIELDS)f[k]/=n;freq.set(p.personId,f);const g=groupFreq.get(p.position)??{v:empty(),n:0};for(const k of FIELDS)g.v[k]+=f[k]*n;g.n+=n;groupFreq.set(p.position,g)}
+  const m:[number,number,number]=[0,0,0];for(const r of sBy.get(p.personId)??[]){const z=classifyShot(r);if(z==='heave')continue;if(z==='rim')m[0]++;else if(z==='short_midrange'||z==='long_midrange')m[1]++;else m[2]++}const mn=m[0]+m[1]+m[2];if(mn>=TENDENCY_MIN_SHOT_FGA){m[0]/=mn;m[1]/=mn;m[2]/=mn;mix.set(p.personId,m);const g=groupMix.get(p.position)??{v:[0,0,0],n:0};g.v[0]+=m[0]*mn;g.v[1]+=m[1]*mn;g.v[2]+=m[2]*mn;g.n+=mn;groupMix.set(p.position,g)} }
+ for(const g of groupFreq.values())for(const k of FIELDS)g.v[k]/=g.n; for(const g of groupMix.values())for(let i=0;i<3;i++)g.v[i]/=g.n;
+ const tendencies=new Map<number,PlayerTendencies>(), fallbackLog:TendencyResult['fallbackLog']=[];let coveredSynergy=0,coveredShots=0,coveredUsage=0;
+ for(const p of input){let f=freq.get(p.personId);if(!f){f=groupFreq.get(p.position)?.v??Object.fromEntries(FIELDS.map(k=>[k,1/FIELDS.length])) as Record<FreqField,number>;fallbackLog.push({playerId:p.id,field:'play-type frequencies',reason:`below ${TENDENCY_MIN_SYNERGY_POSS} mapped Synergy possessions; position fallback`})}else coveredSynergy++;let m=mix.get(p.personId);if(!m){m=groupMix.get(p.position)?.v??[.3,.3,.4];fallbackLog.push({playerId:p.id,field:'shot mix',reason:`below ${TENDENCY_MIN_SHOT_FGA} post-heave FGA; position fallback`})}else coveredShots++;
+  let num=0,den=0;for(const x of p.boxSeasons){const w=(RECENT_SEASON_WEIGHTS as Record<string,number>)[x.season];const u=x.row.advanced?.usgPct, poss=x.row.advanced?.poss;if(w&&finite(u)&&finite(poss)&&poss>0){num+=u*poss*w;den+=poss*w}}let usage; if(den>0){usage=Math.max(TENDENCY_USAGE_MIN,Math.min(TENDENCY_USAGE_MAX,num/den));coveredUsage++}else{usage=Math.max(TENDENCY_USAGE_MIN,Math.min(TENDENCY_USAGE_MAX,(p.raw.stats.fieldGoalsAttempted+p.raw.stats.freeThrowsAttempted*.44+p.raw.stats.assists*.33)/Math.max(1,p.raw.minutesPerGame*2.08)));fallbackLog.push({playerId:p.id,field:'usageRate',reason:'no valid recent box_advanced sample; legacy estimate'})}
+  const s=p.raw.stats, fga=Math.max(1,s.fieldGoalsAttempted); tendencies.set(p.personId,{...f, rimRate:m[0],midrangeRate:m[1],threePointRate:m[2], drawFoulRate:s.freeThrowsAttempted/Math.max(1,fga*2)*.5,assistRate:s.assists/Math.max(1,p.raw.minutesPerGame)*5,usageRate:usage,reboundRate:s.rebounds/Math.max(1,p.raw.minutesPerGame)*2.5}); }
+ return {tendencies,fallbackLog:fallbackLog.sort((a,b)=>a.playerId.localeCompare(b.playerId)||a.field.localeCompare(b.field)),coveredSynergy,coveredShots,coveredUsage};
+}

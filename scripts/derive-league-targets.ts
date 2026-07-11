@@ -44,6 +44,7 @@ import {
   loadShotEvents,
 } from '../src/data/nba/load';
 import { PbpActionRow, ShotEventRow } from '../src/data/nba/types';
+import { classifyShot, SIX_ZONES, SixZone, HEAVE_DISTANCE_FT, HEAVE_SECONDS_LEFT, MIDRANGE_SPLIT_FT, DEEP_THREE_FT } from '../src/data/nba/shot-classification';
 
 // ---------------------------------------------------------------------------
 // Zone mapping (the Stage 1 settled mapping) + heave rule
@@ -75,49 +76,6 @@ import { PbpActionRow, ShotEventRow } from '../src/data/nba/types';
 // A blanket final-seconds exclusion would wrongly remove legitimate late-clock
 // layups and jumpers; a distance-only rule would remove real 32+ ft pull-ups.
 
-const SIX_ZONES = [
-  'rim',
-  'short_midrange',
-  'long_midrange',
-  'corner_three',
-  'above_break_three',
-  'deep_three',
-] as const;
-type SixZone = (typeof SIX_ZONES)[number];
-
-const HEAVE_DISTANCE_FT = 32; // with <= HEAVE_SECONDS_LEFT, marks a heave
-const HEAVE_SECONDS_LEFT = 3;
-const MIDRANGE_SPLIT_FT = 14; // NBA Mid-Range below this => short_midrange
-const DEEP_THREE_FT = 27; // Above-the-break threes at/past this => deep_three
-
-function classifyShot(row: ShotEventRow): SixZone | 'heave' {
-  const zone = row.shotZoneBasic;
-  const dist = row.shotDistance;
-  if (zone === null || dist === null) {
-    throw new Error(
-      `shot_events row with null shotZoneBasic/shotDistance (game ${row.gameId} event ${row.gameEventId}) — contract changed, stop and re-derive`
-    );
-  }
-  const secondsLeftInPeriod = row.minutesRemaining * 60 + row.secondsRemaining;
-  if (zone === 'Backcourt' || (dist >= HEAVE_DISTANCE_FT && secondsLeftInPeriod <= HEAVE_SECONDS_LEFT)) {
-    return 'heave';
-  }
-  switch (zone) {
-    case 'Restricted Area':
-      return 'rim';
-    case 'In The Paint (Non-RA)':
-      return 'short_midrange';
-    case 'Mid-Range':
-      return dist < MIDRANGE_SPLIT_FT ? 'short_midrange' : 'long_midrange';
-    case 'Left Corner 3':
-    case 'Right Corner 3':
-      return 'corner_three';
-    case 'Above the Break 3':
-      return dist >= DEEP_THREE_FT ? 'deep_three' : 'above_break_three';
-    default:
-      throw new Error(`Unknown shotZoneBasic "${zone}" — contract changed, stop and re-derive`);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Synergy play-type mapping
