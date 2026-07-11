@@ -22,7 +22,9 @@ import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
+import { CANDIDATE_PLAY_TYPE_SELECTION } from '../src/engine/play-types';
 import { generateSchedule } from '../src/engine/schedule';
+import { createAssistMeasurements } from './assist-measurement';
 
 const ZONES: ShotZone[] = ['rim', 'short_midrange', 'long_midrange', 'corner_three', 'above_break_three', 'deep_three'];
 
@@ -57,11 +59,15 @@ function arg(name: string): string | undefined {
 
 async function main() {
   const cap = arg('games') ? parseInt(arg('games')!, 10) : Infinity;
-  const DATA_DIR = path.join(process.cwd(), 'data');
+  const seedText = arg('seed') ?? '2026';
+  const seed = Number(seedText);
+  if (!Number.isSafeInteger(seed) || seed < 1 || seed > 2_000_000_000) throw new Error('--seed must be an integer in 1..2000000000');
+  const leagueDir = arg('league-dir');
+  const DATA_DIR = path.resolve(process.cwd(), leagueDir ?? 'data');
   const teams: Team[] = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
   const players: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
 
-  const rng = new SeededRNG(2026);
+  const rng = new SeededRNG(seed);
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const playersByTeam = new Map<string, Player[]>();
   for (const t of teams) playersByTeam.set(t.id, []);
@@ -73,6 +79,7 @@ async function main() {
   const byZone = new Map<ShotZone, ZoneAgg>(ZONES.map((z) => [z, newZoneAgg()]));
   // Pass-count distribution over all shots, and per assisted make.
   const passCountShots = new Map<number, number>();
+  const measurements = createAssistMeasurements();
   let played = 0;
 
   for (const sg of schedule) {
@@ -88,6 +95,7 @@ async function main() {
 
     simulateGame(home, away, homePlayers, awayPlayers, sg.id, 'diag', `day-${sg.day}`, gameSeed, new Map(), {
       onShot: (s) => {
+        measurements.record(s);
         const agg = byZone.get(s.zone)!;
         agg.att++;
         passCountShots.set(s.passCount, (passCountShots.get(s.passCount) ?? 0) + 1);
@@ -108,10 +116,10 @@ async function main() {
           if (s.assisted) agg.assistedMade++;
         }
       },
-    });
+    }, leagueDir ? CANDIDATE_PLAY_TYPE_SELECTION : undefined);
   }
 
-  console.log(`\n=== S1-Rb assisted-zone diagnosis — ${played} games, seed 2026 ===\n`);
+  console.log(`\n=== S1-Rb assisted-zone diagnosis — ${played} games, seed ${seed} ===\n`);
   console.log('Zone'.padEnd(20) + 'att'.padStart(8) + 'made'.padStart(8) + 'astMade'.padStart(9) +
     'astRate'.padStart(9) + '0-pass%'.padStart(9) + 'CS-0p%'.padStart(8) + 'dt%'.padStart(7) + 'adv%'.padStart(7));
   for (const z of ZONES) {
@@ -153,8 +161,8 @@ async function main() {
   console.log('\nCounterfactual: NBA-style definition (0-pass spot_up/off_screen makes counted assisted):');
   for (const z of ZONES) {
     const a = byZone.get(z)!;
-    const remapped = a.assistedMade + a.initialCsZeroPassMade;
-    console.log(`  ${z.padEnd(20)} chain ${((a.assistedMade / a.made) * 100).toFixed(1)}%  ->  remapped ${((remapped / a.made) * 100).toFixed(1)}%`);
+    const shared = measurements.byZone.get(z)!;
+    console.log(`  ${z.padEnd(20)} chain ${((shared.strict / shared.made) * 100).toFixed(1)}%  ->  remapped ${((shared.proxy / shared.made) * 100).toFixed(1)}%`);
   }
 }
 

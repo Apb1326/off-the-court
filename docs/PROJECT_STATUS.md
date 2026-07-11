@@ -35,7 +35,7 @@ without `--silent`.** Non-engine phases must reproduce these exactly; engine pha
 record their new post-acceptance values here in the same change.
 
 - `npm run profile --silent` stdout SHA-256:
-  `7482a68d7859ff8c8f962832ff4978ba32621c700594fd4deae785e82759e95a` (exit 0)
+  `74460aa472a3c2bcfa9dabc90aee6c4abbe5e1e2dd3aff87bd811b54cfbf1848` (exit 0; S2c2's appended informational proxy table is the only permitted change)
 - `npm run calibrate --silent` stdout SHA-256:
   `a9f79617711614e8199ee43e48f3f74e4ef16fb6fc9379f3a62f6c41a14b90e4` (exit 0)
 
@@ -55,7 +55,7 @@ source and the runs above.
 
 | Track | Verified state | Next unit |
 |---|---|---|
-| **S — Simulation & data** | S1 accepted (profile PASS re-confirmed live today). S2a, S2b, S2b-R, S2c1, S2c1-R done — all on the **inactive candidate**; the legacy selector remains the runtime default (guard codified in `AGENTS.md`, "Candidate selector guard"). | **S2c2** (assist-definition decision + `PLAY_TYPE_SHOT_ZONES` unwind, candidate-only; ROADMAP §4.2). S2d is the sole activation point. S3 is gated on S2d. |
+| **S — Simulation & data** | S1 accepted. S2a through **S2c2** are done on the **inactive candidate**. S2c2 records the scorekeeper-aligned proxy and keeps dual shot-zone tables candidate-scoped; see `docs/S2C2_ASSIST_AND_DIET_REPORT.md`. | **S2d** — sole activation and coupled re-baseline/retune point. S3 remains gated on S2d. |
 | **F — Franchise** | F1 done (schema v7, `SaveFile.controlledTeamId`, accessors in `src/franchise/controlled.ts`; save-migration harness green today). | **F2 — playoffs** is dependency-ready now (ROADMAP §5.2); F3 → F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
 | **U — Presentation** | App shell only: menu (saves/new game/team picker), league, roster, schedule+standings, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI, no playoffs UI, no offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |

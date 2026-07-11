@@ -25,10 +25,11 @@ import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
-import { CANDIDATE_PLAY_TYPE_SELECTION } from '../src/engine/play-types';
+import { CANDIDATE_PLAY_TYPE_SELECTION, PlayTypeSelectionConfig } from '../src/engine/play-types';
 import { generateSchedule } from '../src/engine/schedule';
 import { selectLatestCareerStats } from '../src/ratings/derivation';
 import { loadLeaguePool } from './league-pool';
+import { createAssistMeasurements, hasCornerProxySignStructure } from './assist-measurement';
 
 // ---------------------------------------------------------------------------
 // ENFORCED targets — derived from real NBA data, 2023-24..2025-26 pooled
@@ -185,13 +186,27 @@ function spearman(xs: number[], ys: number[]): number {
 }
 
 async function main() {
-  const pool = await loadLeaguePool(process.argv.slice(2));
+  const cliArgs = process.argv.slice(2);
+  const leagueArgIndex = cliArgs.indexOf('--league-dir');
+  const leagueArgs = leagueArgIndex === -1 ? [] : cliArgs.slice(leagueArgIndex, leagueArgIndex + 2);
+  const pool = await loadLeaguePool(leagueArgs);
+  const unknownArgs = cliArgs.filter((arg, index) =>
+    !(arg === '--league-dir' || (leagueArgIndex !== -1 && index === leagueArgIndex + 1) || arg.startsWith('--shot-zones=') || arg.startsWith('--seed=')));
+  if (unknownArgs.length) throw new Error(`Unknown argument: ${unknownArgs[0]}`);
+  const shotZonesArg = cliArgs.find((arg) => arg.startsWith('--shot-zones='))?.split('=')[1] ?? 'shaded';
+  if (shotZonesArg !== 'shaded' && shotZonesArg !== 'real') throw new Error('--shot-zones must be shaded or real');
+  const seedArg = cliArgs.find((arg) => arg.startsWith('--seed='))?.split('=')[1];
+  const seed = seedArg === undefined ? 2026 : Number(seedArg);
+  if (!Number.isSafeInteger(seed) || seed < 1 || seed > 2_000_000_000) throw new Error('--seed must be an integer in 1..2000000000');
+  const selection: PlayTypeSelectionConfig | undefined = pool.alternate
+    ? (shotZonesArg === 'shaded' ? CANDIDATE_PLAY_TYPE_SELECTION : Object.freeze({ ...CANDIDATE_PLAY_TYPE_SELECTION, shotZones: 'real' as const }))
+    : undefined;
   const { teams, players } = pool;
   if (pool.alternate) console.log(`INFORMATIONAL — alternate pool (${pool.directory}); no gate; S2d owns the gated run`);
 
   // Mirror simulateSeason's RNG/seed sequence so aggregates match `npm run
   // profile`-via-season exactly, while also exposing PBP-derived stats.
-  const rng = new SeededRNG(2026);
+  const rng = new SeededRNG(seed);
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const playersByTeam = new Map<string, Player[]>();
   for (const t of teams) playersByTeam.set(t.id, []);
@@ -211,6 +226,7 @@ async function main() {
   const zoneAtt = new Map<ShotZone, number>(SIX_ZONES.map((z) => [z, 0]));
   const zoneMade = new Map<ShotZone, number>(SIX_ZONES.map((z) => [z, 0]));
   const zoneAssisted = new Map<ShotZone, number>(SIX_ZONES.map((z) => [z, 0]));
+  const assistMeasurements = createAssistMeasurements();
   const playTypeCounts = new Map<PlayType, number>();
   let andOnes = 0;
 
@@ -225,7 +241,7 @@ async function main() {
     const gameSeed = rng.nextInt(1, 2_000_000_000);
     const sim = simulateGame(
       home, away, homePlayers, awayPlayers, sg.id, 'profile', `day-${sg.day}`, gameSeed,
-      new Map(), undefined, pool.alternate ? CANDIDATE_PLAY_TYPE_SELECTION : undefined,
+      new Map(), { onShot: assistMeasurements.record }, selection,
     );
     gamesPlayed++;
 
@@ -405,6 +421,18 @@ async function main() {
     ((((assistedAll / madeAll) - INFO_ASSISTED_RATE_OVERALL) >= 0 ? '+' : '') +
       (((assistedAll / madeAll) - INFO_ASSISTED_RATE_OVERALL) * 100).toFixed(1)).padStart(8)
   );
+
+  console.log('\nScorekeeper-aligned assisted proxy by zone [S2c2; INFORMATIONAL]');
+  console.log('(strict chain + zero-pass initial spot_up/off_screen makes; provenance observer only)');
+  console.log('Zone'.padEnd(22) + 'Strict'.padStart(8) + 'Proxy'.padStart(8) + 'Real'.padStart(8));
+  for (const z of SIX_ZONES) {
+    const row = assistMeasurements.byZone.get(z)!;
+    console.log(z.padEnd(22) +
+      (row.strict / row.made * 100).toFixed(1).padStart(8) +
+      (row.proxy / row.made * 100).toFixed(1).padStart(8) +
+      (INFO_ASSISTED_RATE[z] * 100).toFixed(1).padStart(8));
+  }
+  console.log(`Proxy corner-three highest: ${hasCornerProxySignStructure(assistMeasurements.byZone)}`);
 
   const engAndOneRate = andOnes / madeAll;
   const engOrbRate = orb / (orb + drb);
