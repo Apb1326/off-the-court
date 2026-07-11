@@ -509,5 +509,7 @@ Before this phase is done:
     asset-universe value conserved, cumulative team value flow bounded,
     no value-bearing laundering / oscillating-trade loops, and every seed's
     hard invariants plus declared aggregate tail bounds hold.
+[ ] docs/PROJECT_STATUS.md snapshot updated in the same change (date/commit,
+    verification evidence incl. stdout SHA-256 baselines, track table).
 [ ] Scope guard: nothing from a later phase was built early.
 ```

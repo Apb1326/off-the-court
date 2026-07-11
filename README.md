@@ -58,6 +58,7 @@ Wired into `package.json`:
 | `npm run calibrate` | Deterministic historical drift comparison vs. six decades of real games by era (benchmark ends 2015 — informational, not pass/fail) |
 | `npm run profile` | The engine acceptance test: season profile vs. modern-NBA targets with derived tolerance bands; exits non-zero on enforced failure |
 | `npm run validate-nba-data` | Structural validation of `data/nba/normalized/` contracts (missing files are SKIPPED) |
+| `npm run build-league` | Builds the **inactive** pipeline-derived candidate league (`data/league-candidate/`) from `data/nba/normalized/`, plus the generated S2 reports (`docs/S2A_LEAGUE_COVERAGE.md`, `S2B_RATINGS_CONTRACT.md`, `S2C1_TENDENCIES_CONTRACT.md`); `--check` byte-compares. Does not touch the active league — activation is S2d's job |
 
 Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 
@@ -101,7 +102,8 @@ src/
                    player/[id], game/sim) and API routes (players, teams, sim, season, saves)
 scripts/           seed, ingest, history download, calibration, profiling, target derivation,
                    diagnostics, A/B + smoke tests, save-migration round-trips
-docs/              ROADMAP, TRANSACTIONS_ROADMAP, LEAGUE_TARGETS (target provenance),
+docs/              ROADMAP, TRANSACTIONS_ROADMAP, PROJECT_STATUS (verified snapshot),
+                   LEAGUE_TARGETS (target provenance), S2A/S2B/S2C1 generated reports,
                    prompts/ (archived phase implementation prompts)
 data/              Generated league + saves (gitignored): teams.json, players.json, season.json,
                    saves/<slot>/, seasons/<id>/games/*.json, history/*.csv, nba/ (pipeline output)

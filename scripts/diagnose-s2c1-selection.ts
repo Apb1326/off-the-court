@@ -404,7 +404,7 @@ async function main(): Promise<void> {
     `- calibrate stdout SHA-256: **${ACTIVE_BASELINE_HASHES.calibrateStdout}** (exit ${ACTIVE_BASELINE_HASHES.calibrateStatus})`,
     `- calibrate stderr SHA-256: **${ACTIVE_BASELINE_HASHES.calibrateStderr}**`, '',
     '## Verdict', '',
-    '- This is the pre-repair diagnosis. S2c2 remains blocked until the candidate-only selector repair is evaluated against its explicit terminal-distribution bands.', '',
+    '- This generated artifact records measurements and provenance only; it makes no phase-status claim. Current status and interpretation live in `docs/ROADMAP.md` (§3.2, §4.2) and `docs/PROJECT_STATUS.md`; the S2c1-R acceptance record is `docs/S2C1_CANDIDATE_PROFILE.md` with its focused harness `scripts/test-s2c1-r.ts`.', '',
   );
 
   const report = `${lines.join('\n')}\n`;

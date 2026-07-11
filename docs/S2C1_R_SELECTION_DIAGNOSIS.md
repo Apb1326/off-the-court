@@ -5,7 +5,7 @@
 
 ## Provenance
 
-- Repository commit: **69b152a6d151064f8663db319c695ef32b2e0655**.
+- Repository commit: **21fe8e6f23ec577a52f56d5ee039113f63647b18**.
 - Candidate input: **/Users/atticusboyle/Desktop/Claude Code/OffTheCourt/data/league-candidate**.
 - Fixed full-season seed: **2026**; candidate selection mode is explicitly enabled; schedule and game-seed stream mirrors profile-engine.ts.
 - Candidate pool build/check prerequisite: `69b152a` landing series (`849c2fa`, `7a8bddd`, `69b152a`).
@@ -226,5 +226,5 @@ The emitted matrix above is the candidate possession-level label used for the Sy
 
 ## Verdict
 
-- This is the pre-repair diagnosis. S2c2 remains blocked until the candidate-only selector repair is evaluated against its explicit terminal-distribution bands.
+- This generated artifact records measurements and provenance only; it makes no phase-status claim. Current status and interpretation live in `docs/ROADMAP.md` (§3.2, §4.2) and `docs/PROJECT_STATUS.md`; the S2c1-R acceptance record is `docs/S2C1_CANDIDATE_PROFILE.md` with its focused harness `scripts/test-s2c1-r.ts`.
 
