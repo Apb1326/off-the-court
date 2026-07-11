@@ -20,8 +20,6 @@
  * fail the profile; each is annotated with the stage that owns closing its
  * gap. Tier assignment is fixed per-task before tuning, never outcome-based.
  */
-import { readFile } from 'fs/promises';
-import path from 'path';
 import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
@@ -29,6 +27,7 @@ import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
 import { generateSchedule } from '../src/engine/schedule';
 import { selectLatestCareerStats } from '../src/ratings/derivation';
+import { loadLeaguePool } from './league-pool';
 
 // ---------------------------------------------------------------------------
 // ENFORCED targets — derived from real NBA data, 2023-24..2025-26 pooled
@@ -185,9 +184,9 @@ function spearman(xs: number[], ys: number[]): number {
 }
 
 async function main() {
-  const DATA_DIR = path.join(process.cwd(), 'data');
-  const teams: Team[] = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
-  const players: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
+  const pool = await loadLeaguePool(process.argv.slice(2));
+  const { teams, players } = pool;
+  if (pool.alternate) console.log(`INFORMATIONAL — alternate pool (${pool.directory}); no gate; S2d owns the gated run`);
 
   // Mirror simulateSeason's RNG/seed sequence so aggregates match `npm run
   // profile`-via-season exactly, while also exposing PBP-derived stats.
@@ -351,7 +350,7 @@ async function main() {
   for (const b of ['rim', 'mid', 'three'] as const) printEnforced(`share bucket:${b}`, `bucketShare.${b}`);
 
   console.log('-'.repeat(64));
-  console.log(fails === 0
+  console.log(pool.alternate ? 'INFORMATIONAL — alternate pool; band outcomes do not gate S2c1.' : fails === 0
     ? `PASS (${enforcedCount} of ${enforcedCount} enforced stats within tolerance)`
     : `FAIL (${fails} of ${enforcedCount} enforced stats out of tolerance)`);
 
@@ -465,7 +464,7 @@ async function main() {
   console.log(`Qualified FT% sim vs real:     ${(simFtm / simFta * 100).toFixed(1)}% vs ${(realFtm / realFta * 100).toFixed(1)}% (n=${ftQualified.length}, real FTA >= 2)`);
   console.log(`Qualified sim FT% min/max:     ${(Math.min(...simFtPcts) * 100).toFixed(1)}% / ${(Math.max(...simFtPcts) * 100).toFixed(1)}%`);
 
-  process.exitCode = fails > 0 ? 1 : 0;
+  process.exitCode = fails > 0 && !pool.alternate ? 1 : 0;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

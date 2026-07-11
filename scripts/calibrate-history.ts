@@ -13,6 +13,7 @@ import { Team } from '../src/models/team';
 import { Player } from '../src/models/player';
 import { simulateGame } from '../src/engine';
 import { SeededRNG } from '../src/lib/rng';
+import { loadLeaguePool } from './league-pool';
 
 // Fixed seed for matchup selection so the engine benchmark is reproducible
 // run-to-run and comparable across engine changes.
@@ -158,9 +159,7 @@ function analyzeRaptor() {
   };
 }
 
-async function simBenchmark(): Promise<EraBenchmark> {
-  const teams: Team[] = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
-  const players: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
+async function simBenchmark(teams: Team[], players: Player[]): Promise<EraBenchmark> {
   const byTeam = new Map<string, Player[]>();
   for (const t of teams) byTeam.set(t.id, []);
   for (const p of players) if (p.teamId && byTeam.has(p.teamId)) byTeam.get(p.teamId)!.push(p);
@@ -211,6 +210,7 @@ function row(b: EraBenchmark): string {
 }
 
 async function main() {
+  const pool = await loadLeaguePool(process.argv.slice(2));
   if (!existsSync(path.join(HISTORY_DIR, 'nbaallelo.csv'))) {
     console.error('Missing data/history/nbaallelo.csv. Run: npm run download-history');
     process.exit(1);
@@ -236,7 +236,8 @@ async function main() {
   console.log(`  Star-level seasons (RAPTOR ≥ +5): ${raptor.starSeasons}`);
 
   console.log('\nRunning engine for comparison...');
-  const sim = await simBenchmark();
+  if (pool.alternate) console.log(`INFORMATIONAL — alternate pool (${pool.directory}); no gate; S2d owns the gated run`);
+  const sim = await simBenchmark(pool.teams, pool.players);
   const modern = eras.find((e) => e.label === '2010-2015')!;
 
   console.log('\n=== ENGINE vs REAL (2010-2015 era) ===');
@@ -245,6 +246,10 @@ async function main() {
   console.log(row(modern));
   console.log(row(sim));
 
+  if (pool.alternate) {
+    console.log('\nINFORMATIONAL — alternate pool; no cache was written.');
+    return;
+  }
   // Persist benchmarks so they can serve as calibration targets.
   const benchmarks = {
     source: 'FiveThirtyeight open data (CC BY 4.0)',
