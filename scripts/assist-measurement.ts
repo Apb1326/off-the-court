@@ -17,6 +17,7 @@ export interface DiagnosticShot {
 }
 
 export interface AssistZoneCounts {
+  attempts: number;
   made: number;
   strict: number;
   proxy: number;
@@ -38,7 +39,7 @@ export function isScorekeeperAlignedProxyMake(shot: DiagnosticShot): boolean {
 
 export function createAssistMeasurements(): AssistMeasurements {
   const byZone = new Map<ShotZone, AssistZoneCounts>(ASSIST_ZONES.map((zone) => [zone, {
-    made: 0, strict: 0, proxy: 0, zeroPassAttempts: 0, catchAndShootZeroPassAttempts: 0,
+    attempts: 0, made: 0, strict: 0, proxy: 0, zeroPassAttempts: 0, catchAndShootZeroPassAttempts: 0,
   }]));
   const passCounts = new Map<number, number>();
   return {
@@ -46,6 +47,7 @@ export function createAssistMeasurements(): AssistMeasurements {
     passCounts,
     record(shot) {
       const counts = byZone.get(shot.zone)!;
+      counts.attempts++;
       passCounts.set(shot.passCount, (passCounts.get(shot.passCount) ?? 0) + 1);
       if (shot.passCount === 0) {
         counts.zeroPassAttempts++;

@@ -195,6 +195,7 @@ async function main() {
   if (unknownArgs.length) throw new Error(`Unknown argument: ${unknownArgs[0]}`);
   const shotZonesArg = cliArgs.find((arg) => arg.startsWith('--shot-zones='))?.split('=')[1] ?? 'shaded';
   if (shotZonesArg !== 'shaded' && shotZonesArg !== 'real') throw new Error('--shot-zones must be shaded or real');
+  if (shotZonesArg === 'real' && !pool.alternate) throw new Error('--shot-zones=real is a candidate evaluation input; pass --league-dir (AGENTS.md S2c2 dual-table guard)');
   const seedArg = cliArgs.find((arg) => arg.startsWith('--seed='))?.split('=')[1];
   const seed = seedArg === undefined ? 2026 : Number(seedArg);
   if (!Number.isSafeInteger(seed) || seed < 1 || seed > 2_000_000_000) throw new Error('--seed must be an integer in 1..2000000000');

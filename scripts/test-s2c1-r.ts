@@ -12,6 +12,7 @@ import {
   checkTransitionOpportunity,
   explainCandidatePlayTypeSelection,
 } from '../src/engine/play-types';
+import { PLAY_TYPE_SHOT_ZONES, PLAY_TYPE_SHOT_ZONES_REAL } from '../src/engine/constants';
 import { generateSchedule } from '../src/engine/schedule';
 import { SeededRNG } from '../src/lib/rng';
 import { loadLeaguePool } from './league-pool';
@@ -31,6 +32,27 @@ function hash(value: Buffer): string { return createHash('sha256').update(value)
 function assertFinite(value: unknown, label: string): void { assert.equal(typeof value, 'number', `${label} must be numeric`); assert(Number.isFinite(value), `${label} must be finite`); }
 
 async function main(): Promise<void> {
+  // S2c2 dual-table invariants. weightedChoice self-normalizes, so these are
+  // semantic-share invariants: the table weights are documented and reported
+  // as per-type diet shares, and a silent sum drift would rescale that
+  // reading. The reference-identity check pins the AGENTS.md guard that the
+  // seven unshaded diets are structurally shared and cannot drift apart.
+  const S2C2_OVERRIDDEN = new Set<string>(['cut', 'spot_up']);
+  for (const [tableName, table] of [['PLAY_TYPE_SHOT_ZONES', PLAY_TYPE_SHOT_ZONES], ['PLAY_TYPE_SHOT_ZONES_REAL', PLAY_TYPE_SHOT_ZONES_REAL]] as const) {
+    for (const [playType, zones] of Object.entries(table)) {
+      const sum = zones.reduce((acc, zone) => acc + zone.weight, 0);
+      assert(Math.abs(sum - 1) <= 5e-4, `${tableName}.${playType} weights sum to ${sum.toFixed(6)}, expected 1 ± 0.0005`);
+    }
+  }
+  for (const playType of Object.keys(PLAY_TYPE_SHOT_ZONES) as (keyof typeof PLAY_TYPE_SHOT_ZONES)[]) {
+    if (S2C2_OVERRIDDEN.has(playType)) {
+      assert.notStrictEqual(PLAY_TYPE_SHOT_ZONES_REAL[playType], PLAY_TYPE_SHOT_ZONES[playType], `${playType} must carry a distinct real diet`);
+    } else {
+      assert.strictEqual(PLAY_TYPE_SHOT_ZONES_REAL[playType], PLAY_TYPE_SHOT_ZONES[playType], `${playType} must be structurally shared between the tables`);
+    }
+  }
+  console.log('S2c2 dual-table invariants: OK');
+
   const candidate = await loadLeaguePool(['--league-dir', 'data/league-candidate']);
   const active = await loadLeaguePool([]);
   const teamById = new Map(candidate.teams.map((team) => [team.id, team]));

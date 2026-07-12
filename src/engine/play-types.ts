@@ -242,13 +242,37 @@ export interface ShotZoneContext {
   spacing?: number;
 }
 
-export function selectShotZone(
+/**
+ * Cumulative per-zone weight stages behind selectShotZone, exposed for the
+ * read-only S2c2-R decomposition diagnostic (scripts/diagnose-s2c2-zones.ts).
+ * `final` is the authoritative vector selectShotZone consumes — it is computed
+ * with the exact expression shapes the selector always used, so extracting it
+ * here changes no simulated outcome. The intermediate stages recompute the
+ * same math cumulatively for attribution; ulp-level float reassociation
+ * against `final` is irrelevant to the aggregate shares they exist to report.
+ */
+export interface ShotZoneWeightStages {
+  zones: ShotZone[];
+  /** s0 — raw table diet (shaded or real per the selection config). */
+  table: number[];
+  /** s1 — s0 × player tendency term (threePointRate / midrangeRate / rimRate). */
+  tendency: number[];
+  /** s2 — s1 × shooter outside-ability term (three-point zones only). */
+  ability: number[];
+  /** s3 — s2 × threeBias × global three dampener (threes) and × rim-deterrence multiplier (rim). */
+  dampener: number[];
+  /** s4 — s3 ± additive spacing terms. */
+  spacing: number[];
+  /** s5 — max(0.01, s4): the weights selectShotZone actually consumes. */
+  final: number[];
+}
+
+export function explainShotZoneSelection(
   shooter: Player,
   playType: PlayType,
-  rng: SeededRNG,
   ctx: ShotZoneContext = {},
   selection: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
-): ShotZone {
+): ShotZoneWeightStages {
   const zoneOptions = (selection.shotZones === 'real' ? PLAY_TYPE_SHOT_ZONES_REAL : PLAY_TYPE_SHOT_ZONES)[playType];
   const zones = zoneOptions.map((z) => z.zone);
   const outside = shooter.ratings.outsideShooting / 80;
@@ -262,30 +286,68 @@ export function selectShotZone(
   // no-op. NOTE: this only moves FREQUENCY between zones; three-shot QUALITY is
   // handled separately via the openness term in resolveShot.
   const spacing = ctx.spacing ?? 0;
-  const weights = zoneOptions.map((z) => {
+  const table: number[] = [];
+  const tendency: number[] = [];
+  const ability: number[] = [];
+  const dampener: number[] = [];
+  const spaced: number[] = [];
+  const final: number[] = [];
+  for (const z of zoneOptions) {
     let w = z.weight;
+    table.push(z.weight);
     // Modify based on player shot tendencies and ability. A poor outside shooter
     // both wants to and should rarely launch threes.
     if (z.zone === 'corner_three' || z.zone === 'above_break_three' || z.zone === 'deep_three') {
+      const tendencyTerm = 0.3 + shooter.tendencies.threePointRate * 2.0;
+      const abilityTerm = 0.25 + outside * 1.5;
       // Global dampener pulls the league's three-point share down to ~40% of
       // attempts (real ~35 3PA on ~88 FGA).
-      w *= (0.3 + shooter.tendencies.threePointRate * 2.0) * (0.25 + outside * 1.5) * threeBias * 0.62;
+      w *= tendencyTerm * abilityTerm * threeBias * 0.62;
+      tendency.push(z.weight * tendencyTerm);
+      ability.push(z.weight * tendencyTerm * abilityTerm);
+      dampener.push(w);
       w += SPACING_THREE_FREQ_COEF * spacing; // flat-to-up: small, not the donor
+      spaced.push(w);
     } else if (z.zone === 'short_midrange' || z.zone === 'long_midrange') {
       w *= 0.5 + shooter.tendencies.midrangeRate * 2.0;
+      tendency.push(w);
+      ability.push(w);
+      dampener.push(w);
       w -= SPACING_MID_FREQ_COEF * spacing; // donor zone: shrinks when spacing is good
+      spaced.push(w);
     } else if (z.zone === 'rim') {
+      const tendencyTerm = 0.5 + shooter.tendencies.rimRate * 2.0;
       // Elite rim protection deters attacks at the basket.
-      w *= (0.5 + shooter.tendencies.rimRate * 2.0) * (1 - rimDeterrence * 0.2);
+      w *= tendencyTerm * (1 - rimDeterrence * 0.2);
+      tendency.push(z.weight * tendencyTerm);
+      ability.push(z.weight * tendencyTerm);
+      dampener.push(w);
       // Good spacing opens the rim AND additively relieves rim-protection
       // deterrence (the help defender is occupied), scaled by how much
       // deterrence is present.
       w += (SPACING_RIM_FREQ_COEF + SPACING_RIM_DETER_RELIEF_COEF * rimDeterrence) * spacing;
+      spaced.push(w);
+    } else {
+      // Every ShotZone is rim, mid, or three; unreachable, kept total for safety.
+      tendency.push(w);
+      ability.push(w);
+      dampener.push(w);
+      spaced.push(w);
     }
-    return Math.max(0.01, w);
-  });
+    final.push(Math.max(0.01, w));
+  }
+  return { zones, table, tendency, ability, dampener, spacing: spaced, final };
+}
 
-  return rng.weightedChoice(zones, weights);
+export function selectShotZone(
+  shooter: Player,
+  playType: PlayType,
+  rng: SeededRNG,
+  ctx: ShotZoneContext = {},
+  selection: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
+): ShotZone {
+  const { zones, final } = explainShotZoneSelection(shooter, playType, ctx, selection);
+  return rng.weightedChoice(zones, final);
 }
 
 export function selectPrimaryPlayer(

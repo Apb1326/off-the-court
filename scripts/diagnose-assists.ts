@@ -13,7 +13,11 @@
  *
  * Diagnostic-only; nothing here persists into PlayByPlayEvent or game results.
  *
- * Usage: node --import tsx scripts/diagnose-assists.ts [--games=N]
+ * Usage: node --import tsx scripts/diagnose-assists.ts [--games=N] [--seed=N]
+ *          [--league-dir=<dir>] [--shot-zones=shaded|real]
+ * --league-dir engages the explicit candidate selector; --shot-zones=real
+ * additionally selects the candidate-only real diet table and requires
+ * --league-dir (AGENTS.md S2c2 dual-table guard).
  */
 import { readFile } from 'fs/promises';
 import path from 'path';
@@ -22,7 +26,7 @@ import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
-import { CANDIDATE_PLAY_TYPE_SELECTION } from '../src/engine/play-types';
+import { CANDIDATE_PLAY_TYPE_SELECTION, PlayTypeSelectionConfig } from '../src/engine/play-types';
 import { generateSchedule } from '../src/engine/schedule';
 import { createAssistMeasurements } from './assist-measurement';
 
@@ -35,11 +39,8 @@ interface ZoneAgg {
   // terminal play type splits (attempts / assisted makes)
   termAtt: Map<PlayType, number>;
   termAssisted: Map<PlayType, number>;
-  // attempt provenance
-  zeroPassAtt: number;          // shot by the initial actor (never assisted)
-  passAtt: number;              // shot after >=1 pass (assist-eligible)
-  initialSpotUpZeroPass: number; // zero-pass attempts whose initial type was spot_up/off_screen (real-life catch-and-shoot)
-  initialCsZeroPassMade: number; // makes among those
+  // attempt provenance (pass/catch-and-shoot classification lives in the
+  // shared measurement module — scripts/assist-measurement.ts — not here)
   dtAtt: number;                // initial ball-handler doubled
   advAtt: number;               // advantage cashed before the shot
 }
@@ -48,7 +49,6 @@ function newZoneAgg(): ZoneAgg {
   return {
     att: 0, made: 0, assistedMade: 0,
     termAtt: new Map(), termAssisted: new Map(),
-    zeroPassAtt: 0, passAtt: 0, initialSpotUpZeroPass: 0, initialCsZeroPassMade: 0,
     dtAtt: 0, advAtt: 0,
   };
 }
@@ -58,11 +58,20 @@ function arg(name: string): string | undefined {
 }
 
 async function main() {
+  for (const a of process.argv.slice(2)) {
+    if (!/^--(games|seed|league-dir|shot-zones)=/.test(a)) throw new Error(`Unknown argument: ${a}`);
+  }
   const cap = arg('games') ? parseInt(arg('games')!, 10) : Infinity;
   const seedText = arg('seed') ?? '2026';
   const seed = Number(seedText);
   if (!Number.isSafeInteger(seed) || seed < 1 || seed > 2_000_000_000) throw new Error('--seed must be an integer in 1..2000000000');
   const leagueDir = arg('league-dir');
+  const shotZonesArg = arg('shot-zones') ?? 'shaded';
+  if (shotZonesArg !== 'shaded' && shotZonesArg !== 'real') throw new Error('--shot-zones must be shaded or real');
+  if (shotZonesArg === 'real' && !leagueDir) throw new Error('--shot-zones=real is a candidate evaluation input; pass --league-dir (AGENTS.md S2c2 dual-table guard)');
+  const selection: PlayTypeSelectionConfig | undefined = leagueDir
+    ? (shotZonesArg === 'real' ? Object.freeze({ ...CANDIDATE_PLAY_TYPE_SELECTION, shotZones: 'real' as const }) : CANDIDATE_PLAY_TYPE_SELECTION)
+    : undefined;
   const DATA_DIR = path.resolve(process.cwd(), leagueDir ?? 'data');
   const teams: Team[] = JSON.parse(await readFile(path.join(DATA_DIR, 'teams.json'), 'utf-8'));
   const players: Player[] = JSON.parse(await readFile(path.join(DATA_DIR, 'players.json'), 'utf-8'));
@@ -100,15 +109,6 @@ async function main() {
         agg.att++;
         passCountShots.set(s.passCount, (passCountShots.get(s.passCount) ?? 0) + 1);
         agg.termAtt.set(s.terminalPlayType, (agg.termAtt.get(s.terminalPlayType) ?? 0) + 1);
-        if (s.passCount === 0) {
-          agg.zeroPassAtt++;
-          if (s.initialPlayType === 'spot_up' || s.initialPlayType === 'off_screen') {
-            agg.initialSpotUpZeroPass++;
-            if (s.made) agg.initialCsZeroPassMade++;
-          }
-        } else {
-          agg.passAtt++;
-        }
         if (s.initialDoubled) agg.dtAtt++;
         if (s.advantageCashed) agg.advAtt++;
         if (s.made) {
@@ -116,22 +116,23 @@ async function main() {
           if (s.assisted) agg.assistedMade++;
         }
       },
-    }, leagueDir ? CANDIDATE_PLAY_TYPE_SELECTION : undefined);
+    }, selection);
   }
 
-  console.log(`\n=== S1-Rb assisted-zone diagnosis — ${played} games, seed ${seed} ===\n`);
+  console.log(`\n=== Assisted-zone diagnosis (S1-Rb instrument) — ${played} games, seed ${seed}, pool ${leagueDir ?? 'data (active)'}, selector ${leagueDir ? 'candidate' : 'legacy'}, zones ${leagueDir ? shotZonesArg : 'shaded'} ===\n`);
   console.log('Zone'.padEnd(20) + 'att'.padStart(8) + 'made'.padStart(8) + 'astMade'.padStart(9) +
     'astRate'.padStart(9) + '0-pass%'.padStart(9) + 'CS-0p%'.padStart(8) + 'dt%'.padStart(7) + 'adv%'.padStart(7));
   for (const z of ZONES) {
     const a = byZone.get(z)!;
+    const shared = measurements.byZone.get(z)!;
     console.log(
       z.padEnd(20) +
       String(a.att).padStart(8) +
       String(a.made).padStart(8) +
       String(a.assistedMade).padStart(9) +
       ((a.assistedMade / a.made) * 100).toFixed(1).padStart(9) +
-      ((a.zeroPassAtt / a.att) * 100).toFixed(1).padStart(9) +
-      ((a.initialSpotUpZeroPass / a.att) * 100).toFixed(1).padStart(8) +
+      ((shared.zeroPassAttempts / shared.attempts) * 100).toFixed(1).padStart(9) +
+      ((shared.catchAndShootZeroPassAttempts / shared.attempts) * 100).toFixed(1).padStart(8) +
       ((a.dtAtt / a.att) * 100).toFixed(1).padStart(7) +
       ((a.advAtt / a.att) * 100).toFixed(1).padStart(7),
     );
@@ -160,7 +161,6 @@ async function main() {
   // remap — measurement only, no engine change.
   console.log('\nCounterfactual: NBA-style definition (0-pass spot_up/off_screen makes counted assisted):');
   for (const z of ZONES) {
-    const a = byZone.get(z)!;
     const shared = measurements.byZone.get(z)!;
     console.log(`  ${z.padEnd(20)} chain ${((shared.strict / shared.made) * 100).toFixed(1)}%  ->  remapped ${((shared.proxy / shared.made) * 100).toFixed(1)}%`);
   }

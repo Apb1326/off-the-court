@@ -59,6 +59,13 @@ export interface GameState {
     made: boolean;
     assisted: boolean;
     emittedPlayType: PlayType;
+    /** The exact selectShotZone inputs for this shot (shooter = finisher,
+     * play type = terminalPlayType), so read-only diagnostics can reproduce
+     * the zone-weight stages offline (S2c2-R decomposition). */
+    shooterId: string;
+    zoneThreePointBias: number;
+    zoneRimDeterrence: number;
+    zoneSpacing: number;
   }) => void;
   diagInitialSelection?: (info: Parameters<NonNullable<import('./index').GameDiagObserver['onInitialSelection']>>[0]) => void;
   diagPrimarySelection?: (info: Parameters<NonNullable<import('./index').GameDiagObserver['onPrimarySelection']>>[0]) => void;
@@ -398,8 +405,9 @@ export function simulatePossession(
   // Shot attempt — shaped by rim protection, late-game three-point chasing, and
   // lineup spacing (good spacing opens the rim, mid-range donates, threes flat-
   // to-up).
+  const shotThreePointBias = threePointBias(ctx);
   const shotZone = selectShotZone(finisher, finisherPlayType, state.rng, {
-    threePointBias: threePointBias(ctx),
+    threePointBias: shotThreePointBias,
     rimDeterrence,
     spacing,
   }, state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION);
@@ -443,6 +451,10 @@ export function simulatePossession(
     made: shotResult.made,
     assisted: shotResult.made && assister !== undefined,
     emittedPlayType: eventPlayType,
+    shooterId: finisher.id,
+    zoneThreePointBias: shotThreePointBias,
+    zoneRimDeterrence: rimDeterrence,
+    zoneSpacing: spacing,
   });
 
   // Record FGA
