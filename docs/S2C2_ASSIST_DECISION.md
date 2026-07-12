@@ -24,3 +24,12 @@ team-game; per-zone rates remain informational. Deliberately loosening engine
 assist-credit mechanics was considered and explicitly not chosen. If wanted,
 that is an S3.g engine-mechanics item. The proxy rates are reference data
 eligible for S2d's `PLAY_TYPE_PASS_RATE` retune; S2c2 does not change it.
+
+**Caveat for that S2d use (added by S2c2-R, 2026-07-12):** the proxy
+reproduces only the corner-highest predicate, and by a compressed margin —
+candidate corner 92.2% vs next-highest deep 86.2% (6.0pp), against the NBA's
+96.7% vs 80.8% (~16pp) — while overshooting the mid-range zones badly
+(long-mid proxy 70.2% vs real 46.2%) and inverting parts of the real ordering
+(proxy has rim lowest; the NBA has long-mid lowest). Treat the proxy as a
+sign-structure reference, not a per-zone level target, when retuning
+`PLAY_TYPE_PASS_RATE`.
