@@ -9,7 +9,7 @@ import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
 import { normalizePlayersForSave } from '@/transactions/contracts';
 import { resolveSeedFromBody } from '@/lib/seed';
-import { validatePool } from '@/lib/pool-validation';
+import { loadProductionPool } from '@/lib/production-pool';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -180,16 +180,13 @@ export async function POST(request: NextRequest) {
     // Snapshot the global roster template into a fresh, independent save.
     // A save is built from this snapshot exactly once, so a torn or invalid
     // pool must be rejected here — the script-side gates don't cover runtime.
-    const store = getStore();
-    const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
-    if (teams.length === 0) {
-      return NextResponse.json({ error: 'Need teams. Run npm run build-league first.' }, { status: 400 });
-    }
+    let teams: Team[];
+    let players: Player[];
     try {
-      validatePool(teams, players, 'data');
+      ({ teams, players } = loadProductionPool(`${process.cwd()}/data`));
     } catch (error) {
       return NextResponse.json(
-        { error: `League data failed validation — re-run npm run build-league. (${(error as Error).message})` },
+        { error: `League data failed production validation — re-run npm run build-league. (${(error as Error).message})` },
         { status: 500 },
       );
     }

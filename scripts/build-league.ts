@@ -28,7 +28,7 @@ import { createHash } from 'crypto';
 
 import { Player, Position, PerGameStats, SeasonStats } from '../src/models/player';
 import { Team, OffensiveSystem, DefensiveSystem, NBA_TEAMS } from '../src/models/team';
-import { deriveRatings, deriveTendencies, derivePotential } from '../src/ratings/derivation';
+import { derivePotential } from '../src/ratings/derivation';
 import {
   deriveNbaRatings,
   NbaDerivationInput,
@@ -549,12 +549,6 @@ function buildLeague(): BuildResult {
     const gp2026 = boxRow.gp === null || !Number.isFinite(boxRow.gp) ? 0 : boxRow.gp;
     const mpg2026 = boxRow.mpg === null || !Number.isFinite(boxRow.mpg) ? 0 : boxRow.mpg;
 
-    // PLACEHOLDER — S2b replaces ratings, S2c replaces tendencies. Do not tune against this pool.
-    const raw = { gamesPlayed: gp2026, minutesPerGame: mpg2026, stats: current.stats, position, age, experience };
-    const ratings = deriveRatings(raw);
-    const tendencies = deriveTendencies(raw);
-    const potential = derivePotential(ratings, age, experience);
-
     // Build in model key order; teamId set to sentinel now, corrected by roster assignment + normalize.
     const player: Player = {
       id,
@@ -568,10 +562,12 @@ function buildLeague(): BuildResult {
       experience,
       teamId: FREE_AGENT_TEAM_ID,
       jerseyNumber: 0, // players contract carries no jersey — universal fallback (reported as an aggregate)
-      ratings,
-      potential,
+      // S2d overwrites these placeholders from the sole NBA-derived ratings
+      // and tendency passes below. Keep no legacy derivation execution here.
+      ratings: {} as Player['ratings'],
+      potential: {} as Player['potential'],
       scoutingAccuracy: SCOUTING_ACCURACY,
-      tendencies,
+      tendencies: {} as Player['tendencies'],
       contract: { type: 'minimum', salarySchedule: [], noTradeClause: false }, // placeholder, overwritten next line
       health: { healthy: true },
       careerStats,

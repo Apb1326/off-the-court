@@ -1,7 +1,9 @@
 # S2d — Preflight evidence
 
-> Recorded before S2d activation edits. Local checkout was fast-forwarded to
-> `origin/main` `9ee5dfa` (including the S2c2-R repair); the worktree was clean.
+> **Frozen historical pre-activation evidence.** Recorded before S2d activation edits.
+> Local checkout was fast-forwarded to `origin/main` `9ee5dfa` (including the S2c2-R
+> repair); the worktree was clean. Candidate-only generator checks below are historical
+> results, not current commands.
 
 ## Required local artifacts
 
@@ -16,10 +18,10 @@
 | --- | --- |
 | `npm run typecheck` | PASS |
 | `validate-nba-data` | PASS (211 passed, 0 failed, 80 intentionally unharvested skips) |
-| `build-league --check` | PASS (candidate JSON and all three generated S2 contracts byte-identical) |
+| Historical builder check | PASS (candidate JSON and all three generated S2 contracts byte-identical) |
 | `test-build-league` | PASS (30 teams, 582 players, 450 rostered; deterministic) |
-| `report-s2c2 --base-commit=67cb8f0 --check` | PASS |
-| Candidate real-diet decomposition, seed 2026 | PASS; zero skipped stage vectors |
+| Historical S2c2 report reproducibility check | PASS; generator retired at S2d activation |
+| Historical candidate real-diet decomposition, seed 2026 | PASS; zero skipped stage vectors |
 | Determinism | PASS |
 | Spacing A/B | PASS (+16.0pp rim-attempt rate, +6.0pp TS%) |
 | Defensive versatility A/B | PASS |
@@ -38,8 +40,8 @@ verification commands that invoke it were run through the documented equivalent
 
 ## Binding decomposition snapshot
 
-`diagnose-s2c2-zones.ts --league-dir=data/league-candidate --shot-zones=real --seed=2026`
-measured, in percentage points: tendencies/ability move toward threes modestly;
+The pre-activation candidate decomposition measured, in percentage points:
+tendencies/ability move toward threes modestly;
 the global dampener/deterrence then moves rim `+3.00`, short mid `+2.92`, long
 mid `+1.32`, corner three `-1.64`, above-break three `-4.30`, and deep three
 `-1.29`; the old spacing baseline then moves rim `-4.32`, short mid `+3.55`,

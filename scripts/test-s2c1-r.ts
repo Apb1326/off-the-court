@@ -1,7 +1,8 @@
 /** S2d activation harness (keeps the historical filename for existing callers). */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as constants from '../src/engine/constants';
 import * as playTypes from '../src/engine/play-types';
@@ -13,16 +14,16 @@ import { Player } from '../src/models/player';
 import { migrateSaveFile } from '../src/data/saves/migrations';
 import { FREE_AGENT_TEAM_ID } from '../src/transactions/constants';
 import { loadActivationContext, printActivationContextBanner } from './s2d-activation-context';
+import { assertNbaDerivedPoolIdentity, loadProductionPool } from '../src/lib/production-pool';
+import { validatePool } from '../src/lib/pool-validation';
 
 const root = process.cwd();
-const teams = JSON.parse(readFileSync(path.join(root, 'data', 'teams.json'), 'utf8')) as Team[];
-const players = JSON.parse(readFileSync(path.join(root, 'data', 'players.json'), 'utf8')) as Player[];
-const byTeam = new Map<string, Player[]>(teams.map((team) => [team.id, []]));
-for (const player of players) if (player.teamId && byTeam.has(player.teamId)) byTeam.get(player.teamId)!.push(player);
-const S2C1_R_TERMINAL_OUTCOMES = new Set(['made_shot', 'missed_shot', 'and_one', 'turnover']);
+const S2D_TERMINAL_OUTCOMES = new Set(['made_shot', 'missed_shot', 'and_one', 'turnover']);
 
-function distribution(seed: number): Map<string, number> {
+function distribution(teams: Team[], players: Player[], seed: number): Map<string, number> {
   const rng = new SeededRNG(seed); const counts = new Map<string, number>();
+  const byTeam = new Map<string, Player[]>(teams.map((team) => [team.id, []]));
+  for (const player of players) if (player.teamId && byTeam.has(player.teamId)) byTeam.get(player.teamId)!.push(player);
   const teamById = new Map(teams.map((team) => [team.id, team]));
   let games = 0;
   for (const scheduled of generateSchedule(teams, rng)) {
@@ -32,20 +33,19 @@ function distribution(seed: number): Map<string, number> {
     games++;
     const sim = simulateGame(home, away, hp, ap, scheduled.id, 's2d', `day-${scheduled.day}`, rng.nextInt(1, 2_000_000_000));
     for (const event of sim.playByPlay) {
-      // S2c1-R accepted the candidate selector against the emitted terminal
-      // possession stream. Candidate semantics label every terminal event by
-      // its originating action, including and-ones and turnovers; restricting
-      // the denominator to field-goal attempts instead measures downstream
-      // shot resolution rather than selector behavior.
-      if (S2C1_R_TERMINAL_OUTCOMES.has(event.outcome)) counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
+      // S2d's sole production selector is measured through the emitted
+      // terminal possession stream. This includes and-ones and turnovers:
+      // filtering to field-goal attempts would measure downstream resolution,
+      // not the selector's action mix.
+      if (S2D_TERMINAL_OUTCOMES.has(event.outcome)) counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
     }
   }
   assert.equal(games, 1290, 'full production schedule must be playable');
   return counts;
 }
 
-function terminalBandError(seed: number): number {
-  const counts = distribution(seed); const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+function terminalBandError(teams: Team[], players: Player[], seed: number): number {
+  const counts = distribution(teams, players, seed); const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
   const target: Record<string, number> = {
     isolation: 0.0819,
     pick_and_roll: 0.254,
@@ -58,7 +58,7 @@ function terminalBandError(seed: number): number {
   };
   let absolute = 0;
   for (const [type, expected] of Object.entries(target)) absolute += Math.abs((counts.get(type) ?? 0) / total - expected);
-  assert.deepEqual(distribution(seed), counts, `seed ${seed} terminal distribution must be byte-stable on repeat`);
+  assert.deepEqual(distribution(teams, players, seed), counts, `seed ${seed} terminal distribution must be byte-stable on repeat`);
   console.log(`seed ${seed}: terminal total abs ${(absolute * 100).toFixed(2)}pp (${absolute <= 0.06 ? 'IN BAND' : 'OUT OF BAND'})`);
   return absolute;
 }
@@ -98,9 +98,43 @@ function assertProfileHasNoSelectionInterface(): void {
   }
 }
 
+function assertProductionPoolGates(teams: Team[], players: Player[]): void {
+  const missingMinuteTarget = structuredClone(teams);
+  delete missingMinuteTarget[0].rotation.minuteTargets[missingMinuteTarget[0].roster[0]];
+  assert.throws(
+    () => validatePool(missingMinuteTarget, players, 'missing-minute-target harness pool'),
+    /minuteTargets must cover every rotation player exactly once/,
+    'pool validation must reject a missing rotation minute target',
+  );
+  assert.throws(
+    () => assertNbaDerivedPoolIdentity([{ ...teams[0], id: 'synthetic_team_1' }, ...teams.slice(1)], players, 'synthetic harness pool'),
+    /NBA-derived nba_team_<teamId>/,
+    'the runtime identity gate must reject a synthetic team pool',
+  );
+
+  // A structurally valid JSON pair with even a whitespace-only byte change is
+  // not promotable at runtime unless its builder-owned manifest matches it.
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'otc-s2d-manifest-gate-'));
+  try {
+    const dataDir = path.join(root, 'data');
+    copyFileSync(path.join(dataDir, 'teams.json'), path.join(scratch, 'teams.json'));
+    copyFileSync(path.join(dataDir, 'players.json'), path.join(scratch, 'players.json'));
+    copyFileSync(path.join(dataDir, '.league-manifest.json'), path.join(scratch, '.league-manifest.json'));
+    writeFileSync(path.join(scratch, 'teams.json'), `${readFileSync(path.join(scratch, 'teams.json'), 'utf8')} `, 'utf8');
+    assert.throws(
+      () => loadProductionPool(scratch),
+      /does not hash-match the promotion manifest/,
+      'the runtime manifest gate must reject a mismatched pair',
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   const context = await loadActivationContext();
   printActivationContextBanner(context);
+  const { teams, players } = context;
   assert.equal(teams.length, 30);
   assert.ok(players.length > 0 && players.every((player) => player.id.startsWith('nba_')), 'new-game production template must be NBA-derived');
   assert.equal('PLAY_TYPE_SHOT_ZONES_REAL' in constants, false, 'dual shot-zone table must be retired');
@@ -108,7 +142,8 @@ async function main(): Promise<void> {
   assert.equal('CANDIDATE_PLAY_TYPE_SELECTION' in playTypes, false, 'candidate selector switch must be retired');
   assertProfileHasNoSelectionInterface();
   assertFtInverse();
-  const terminalErrors = [2026, 7, 42].map((seed) => [seed, terminalBandError(seed)] as const);
+  assertProductionPoolGates(teams, players);
+  const terminalErrors = [2026, 7, 42].map((seed) => [seed, terminalBandError(teams, players, seed)] as const);
   for (const [seed, error] of terminalErrors) {
     assert.ok(error <= 0.06, `seed ${seed} play-type terminal total absolute error ${error.toFixed(4)} exceeds 0.06`);
   }

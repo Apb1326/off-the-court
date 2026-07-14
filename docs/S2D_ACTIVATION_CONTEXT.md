@@ -1,11 +1,14 @@
 # S2d activation-context diagnosis
 
-> Diagnosis-only record, 2026-07-12. It records the active runtime context;
-> it does not promote artifacts, retune constants, or change game behavior.
+> **Frozen historical diagnosis (2026-07-12).** This records the pre-retune
+> activation context and its failing selector-band measurement; it does not describe
+> the current acceptance result. Current status and the post-correction evidence live
+> in `docs/PROJECT_STATUS.md` and `docs/ROADMAP.md`. It does not promote artifacts,
+> retune constants, or change game behavior.
 
 ## Verdict
 
-The current profile run uses the active NBA-derived pool, the sole production
+At the time of this diagnosis, the profile run used the active NBA-derived pool, the sole production
 selector, and the sole production shot-zone table. Its numerical output is
 therefore context-valid for S2d interpretation. It is **not** an S2d acceptance
 run: the profile has 16 of 32 enforced rows out of tolerance, and the focused
