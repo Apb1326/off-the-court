@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-14 · **Commit:** `28d3925` + the S2d activation/retune (verified pre-commit on the working tree) · **Save schema:** v7 · **NBA data schema:** 3
+> **Date:** 2026-07-14 · **Base commit:** `db5e27e` (`codex/s2d-activation`) + an **uncommitted S2d correction** (final review pending; no correction commit exists yet) · **Save schema:** v7 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -11,9 +11,43 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (2026-07-14 run — S2d acceptance)
+## Verification evidence (2026-07-14 run — S2d correction candidate)
 
-All commands run on the S2d working tree atop `28d3925` on the working machine
+The correction candidate is based on `db5e27e` and remains uncommitted pending the
+final read-only review. It adds one runtime production-pool gate shared by new-game
+creation and activation-context checks: the exact active JSON pair is read once,
+structurally validated (including complete `rotation.minuteTargets`), required to use
+NBA-derived IDs, hash-matched to the builder-owned manifest, and matched to the sole
+selector/table identities. The builder no longer executes the retired heuristic
+ratings/tendency derivation before overwriting its values. The historical
+`test-s2c1-r.ts` filename now tests the active production terminal-event contract.
+
+### Correction verification (before/after)
+
+All commands below ran on the same ignored active data pair; no data artifact was
+regenerated. Profile and calibrate output were byte-identical before and after the
+correction (zero numerical deltas).
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS (clean) |
+| `node --import tsx scripts/build-league.ts --check` | PASS — promotion invariants, manifest/production identities, and both active JSON files byte-identical |
+| `npm run profile` | PASS (32/32 enforced); before = after stdout SHA-256 `c37dfded336b446e344f592e97a8c913aea2d4894602d86b06b3d5392de5438e` |
+| `npm run calibrate` | PASS (exit 0); before = after stdout SHA-256 `5d097b907f7869ff9fc97c4c82778fe1b66354008bb38cc479ad262491c4b8c7`; engine row unchanged at 114.0 PTS/tm, SD 12.3, margin 12.3, home 58.5% |
+| `node --import tsx scripts/test-determinism.ts` | PASS — seeds 42, 7, 123, and 2026 each produced identical box-score and play-by-play hashes on repeat |
+| `node --import tsx scripts/test-spacing-ab.ts` | PASS — rim-attempt delta +6.5 points; true-shooting delta +2.9 points |
+| `node --import tsx scripts/test-s2c1-r.ts` | PASS — production manifest/identity and synthetic/mismatched-pool rejection checks; active terminal total absolute errors: seed 2026 4.55pp, seed 7 4.43pp, seed 42 4.28pp (each within 6.00pp) |
+
+Active-pair proof for every correction run: `teams.json`
+`9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9`,
+`players.json` `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24`;
+selector `nba-derived-tendency-selector-v1`; table `PLAY_TYPE_SHOT_ZONES`;
+manifest `verified`. These are measurements/provenance; final status remains with the
+final reviewer.
+
+### Activation acceptance evidence (pre-correction)
+
+All commands run on the prior S2d activation working tree on the working machine
 (node v24.17.0 via nvm — not on PATH by default;
 `export PATH="$HOME/.nvm/versions/node/v24.17.0/bin:$PATH"` first; the sandboxed
 `tsx` CLI cannot open its IPC pipe here, so npm-wired commands were run through the
