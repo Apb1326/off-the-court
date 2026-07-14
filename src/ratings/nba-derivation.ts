@@ -17,7 +17,6 @@ import {
   FT_SIM_PCT_MAX,
   FT_SIM_PCT_MIN,
 } from '../engine/constants';
-import { ratingToModifier } from '../engine/shot';
 
 export const RATING_KEYS = [
   'outsideShooting', 'midrangeShooting', 'interiorScoring', 'freeThrowShooting',
@@ -56,6 +55,30 @@ export const FREE_THROW_TARGET_SD = 8.25;
 export const FREE_THROW_MEAN_TOLERANCE = 2.25;
 /** Weak-link defense needs distinct perimeter/interior signals, not one interchangeable rating. */
 export const PERIMETER_INTERIOR_DEFENSE_R_MAX = 0.70;
+/**
+ * Fixed S2b compatibility target SDs, frozen at S2d activation.
+ *
+ * Provenance: per-rating `standardDeviation()` over the retired heuristic
+ * active pool (`data/players.json` as of the S2d preflight, repo at commit
+ * 9ee5dfa, 2026-07-12) — the values the pre-S2d builder derived at build time.
+ * The source pool was overwritten at promotion and no copy survives, so these
+ * cannot be re-derived; they are now
+ * ordinary tuning constants. Per ROADMAP §"Center and spread" they are
+ * compatibility priors, NOT empirical truth: adjust deliberately, with
+ * profile evidence, when a rating's spread should change — never by
+ * re-snapshotting whatever pool happens to be active.
+ */
+export const S2B_TARGET_SDS: Record<RatingKey, number> = {
+  outsideShooting: 14.332552935488, midrangeShooting: 14.293164473580,
+  interiorScoring: 12.878931833376, freeThrowShooting: FREE_THROW_TARGET_SD,
+  ballHandling: 13.414714926446, passing: 10.285200005365,
+  offensiveIQ: 10.697189450655, perimeterDefense: 8.782679774367,
+  interiorDefense: 10.685463129953, defensiveIQ: 8.653630777845,
+  steal: 11.590999574363, block: 9.669353759438,
+  athleticism: 9.153571748241, strength: 10.048293219099,
+  rebounding: 10.510453289826, stamina: 14.941098686540,
+  durability: 16.087959546531,
+};
 
 export interface ZoneAggregate {
   fgm: number;
@@ -88,7 +111,6 @@ export interface NbaDerivationPlayer {
 export interface NbaDerivationInput {
   players: ReadonlyArray<NbaDerivationPlayer>;
   rosteredPersonIds: ReadonlySet<number>;
-  activeRatings: ReadonlyArray<PlayerRatings>;
 }
 
 interface Metric {
@@ -114,24 +136,11 @@ export interface FallbackLogEntry {
   reason: string;
 }
 
-export interface RatingDistribution {
-  mean: number;
-  sd: number;
-  p1: number;
-  p99: number;
-  count75Plus: number;
-  targetSd: number;
-}
-
 export interface NbaDerivationResult {
   ratingsByPerson: Map<number, PlayerRatings>;
   continuousFreeThrowRatings: Map<number, number>;
   freeThrowPercentages: Map<number, number>;
   fallbackLog: FallbackLogEntry[];
-  distributions: Record<RatingKey, RatingDistribution>;
-  currentDistributions: Record<RatingKey, RatingDistribution>;
-  rawScores: Map<number, Record<RatingKey, number>>;
-  inputsByPerson: Map<number, string[]>;
   rosteredPersonIds: ReadonlySet<number>;
 }
 
@@ -534,17 +543,6 @@ function inverseNormal(p: number): number {
     (((((b[0] * s + b[1]) * s + b[2]) * s + b[3]) * s + b[4]) * s + 1);
 }
 
-function pearson(a: readonly number[], b: readonly number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0;
-  const ma = mean(a); const mb = mean(b);
-  let numerator = 0; let aa = 0; let bb = 0;
-  for (let i = 0; i < a.length; i++) {
-    const da = a[i] - ma; const db = b[i] - mb;
-    numerator += da * db; aa += da * da; bb += db * db;
-  }
-  return aa > EPSILON && bb > EPSILON ? numerator / Math.sqrt(aa * bb) : 0;
-}
-
 export function freeThrowPctFromRating(rating: number): number {
   return clamp(FT_LEAGUE_AVG_PCT + ((rating - 40) / 40) * FT_PCT_SLOPE, FT_SIM_PCT_MIN, FT_SIM_PCT_MAX);
 }
@@ -573,23 +571,6 @@ export function blendScore(rating: RatingKey, standardized: (id: string) => numb
     case 'durability': return standardized('durability.gp');
     case 'freeThrowShooting': return standardized('ft.accuracy');
   }
-}
-
-function distribution(values: readonly number[], targetSd: number): RatingDistribution {
-  const sorted = [...values].sort((a, b) => a - b);
-  return {
-    mean: mean(values), sd: standardDeviation(values),
-    p1: sorted[Math.floor((sorted.length - 1) * 0.01)] ?? 0,
-    p99: sorted[Math.ceil((sorted.length - 1) * 0.99)] ?? 0,
-    count75Plus: values.filter((value) => value >= 75).length,
-    targetSd,
-  };
-}
-
-function activeTargetSd(active: readonly PlayerRatings[], rating: RatingKey): number {
-  return rating === 'freeThrowShooting'
-    ? FREE_THROW_TARGET_SD
-    : Math.max(4, standardDeviation(active.map((player) => player[rating])));
 }
 
 export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult {
@@ -688,7 +669,7 @@ export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult
       const rosterMean = mean(rosterZ);
       const rosterSd = standardDeviation(rosterZ);
       if (rosterSd <= EPSILON) throw new Error(`S2b ${rating} quantile distribution is degenerate`);
-      const target = activeTargetSd(input.activeRatings, rating);
+      const target = S2B_TARGET_SDS[rating];
       for (const player of work) {
         const continuous = 40 + target * ((zByPerson.get(player.input.personId)! - rosterMean) / rosterSd);
         scores.set(player.input.personId, clampRating(continuous));
@@ -704,139 +685,9 @@ export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult
     ratingsByPerson.set(player.input.personId, ratings);
   }
 
-  const distributions = {} as Record<RatingKey, RatingDistribution>;
-  const currentDistributions = {} as Record<RatingKey, RatingDistribution>;
-  for (const rating of RATING_KEYS) {
-    const target = activeTargetSd(input.activeRatings, rating);
-    distributions[rating] = distribution(rostered.map((player) => ratingsByPerson.get(player.input.personId)![rating]), target);
-    currentDistributions[rating] = distribution(input.activeRatings.map((player) => player[rating]), target);
-  }
-  const inputsByPerson = new Map<number, string[]>();
-  for (const player of work) {
-    const details = RATING_KEYS.flatMap((rating) => player.metrics[rating].map((item) => `${item.label}=${item.value.toFixed(4)} (n=${item.n.toFixed(1)})`));
-    details.push(`resolved wingspanCm=${player.resolvedWingspanCm.toFixed(1)}`);
-    inputsByPerson.set(player.input.personId, details);
-  }
   return {
     ratingsByPerson, continuousFreeThrowRatings, freeThrowPercentages,
     fallbackLog: fallbackLog.sort((a, b) => a.playerId.localeCompare(b.playerId) || a.field.localeCompare(b.field) || a.reason.localeCompare(b.reason)),
-    distributions, currentDistributions, rawScores: new Map(work.map((player) => [player.input.personId, player.rawScore])),
-    inputsByPerson, rosteredPersonIds: input.rosteredPersonIds,
+    rosteredPersonIds: input.rosteredPersonIds,
   };
-}
-
-function matrixLines(title: string, players: readonly { values: Record<RatingKey, number> }[]): string[] {
-  const headers = RATING_KEYS.map((key) => key.slice(0, 8).padEnd(8)).join(' ');
-  const lines = [`### ${title}`, '', '```text', `         ${headers}`];
-  for (const row of RATING_KEYS) {
-    const values = RATING_KEYS.map((column) => pearson(
-      players.map((player) => player.values[row]),
-      players.map((player) => player.values[column]),
-    ));
-    lines.push(`${row.slice(0, 8).padEnd(8)} ${values.map((value) => value.toFixed(2).padStart(8)).join(' ')}`);
-  }
-  lines.push('```');
-  return lines;
-}
-
-function correlationDeltas(
-  left: readonly { values: Record<RatingKey, number> }[],
-  right: readonly { values: Record<RatingKey, number> }[],
-): { pair: string; left: number; right: number; delta: number }[] {
-  const out: { pair: string; left: number; right: number; delta: number }[] = [];
-  for (let i = 0; i < RATING_KEYS.length; i++) {
-    for (let j = i + 1; j < RATING_KEYS.length; j++) {
-      const a = RATING_KEYS[i]; const b = RATING_KEYS[j];
-      const l = pearson(left.map((player) => player.values[a]), left.map((player) => player.values[b]));
-      const r = pearson(right.map((player) => player.values[a]), right.map((player) => player.values[b]));
-      out.push({ pair: `${a} / ${b}`, left: l, right: r, delta: Math.abs(l - r) });
-    }
-  }
-  return out.sort((a, b) => b.delta - a.delta || a.pair.localeCompare(b.pair)).slice(0, 10);
-}
-
-function histogram(values: readonly number[]): number[] {
-  const bins = [-0.11, -0.08, -0.05, -0.02, 0.01, 0.04, 0.07, 0.10];
-  const counts = new Array(bins.length + 1).fill(0) as number[];
-  for (const value of values) {
-    let index = bins.findIndex((edge) => value < edge);
-    if (index < 0) index = bins.length;
-    counts[index]++;
-  }
-  return counts;
-}
-
-const RATING_DOCUMENTATION: Record<RatingKey, string> = {
-  outsideShooting: 'shot_zones corner efficiency plus shot_events above-break/deep efficiency (85%) + attempt volume (15%); three-season recency window; k=240; percentile-to-truncated-normal.',
-  midrangeShooting: 'shot_zones paint-non-RA plus shot_events <14-ft / >=14-ft midrange efficiency (85%) + attempt volume (15%); three-season recency window; k=160; percentile-to-truncated-normal.',
-  interiorScoring: 'shot_zones rim plus Stage-1 short-mid efficiency (85%) + attempt volume (15%); three-season recency window; k=200; percentile-to-truncated-normal.',
-  freeThrowShooting: 'box_advanced ftPct, FTA-weighted three-season shrinkage; k=40; exact FT inverse then integer quantization (no percentile map).',
-  ballHandling: 'usage-normalized tmTovPct turnover ratio (negative 55%), AST/TO (25%), tracking passes/min (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
-  passing: 'AST% (55%), tracking adjusted assists/pass (30%), passes/min (15%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
-  offensiveIQ: 'AST/TO (45%), usage-normalized tmTovPct turnover ratio negative (35%), secondary assists/pass (20%); 2025-26 tracking + three-season box; k=400; percentile-to-truncated-normal.',
-  perimeterDefense: 'defended three-pointers expected-minus-allowed FG% (70%) plus guard matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
-  interiorDefense: 'defended less-than-6-ft expected-minus-allowed FG% (70%) plus center matchup FG% negative (30%); 2025-26 defense; k=300; percentile-to-truncated-normal.',
-  defensiveIQ: 'defended FG delta (60%), all-matchup FG% negative (20%), deflections/min (20%); 2025-26 defense/hustle; k=350; percentile-to-truncated-normal.',
-  steal: 'box_advanced per100 steals, possession-weighted three-season rate; k=350; percentile-to-truncated-normal.',
-  block: 'box_advanced per100 blocks, possession-weighted three-season rate; k=350; percentile-to-truncated-normal.',
-  athleticism: 'tracking average speed (60%), distance/min (25%), measured wingspan/height (15%); 2025-26 tracking and deterministic wingspan fallback; measured biometrics bypass shrinkage; k=900 for non-biometric inputs; percentile-to-truncated-normal. avgSpeed measures movement volume/speed in role, not athletic ceiling; accepted for S2b because no better harvested source exists.',
-  strength: 'measured BMI (75%) plus measured wingspan/height (25%); 2025-26 biometrics and deterministic wingspan fallback; measured biometrics bypass shrinkage; missing measurements use position priors; percentile-to-truncated-normal.',
-  rebounding: 'reb% (80%) plus hustle box-outs/min (20%); three-season box + 2025-26 hustle; k=400; percentile-to-truncated-normal.',
-  stamina: 'full-window recency-weighted mpg only, season decay 0.85; k=180; percentile-to-truncated-normal.',
-  durability: 'full-window recency-weighted games played only, season decay 0.85; k=180; percentile-to-truncated-normal. Known limitation: DNP-CD and role conflation remains; F4/Horizon owns future availability modeling.',
-};
-
-export function renderRatingsContract(input: NbaDerivationInput, result: NbaDerivationResult): string {
-  const players = [...input.players].sort((a, b) => a.personId - b.personId);
-  const rostered = players.filter((player) => result.rosteredPersonIds.has(player.personId));
-  const derived = rostered.map((player) => ({ values: result.ratingsByPerson.get(player.personId)! }));
-  const raw = rostered.map((player) => ({ values: result.rawScores.get(player.personId)! }));
-  const current = input.activeRatings.map((values) => ({ values }));
-  const out: string[] = [];
-  out.push('# S2b — NBA Ratings Statistical Contract');
-  out.push('', '> Generated by `scripts/build-league.ts` (`npm run build-league`). Regenerate; never hand-edit.', '> `--check` byte-compares this file against a fresh derivation.', '');
-  out.push('## Provenance', '', '- Normalized schema version: **3**', `- Recent windows: **${RECENT_SEASONS.join(', ')}** with weights **0.55 / 0.30 / 0.15** (newest first).`, `- Full-window stamina/durability seasonal decay: **${FULL_WINDOW_SEASON_DECAY}**.`, `- Eligible percentile population: **${players.length}**; rostered check population: **${rostered.length}**.`, '- Percentile ties: ascending `personId`.', `- Shrinkage: position-conditional rostered prior; weight = n / (n + k); measured biometric metrics bypass shrinkage; FT explicitly uses the rostered league FTA-weighted prior; full-confidence log threshold n=${FULL_CONFIDENCE_SAMPLE}.`, `- FT inverse: rating = 40 + (pct - ${FT_LEAGUE_AVG_PCT}) × ${FT_DERIVE_SCALE}; engine clamps ${FT_SIM_PCT_MIN}..${FT_SIM_PCT_MAX}.`, '- Tail policy: retain the percentile-to-truncated-normal map with no discrete top-end target. Its compressed star separation versus the heuristic pool is an explicit S2b decision; S2d owns behavioral evaluation of profile bands and team-strength spread and whether a fatter-tailed remap is needed.', '- Non-FT target SDs remain active-pool compatibility priors to keep modifier spread unchanged through activation, not empirical truth; the existing floor is Math.max(4, active-pool SD). There is no deliberate deviation for S2d to absorb beyond the mapping itself.', '');
-  out.push('## Per-rating derivation policy', '', '| Rating | Inputs, formula, window, shrinkage, mapping |', '| --- | --- |');
-  for (const rating of RATING_KEYS) out.push(`| ${rating} | ${RATING_DOCUMENTATION[rating]} |`);
-  out.push('', '## Center, spread, and tails', '', '| Rating | Derived mean | Target SD | Derived SD | p1 | p99 | Derived 75+ | Current 75+ |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
-  for (const rating of RATING_KEYS) {
-    const d = result.distributions[rating]; const c = result.currentDistributions[rating];
-    out.push(`| ${rating} | ${d.mean.toFixed(2)} | ${d.targetSd.toFixed(2)} | ${d.sd.toFixed(2)} | ${d.p1} | ${d.p99} | ${d.count75Plus} | ${c.count75Plus} |`);
-  }
-  out.push('', `> FT deliberately targets SD ${FREE_THROW_TARGET_SD.toFixed(2)} rather than the active-pool diagnostic SD, because its inverse preserves the shrunk real-percentage scale. Its declared mean band is ±${FREE_THROW_MEAN_TOLERANCE.toFixed(2)}: the FTA-weighted league anchor and the unweighted player check population need not coincide. All other target SDs are active-pool compatibility diagnostics with a ±${RATING_MEAN_TOLERANCE.toFixed(2)} mean band.`);
-  out.push('', '## Shrinkage and deterministic fallback log', '', '| Reason | Count |', '| --- | --- |');
-  const reasonCounts = new Map<string, number>();
-  for (const entry of result.fallbackLog) reasonCounts.set(entry.reason, (reasonCounts.get(entry.reason) ?? 0) + 1);
-  for (const reason of [...reasonCounts.keys()].sort()) out.push(`| ${reason} | ${reasonCounts.get(reason)} |`);
-  out.push('', '| Player id | Field | Reason |', '| --- | --- | --- |');
-  for (const entry of result.fallbackLog) out.push(`| ${entry.playerId} | ${entry.field} | ${entry.reason} |`);
-  out.push('', '## Correlation preservation', '');
-  out.push(...matrixLines('Derived ratings (rostered)', derived), '', ...matrixLines('Current active-pool ratings', current), '', ...matrixLines('Underlying shrunk/blended metrics (rostered)', raw));
-  out.push('', '### Largest correlation deltas', '', '| Comparison | Rating pair | Left r | Right r | Absolute delta |', '| --- | --- | ---: | ---: | ---: |');
-  for (const delta of correlationDeltas(derived, raw)) out.push(`| derived vs raw | ${delta.pair} | ${delta.left.toFixed(2)} | ${delta.right.toFixed(2)} | ${delta.delta.toFixed(2)} |`);
-  for (const delta of correlationDeltas(derived, current)) out.push(`| derived vs current | ${delta.pair} | ${delta.left.toFixed(2)} | ${delta.right.toFixed(2)} | ${delta.delta.toFixed(2)} |`);
-  const defenseCorrelation = pearson(
-    rostered.map((player) => result.ratingsByPerson.get(player.personId)!.perimeterDefense),
-    rostered.map((player) => result.ratingsByPerson.get(player.personId)!.interiorDefense),
-  );
-  out.push('', `- Enforced defense split check: Pearson r(perimeterDefense, interiorDefense) = **${defenseCorrelation.toFixed(3)}**, ceiling **${PERIMETER_INTERIOR_DEFENSE_R_MAX.toFixed(2)}**.`, '');
-  out.push('Derived-vs-raw deltas are attributable to discrete 1–80 quantization, the FT inverse exception, and target-spread normalization after the monotone rank map. Derived-vs-current deltas are expected and intentional: the current pool is position-heuristic output, while this candidate uses sampled NBA metrics. No engine behavior is asserted here; S2d owns the activated-pool behavioral backstop.');
-  out.push('', '## Modifier histograms', '', 'Fixed bins use the exported engine modifier formula. Counts compare the rostered candidate to the active pool.', '');
-  for (const rating of RATING_KEYS) {
-    const candidateCounts = histogram(rostered.map((player) => ratingToModifier(result.ratingsByPerson.get(player.personId)![rating])));
-    const activeCounts = histogram(input.activeRatings.map((player) => ratingToModifier(player[rating])));
-    out.push(`### ${rating}`, '', '```text', 'bin              candidate  current');
-    const labels = ['< -0.11', '-0.11..-0.08', '-0.08..-0.05', '-0.05..-0.02', '-0.02..0.01', '0.01..0.04', '0.04..0.07', '0.07..0.10', '>= 0.10'];
-    for (let i = 0; i < labels.length; i++) out.push(`${labels[i].padEnd(15)} ${String(candidateCounts[i]).padStart(9)} ${String(activeCounts[i]).padStart(8)}`);
-    out.push('```', '');
-  }
-  out.push('## Top-10 diagnostics', '');
-  for (const rating of RATING_KEYS) {
-    out.push(`### ${rating}`, '', '| Player | Rating | Named input metrics and samples |', '| --- | ---: | --- |');
-    const top = [...players].sort((a, b) => result.ratingsByPerson.get(b.personId)![rating] - result.ratingsByPerson.get(a.personId)![rating] || a.personId - b.personId).slice(0, 10);
-    for (const player of top) out.push(`| ${player.id} | ${result.ratingsByPerson.get(player.personId)![rating]} | ${result.inputsByPerson.get(player.personId)!.join('; ')} |`);
-    out.push('');
-  }
-  out.push('## Behavioral backstop', '', '**Deferred to S2d.** This candidate-only unit does not activate the pool, alter the engine, or tune the profile. S2d owns activation, spacing/versatility re-baselining, the FT-anchor decision, and a behavioral profile PASS on the new pool.', '');
-  return out.join('\n');
 }

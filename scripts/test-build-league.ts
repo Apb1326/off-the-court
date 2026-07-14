@@ -1,10 +1,13 @@
 /**
- * S2a/S2b — validation + determinism harness for the league candidate.
+ * S2d — validation + determinism harness for the production league.
  *
  * The app's JSON loader only parses and casts, so a "round-trip through the
  * load path" proves nothing. This harness performs EXPLICIT runtime assertions
- * on the emitted candidate, then verifies byte-idempotence:
- *   build -> hash candidate plus both generated reports -> rebuild -> hashes identical -> `--check` exits 0.
+ * on the emitted pool, then verifies byte-idempotence:
+ *   build -> hash JSON + manifest -> rebuild -> hashes identical -> `--check` exits 0.
+ *
+ * HERMETIC: it builds into a throwaway `--out-dir` scratch directory and never
+ * touches the live active `data/` pair — running a test must not promote.
  *
  * It shells out to the builder with `node --import tsx` (the same node binary,
  * PATH-independent) so it exercises the real CLI. It introduces no randomness.
@@ -13,6 +16,7 @@
 import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import { Player, Position, PerGameStats, SeasonStats } from '../src/models/player';
@@ -21,23 +25,24 @@ import { FREE_AGENT_TEAM_ID, ROSTER_MIN, ROSTER_MAX } from '../src/transactions/
 import {
   blendScore,
   FREE_THROW_MEAN_TOLERANCE,
-  FREE_THROW_TARGET_SD,
   freeThrowPctFromRating,
   freeThrowRatingFromPct,
   PERIMETER_INTERIOR_DEFENSE_R_MAX,
   RATING_KEYS,
   RATING_MEAN_TOLERANCE,
   RATING_SD_TOLERANCE,
+  S2B_TARGET_SDS,
 } from '../src/ratings/nba-derivation';
 import { ratingToModifier } from '../src/engine/shot';
 
 const ROOT = process.cwd();
 const BUILD_SCRIPT = path.join(ROOT, 'scripts', 'build-league.ts');
-const TEAMS_PATH = path.join(ROOT, 'data', 'league-candidate', 'teams.json');
-const PLAYERS_PATH = path.join(ROOT, 'data', 'league-candidate', 'players.json');
-const COVERAGE_PATH = path.join(ROOT, 'docs', 'S2A_LEAGUE_COVERAGE.md');
-const RATINGS_CONTRACT_PATH = path.join(ROOT, 'docs', 'S2B_RATINGS_CONTRACT.md');
-const ALL_FILES = [TEAMS_PATH, PLAYERS_PATH, COVERAGE_PATH, RATINGS_CONTRACT_PATH];
+// Hermetic scratch output: the harness must never promote the live data/ pair.
+const SCRATCH_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'otc-league-harness-'));
+const TEAMS_PATH = path.join(SCRATCH_DIR, 'teams.json');
+const PLAYERS_PATH = path.join(SCRATCH_DIR, 'players.json');
+const MANIFEST_PATH = path.join(SCRATCH_DIR, '.league-manifest.json');
+const ALL_FILES = [TEAMS_PATH, PLAYERS_PATH, MANIFEST_PATH];
 
 const POSITIONS: Position[] = ['PG', 'SG', 'SF', 'PF', 'C'];
 const CONTRACT_TYPES = new Set(['rookie_scale', 'veteran', 'max', 'minimum', 'two_way']);
@@ -73,7 +78,7 @@ function pearson(a: readonly number[], b: readonly number[]): number {
 
 function runBuilder(args: string[]): number {
   try {
-    execFileSync(process.execPath, ['--import', 'tsx', BUILD_SCRIPT, ...args], { stdio: 'pipe', encoding: 'utf-8' });
+    execFileSync(process.execPath, ['--import', 'tsx', BUILD_SCRIPT, '--out-dir', SCRATCH_DIR, ...args], { stdio: 'pipe', encoding: 'utf-8' });
     return 0;
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string };
@@ -248,12 +253,11 @@ function runAssertions(): { players: Player[]; ownerByPlayer: Map<string, string
 
 function assertS2bStatisticalContract(players: Player[], ownerByPlayer: Map<string, string>): void {
   const rostered = players.filter((player) => ownerByPlayer.has(player.id));
-  const active: Player[] = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'players.json'), 'utf-8'));
   for (const rating of RATING_KEYS) {
     const values = rostered.map((player) => player.ratings[rating]);
-    const targetSd = rating === 'freeThrowShooting'
-      ? FREE_THROW_TARGET_SD
-      : standardDeviation(active.map((player) => player.ratings[rating]));
+    // The frozen S2B_TARGET_SDS contract (which carries the FT special case)
+    // is the target — never the mutable live pool; the harness is hermetic.
+    const targetSd = S2B_TARGET_SDS[rating];
     const meanTolerance = rating === 'freeThrowShooting' ? FREE_THROW_MEAN_TOLERANCE : RATING_MEAN_TOLERANCE;
     check(Math.abs(average(values) - 40) <= meanTolerance,
       `${rating}: rostered mean ${average(values).toFixed(3)} outside 40 ± ${meanTolerance}`);
@@ -293,14 +297,10 @@ function assertS2bStatisticalContract(players: Player[], ownerByPlayer: Map<stri
   );
   check(defenseR <= PERIMETER_INTERIOR_DEFENSE_R_MAX,
     `perimeterDefense/interiorDefense r=${defenseR.toFixed(3)} exceeds ceiling ${PERIMETER_INTERIOR_DEFENSE_R_MAX}`);
-  const report = fs.readFileSync(RATINGS_CONTRACT_PATH, 'utf-8');
-  for (const field of ['strength.strength.bmi', 'strength.strength.wingspanRatio', 'athleticism.athleticism.wingspanRatio']) {
-    check(!report.includes(`| ${field} |`), `measured biometric metric ${field} appeared in shrinkage fallback log`);
-  }
 }
 
 function main(): void {
-  console.log('== build (emit candidate) ==');
+  console.log(`== build (hermetic scratch out-dir: ${SCRATCH_DIR}) ==`);
   const buildStatus = runBuilder([]);
   if (buildStatus !== 0) {
     console.error(`FAIL: builder exited ${buildStatus} on initial build.`);
@@ -329,6 +329,8 @@ function main(): void {
   console.log('== determinism: --check exits 0 ==');
   const checkStatus = runBuilder(['--check']);
   check(checkStatus === 0, `build-league --check exited ${checkStatus} (expected 0)`);
+
+  fs.rmSync(SCRATCH_DIR, { recursive: true, force: true });
 
   if (failures.length > 0) {
     console.error(`\nFAILED (${failures.length}):`);

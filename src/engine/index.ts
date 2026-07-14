@@ -5,7 +5,7 @@ import { SeededRNG } from '@/lib/rng';
 import { ClockState, initClock, isEndOfPeriod, nextPeriod, isRegulationOver, resetShotClock } from './clock';
 import { accumulateFatigue, recoverFatigue } from './fatigue';
 import { GameState, simulatePossession } from './possession';
-import { LegacyPlayTypeSelectionFactor, PlayTypeSelectionConfig, LEGACY_PLAY_TYPE_SELECTION } from './play-types';
+import { PlayTypeSelectionFactor } from './play-types';
 import { checkSubstitutions, findBestReplacement } from './substitution';
 import { StatsAccumulator } from './stats-accumulator';
 import { POINTS_BY_ZONE } from './constants';
@@ -40,7 +40,7 @@ export interface GameDiagObserver {
     previousPossessionWasTurnover: boolean;
     previousPossessionWasLongRebound: boolean;
     transitionChance: number;
-    breakdown: ReadonlyArray<LegacyPlayTypeSelectionFactor>;
+    breakdown: ReadonlyArray<PlayTypeSelectionFactor>;
   }) => void;
   /** Primary actor after selectPrimaryPlayer, before any chain transformation. */
   onPrimarySelection?: (info: {
@@ -75,8 +75,6 @@ export function simulateGame(
   inGameExits: Map<string, number> = new Map(),
   // Optional read-only diagnostic observer — see GameDiagObserver above.
   diag?: GameDiagObserver,
-  // Candidate-only S2c1-R selector. Omitted callers retain the legacy path.
-  playTypeSelection: PlayTypeSelectionConfig = LEGACY_PLAY_TYPE_SELECTION,
 ): SimulationResult {
   const rng = new SeededRNG(seed);
   const stats = new StatsAccumulator();
@@ -165,7 +163,6 @@ export function simulateGame(
     diagShot: diag?.onShot,
     diagInitialSelection: diag?.onInitialSelection,
     diagPrimarySelection: diag?.onPrimarySelection,
-    playTypeSelection,
   };
 
   let totalGameSeconds = 0;

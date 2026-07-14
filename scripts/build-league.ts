@@ -1,16 +1,16 @@
 /**
  * S2a — Deterministic league builder.
  *
- * Emits a *candidate* league artifact (teams + players, same shapes as the
- * active data/teams.json / data/players.json) keyed on NBA personIds, built as
- * a pure function of the normalized NBA data in data/nba/normalized/. It writes
- * a companion coverage/fallback report. NOTHING in the app or engine reads the
- * output directory in this unit — this runs alongside, never replacing, the
- * active pool.
+ * Emits the production NBA-derived league (teams + players, same shapes as
+ * data/teams.json / data/players.json), keyed on NBA personIds and built as a
+ * pure function of data/nba/normalized/. S2d validates a complete staged pair
+ * before promotion; it never exposes a candidate selector or pool to runtime.
  *
  * Invocation (mirrors scripts/derive-league-targets.ts):
- *   npm run build-league            -> write the two candidate JSONs + report, print provenance
- *   npm run build-league -- --check -> rebuild in memory, byte-compare candidate + both reports, exit non-zero on any diff
+ *   npm run build-league            -> stage, validate, promote the pair + manifest
+ *   npm run build-league -- --check -> rebuild in memory; byte-compare pair + manifest
+ *   --out-dir <dir>                 -> redirect the OUTPUT directory only (harness
+ *                                      isolation; the runtime always reads data/)
  *
  * Determinism: no Math.random, no Date.now, no timestamps in output; sorted
  * iteration everywhere; fixed float formatting; objects built with a fixed key
@@ -24,6 +24,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 
 import { Player, Position, PerGameStats, SeasonStats } from '../src/models/player';
 import { Team, OffensiveSystem, DefensiveSystem, NBA_TEAMS } from '../src/models/team';
@@ -33,12 +34,14 @@ import {
   NbaDerivationInput,
   NbaDerivationPlayer,
   RECENT_SEASONS,
-  renderRatingsContract,
   ShotEventSeasonAggregate,
 } from '../src/ratings/nba-derivation';
 import { generateContractForPlayer, normalizePlayersForSave } from '../src/transactions/contracts';
 import { FREE_AGENT_TEAM_ID, ROSTER_MIN, ROSTER_MAX } from '../src/transactions/constants';
 import { setupRotation } from '../src/lib/rotation';
+import { validatePool } from '../src/lib/pool-validation';
+import { PRODUCTION_SHOT_ZONE_TABLE_ID } from '../src/engine/constants';
+import { PRODUCTION_PLAY_TYPE_SELECTOR_ID } from '../src/engine/play-types';
 import {
   loadPlayers,
   loadBoxAdvanced,
@@ -61,15 +64,33 @@ import { deriveNbaTendencies } from '../src/ratings/nba-tendencies';
 const BUILD_SEASON = '2025-26';
 /** Start year of BUILD_SEASON; experience = max(0, this - fromYear). */
 const BUILD_SEASON_START_YEAR = 2025;
-/** Candidate output dir. NOTHING in the app/engine reads this in S2a. */
-const CANDIDATE_DIR = path.join(process.cwd(), 'data', 'league-candidate');
-const TEAMS_PATH = path.join(CANDIDATE_DIR, 'teams.json');
-const PLAYERS_PATH = path.join(CANDIDATE_DIR, 'players.json');
-/** Committed coverage report (docs/ is not gitignored; data/ is). */
-const COVERAGE_PATH = path.join(process.cwd(), 'docs', 'S2A_LEAGUE_COVERAGE.md');
-/** S2b's generated statistical contract. */
-const RATINGS_CONTRACT_PATH = path.join(process.cwd(), 'docs', 'S2B_RATINGS_CONTRACT.md');
-const TENDENCIES_CONTRACT_PATH = path.join(process.cwd(), 'docs', 'S2C1_TENDENCIES_CONTRACT.md');
+/**
+ * Filesystem layout of a league output directory. The default is the active
+ * `data/` the app and profile read; `--out-dir` redirects ONLY where the built
+ * pair lands (a generation-tool isolation seam used by test-build-league —
+ * the runtime and profile always read `data/` and expose no pool choice).
+ */
+interface LeaguePaths {
+  dir: string;
+  teams: string;
+  players: string;
+  staging: string;
+  previous: string;
+  journal: string;
+  manifest: string;
+}
+
+function leaguePaths(dir: string): LeaguePaths {
+  return {
+    dir,
+    teams: path.join(dir, 'teams.json'),
+    players: path.join(dir, 'players.json'),
+    staging: path.join(dir, '.league-build-staging'),
+    previous: path.join(dir, '.league-previous'),
+    journal: path.join(dir, '.league-promotion.json'),
+    manifest: path.join(dir, '.league-manifest.json'),
+  };
+}
 
 /** Unit conversions from normalized (cm/kg) to the Player model (inches/lbs). */
 const CM_PER_INCH = 2.54;
@@ -103,7 +124,7 @@ const PRIMARY_POSITION_MAP: Record<string, Position> = {
 const SECONDARY_TOKEN_MAP: Record<string, Position> = { G: 'PG', F: 'SF', C: 'C' };
 
 /**
- * Team offensive/defensive systems for the candidate: default placeholders that
+ * Team offensive/defensive systems for the production build: default placeholders that
  * mirror src/data/ingest/transforms.ts. Inlined (rather than imported) so the
  * BDL transform module stays byte-for-byte untouched in this unit.
  */
@@ -422,9 +443,6 @@ interface BuiltPlayer {
 interface BuildResult {
   teamsJson: string;
   playersJson: string;
-  report: string;
-  ratingsReport: string;
-  tendenciesReport: string;
   summary: {
     teamCount: number;
     rostered: number;
@@ -680,12 +698,12 @@ function buildLeague(): BuildResult {
   const rotationPlayers = rosteredPlayers.filter((bp) => rotationLevelIds.has(bp.player.id));
   assertS2bCoverageGates(rosteredPlayers, rotationPlayers, coverage);
 
-  const activePlayers = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'players.json'), 'utf-8')) as Player[];
-  if (activePlayers.length === 0) stop('active data/players.json is empty; cannot establish S2b SD diagnostics');
+  // Spread targets are the fixed S2B_TARGET_SDS compatibility references
+  // (see src/ratings/nba-derivation.ts for provenance), so a rebuild never
+  // depends on whichever promoted league is currently on disk.
   const derivationInput: NbaDerivationInput = {
     players: built.map((bp) => bp.derivation),
     rosteredPersonIds: new Set(rosteredPlayers.map((bp) => bp.personId)),
-    activeRatings: activePlayers.map((player) => player.ratings),
   };
   let derivation;
   try {
@@ -708,9 +726,6 @@ function buildLeague(): BuildResult {
     const rosterPlayers = team.roster.map((id) => rosteredById.get(id)?.player).filter((p): p is Player => p !== undefined);
     setupRotation(team, rosterPlayers);
   }
-  const ratingsReport = renderRatingsContract(derivationInput, derivation);
-  const tendenciesReport = renderTendenciesContract(tendencyDerivation, built, rosteredPlayers, rotationPlayers.length);
-
   // Canonicalize contracts / desired contracts / FA teamIds via the save boundary.
   const allPlayers = built.map((bp) => bp.player);
   const { players: normalizedPlayers } = normalizePlayersForSave(allPlayers, [], teams);
@@ -721,26 +736,9 @@ function buildLeague(): BuildResult {
   const rosteredCount = rosteredById.size;
   const faCount = built.length - rosteredCount;
 
-  const report = renderReport({
-    manifest,
-    boxSeasons,
-    built,
-    rosteredById,
-    rotationLevelIds,
-    coverage,
-    fallbacks,
-    excludedNoActivity,
-    teamCount: teams.length,
-    rosteredCount,
-    faCount,
-  });
-
   return {
     teamsJson,
     playersJson,
-    report,
-    ratingsReport,
-    tendenciesReport,
     summary: {
       teamCount: teams.length,
       rostered: rosteredCount,
@@ -751,183 +749,144 @@ function buildLeague(): BuildResult {
   };
 }
 
-function renderTendenciesContract(result: ReturnType<typeof deriveNbaTendencies>, built: BuiltPlayer[], rosteredPlayers: BuiltPlayer[], rotation: number): string {
-  const eligible = built.length;
-  const rostered = rosteredPlayers.length;
-  const weightedAverage = (field: keyof Player['tendencies'], weights: ReadonlyMap<number, number>) => {
-    const denominator = rosteredPlayers.reduce((sum, bp) => sum + (weights.get(bp.personId) ?? 0), 0);
-    return rosteredPlayers.reduce((sum, bp) => sum + bp.player.tendencies[field] * (weights.get(bp.personId) ?? 0), 0) / denominator;
-  };
-  const playTargets: Record<string, number> = { isolationFreq:.0819, pickAndRoll:.254, postUpFreq:.0424, spotUpFreq:.2561, transitionFreq:.1966, cutFreq:.0732, offScreenFreq:.0408, handoffFreq:.055 };
-  const shotTargets: Record<string, number> = { rimRate:.2869, midrangeRate:.3043, threePointRate:.4088 };
-  const out = ['# S2c1 — Candidate Tendencies Contract', '', '> Generated by `scripts/build-league.ts` (`npm run build-league`). Regenerate; never hand-edit.', '> `--check` byte-compares this file against a fresh derivation.', '', '## Provenance', '', '- Normalized schema version: **3**.', `- Build season: **${BUILD_SEASON}**; Synergy and shot-events are single-season inputs.`, '- Usage: S2b recent-window possession-weighted box_advanced samples (2025-26/2024-25/2023-24 at 0.55/0.30/0.15).', '- drawFoulRate, assistRate, and reboundRate retain legacy stat-driven formulas over build-season mapped stats; astPct/rebPct upgrades are deferred to S2d/S3.', '', '## Coverage', '', '| Population | Eligible | Rostered | Rotation-level | Synergy covered | Shot covered | Usage covered |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: |', `| Candidate | ${eligible} | ${rostered} | ${rotation} | ${result.coveredSynergy} | ${result.coveredShots} | ${result.coveredUsage} |`, '', '## Frequency-scale convention', '', '- `selectPlayType`: `w *= 0.5 + tendency * 2.0`; the seven selectable play types are normalized only by weightedChoice.', '- Frequencies are mapped Synergy possession shares, Misc excluded, and sum to 1 across all nine fields. This remains compatible with legacy roughly-0.5..1.3 totals.', '- `pick_and_roll` directly reads `pickAndRollBallHandlerFreq`; the screener field is recorded but is not an initiating weight. `transitionFreq` is engine-inert because transition is selected upstream.', '- Synergy OffRebound is not harvested, so its omitted mass slightly overstates the retained categories.', '', '## Fallback log', '', '| Player id | Field | Reason |', '| --- | --- | --- |'];
-  for (const row of result.fallbackLog) out.push(`| ${row.playerId} | ${row.field} | ${row.reason} |`);
-  out.push('', '## League-aggregate checks', '', 'Derived-data comparison only: these are not claims about the simulated candidate, whose team systems, position weights, skill fit, and possession chain reshape selection.', '', '| Play type | Candidate share | Synergy target | Delta |', '| --- | ---: | ---: | ---: |');
-  const plays: [string, keyof Player['tendencies']][] = [['isolation','isolationFreq'],['post_up','postUpFreq'],['spot_up','spotUpFreq'],['transition','transitionFreq'],['cut','cutFreq'],['off_screen','offScreenFreq'],['handoff','handoffFreq']];
-  const pnr = weightedAverage('pickAndRollBallHandlerFreq', result.synergyPossessions) + weightedAverage('pickAndRollScreenerFreq', result.synergyPossessions);
-  out.push(`| pick_and_roll (both fields) | ${pnr.toFixed(4)} | ${playTargets.pickAndRoll.toFixed(4)} | ${(pnr - playTargets.pickAndRoll).toFixed(4)} |`);
-  for (const [label, field] of plays) { const target=playTargets[field]; const value=weightedAverage(field, result.synergyPossessions); out.push(`| ${label} | ${value.toFixed(4)} | ${target.toFixed(4)} | ${(value-target).toFixed(4)} |`); }
-  out.push('', '| Shot bucket | Candidate share | Target | Delta |', '| --- | ---: | ---: | ---: |');
-  for (const field of ['rimRate','midrangeRate','threePointRate'] as const) { const value=weightedAverage(field, result.shotFga); out.push(`| ${field} | ${value.toFixed(4)} | ${shotTargets[field].toFixed(4)} | ${(value-shotTargets[field]).toFixed(4)} |`); }
-  out.push('', '## Standing caveats', '', '- Pooled targets cover 2023-26 while the candidate play-type and shot mix sources are 2025-26.', '- Aggregate and candidate-profile differences are informational only; S2c2/S2d own engine compensation and activation.', '');
-  return out.join('\n');
-}
-
-// --- Coverage report ---
-
-interface RenderArgs {
-  manifest: { schema_version: number; nba_api_versions: string[] };
-  boxSeasons: string[];
-  built: BuiltPlayer[];
-  rosteredById: Map<string, BuiltPlayer>;
-  rotationLevelIds: Set<string>;
-  coverage: CoverageSets;
-  fallbacks: FallbackEntry[];
-  excludedNoActivity: number;
-  teamCount: number;
-  rosteredCount: number;
-  faCount: number;
-}
-
-function pct(count: number, total: number): string {
-  return total > 0 ? `${((count / total) * 100).toFixed(1)}%` : 'n/a';
-}
-
-function coverageRow(
-  label: string,
-  population: BuiltPlayer[],
-  has: (bp: BuiltPlayer) => boolean,
-): string {
-  const n = population.filter(has).length;
-  return `| ${label} | ${n}/${population.length} | ${pct(n, population.length)} |`;
-}
-
-function renderCoverageTable(title: string, population: BuiltPlayer[], coverage: CoverageSets): string {
-  const lines = [
-    `### ${title} (n=${population.length})`,
-    '',
-    '| Contract | Covered | % |',
-    '| --- | --- | --- |',
-    coverageRow('box_advanced (≥1 season)', population, (bp) => bp.boxSeasons.length >= 1),
-    coverageRow('playtypes (2025-26)', population, (bp) => coverage.playtypes.has(bp.personId)),
-    coverageRow('shot_zones (2025-26)', population, (bp) => coverage.shotZones.has(bp.personId)),
-    coverageRow('shot_events (2025-26)', population, (bp) => coverage.shotEvents.has(bp.personId)),
-    coverageRow('tracking (2025-26)', population, (bp) => coverage.tracking.has(bp.personId)),
-    coverageRow('defense (2025-26)', population, (bp) => coverage.defense.has(bp.personId)),
-    coverageRow('hustle (2025-26)', population, (bp) => coverage.hustle.has(bp.personId)),
-    coverageRow('wingspanCm present', population, (bp) => bp.bio.wingspanCm !== null && bp.bio.wingspanCm !== undefined),
-  ];
-  // Average box_advanced seasons for context.
-  const totalSeasons = population.reduce((a, bp) => a + bp.boxSeasons.length, 0);
-  const avg = population.length > 0 ? (totalSeasons / population.length).toFixed(2) : '0';
-  lines.push('', `Average box_advanced seasons per player: ${avg}`);
-  return lines.join('\n');
-}
-
-function renderReport(a: RenderArgs): string {
-  const rostered = [...a.rosteredById.values()].sort((x, y) => x.player.id.localeCompare(y.player.id));
-  const rotationLevel = rostered.filter((bp) => a.rotationLevelIds.has(bp.player.id));
-  const seasonWindow = a.boxSeasons.length > 0 ? `${a.boxSeasons[0]} … ${a.boxSeasons[a.boxSeasons.length - 1]}` : '(none)';
-
-  // Structural-fallback counts.
-  const totalCareerRows = a.built.reduce((acc, bp) => acc + bp.boxSeasons.length, 0);
-  const jerseyCount = a.built.length; // universal
-
-  // Non-jersey fallback log, sorted deterministically.
-  const logged = [...a.fallbacks].sort(
-    (x, y) => x.playerId.localeCompare(y.playerId) || x.field.localeCompare(y.field) || x.reason.localeCompare(y.reason),
-  );
-  const fallbacksByReason = new Map<string, number>();
-  for (const f of logged) fallbacksByReason.set(f.reason, (fallbacksByReason.get(f.reason) ?? 0) + 1);
-
-  const out: string[] = [];
-  out.push('# S2a — League Candidate Coverage & Fallback Report');
-  out.push('');
-  out.push('> Generated by `scripts/build-league.ts` (`npm run build-league`). Regenerate; never hand-edit.');
-  out.push('> `--check` byte-compares this file against a fresh derivation.');
-  out.push('');
-  out.push('## Provenance');
-  out.push('');
-  out.push(`- Normalized schema version: **${a.manifest.schema_version}**`);
-  out.push(`- box_advanced season window consumed: **${seasonWindow}** (${a.boxSeasons.length} seasons)`);
-  out.push(`- Built season (eligibility + S2b-derived ratings): **${BUILD_SEASON}**`);
-  out.push(`- nba_api version(s): **${[...a.manifest.nba_api_versions].sort().join(', ') || '(none)'}**`);
-  out.push('- Builder invocation: `npm run build-league` (identity/league-construction only; S2a)');
-  out.push('');
-  out.push('> **Ratings are S2b-derived from normalized NBA contracts; potential is recomputed from those ratings.**');
-  out.push('> Tendencies remain legacy-heuristic placeholders until S2c. Do not tune the active engine against this candidate.');
-  out.push('');
-  out.push('## League shape');
-  out.push('');
-  out.push('| Metric | Count |');
-  out.push('| --- | --- |');
-  out.push(`| Teams | ${a.teamCount} |`);
-  out.push(`| Total eligible players (2025-26 box_advanced row) | ${a.built.length} |`);
-  out.push(`| Rostered players | ${a.rosteredCount} |`);
-  out.push(`| Free-agent-sentineled players | ${a.faCount} |`);
-  out.push(`| Excluded — players-contract entries with no 2025-26 activity | ${a.excludedNoActivity} |`);
-  out.push('');
-  out.push('## Per-contract coverage');
-  out.push('');
-  out.push('Coverage that S2b/S2c will gate on. Two populations: **all rostered** players, and');
-  out.push(`**rotation-level** (top-${ROTATION_LEVEL_TOP_N} per team by \`gp × mpg\`).`);
-  out.push('');
-  out.push(renderCoverageTable('All rostered', rostered, a.coverage));
-  out.push('');
-  out.push(renderCoverageTable('Rotation-level', rotationLevel, a.coverage));
-  out.push('');
-  out.push('## Structural fallbacks');
-  out.push('');
-  out.push('These are known, accepted structural limits of the source contracts — reported, not papered over.');
-  out.push('');
-  out.push('| Structural fallback | Count |');
-  out.push('| --- | --- |');
-  out.push(`| \`gamesStarted: 0\` (box_advanced carries no gamesStarted) — career rows | ${totalCareerRows} |`);
-  out.push(`| Single row per season, season-end team attribution (no traded-player stint splits) — career rows | ${totalCareerRows} |`);
-  out.push(`| \`jerseyNumber: 0\` (players contract carries no jersey) — players | ${jerseyCount} |`);
-  out.push('');
-  out.push('## Nullable-field policy');
-  out.push('');
-  out.push(NULLABLE_POLICY_TABLE);
-  out.push('');
-  out.push('## Per-player fallback log');
-  out.push('');
-  out.push('Every documented default other than the universal `jerseyNumber: 0` above (biographical, position,');
-  out.push('and nullable-stat substitutions), one row per application.');
-  out.push('');
-  if (fallbacksByReason.size > 0) {
-    out.push('| Reason | Count |');
-    out.push('| --- | --- |');
-    for (const reason of [...fallbacksByReason.keys()].sort()) {
-      out.push(`| ${reason} | ${fallbacksByReason.get(reason)} |`);
-    }
-    out.push('');
-    out.push('| Player id | Field | Reason |');
-    out.push('| --- | --- | --- |');
-    for (const f of logged) out.push(`| ${f.playerId} | ${f.field} | ${f.reason} |`);
-  } else {
-    out.push('_No biographical, position, or nullable-stat fallbacks were applied._');
-  }
-  out.push('');
-  return out.join('\n');
-}
-
-// --- Entry point ---
-
-function parseArgs(argv: string[]): { check: boolean } {
+function parseArgs(argv: string[]): { check: boolean; outDir: string } {
   let check = false;
-  for (const arg of argv) {
+  let outDir: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (arg === '--check') check = true;
-    else throw new Error(`Unknown argument: ${arg}`);
+    else if (arg === '--out-dir') {
+      if (!argv[i + 1] || outDir !== undefined) throw new Error('Usage: --out-dir <directory> (exactly once)');
+      outDir = argv[++i];
+    } else throw new Error(`Unknown argument: ${arg}`);
   }
-  return { check };
+  return { check, outDir: path.resolve(process.cwd(), outDir ?? 'data') };
+}
+
+/**
+ * Promotion gate: the shared structural pool invariants plus builder-only
+ * roster-size bounds. Delegating to validatePool keeps this gate and the
+ * load gates (scripts/s2d-activation-context.ts, the app's new-game path)
+ * from ever drifting apart — a pair that promotes must load, and vice versa.
+ */
+function assertPromotablePair(teamsJson: string, playersJson: string, source: string): void {
+  let teams: Team[];
+  let players: Player[];
+  try {
+    teams = JSON.parse(teamsJson) as Team[];
+    players = JSON.parse(playersJson) as Player[];
+  } catch (error) {
+    stop(`${source} is not parseable league JSON: ${(error as Error).message}`);
+  }
+  try {
+    validatePool(teams, players, source);
+  } catch (error) {
+    stop((error as Error).message);
+  }
+  for (const team of teams) {
+    if (team.roster.length < ROSTER_MIN || team.roster.length > ROSTER_MAX) {
+      stop(`Invalid league pool ${source}: team ${team.id} roster size ${team.roster.length} outside ${ROSTER_MIN}..${ROSTER_MAX}`);
+    }
+  }
+}
+
+function sha256Hex(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/**
+ * The promotion manifest records the promoted pair's SHA-256s and the
+ * production selector/shot-zone-table identities. The activation-context
+ * gate (scripts/s2d-activation-context.ts) verifies against it so profile
+ * and calibrate can prove the on-disk pair is the promoted one without
+ * re-running the builder; deep byte-identity stays `build-league --check`.
+ * Committed via temp-file + rename so a torn manifest cannot be observed.
+ */
+function writeManifest(paths: LeaguePaths, teamsJson: string, playersJson: string): void {
+  const manifest = {
+    version: 1,
+    teamsSha256: sha256Hex(teamsJson),
+    playersSha256: sha256Hex(playersJson),
+    selectorId: PRODUCTION_PLAY_TYPE_SELECTOR_ID,
+    shotZoneTableId: PRODUCTION_SHOT_ZONE_TABLE_ID,
+  };
+  const tmp = `${paths.manifest}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(manifest) + '\n', 'utf8');
+  fs.renameSync(tmp, paths.manifest);
+}
+
+/**
+ * Complete an interrupted promotion. The journal is written only after the
+ * staged pair has been fully written, byte-verified, and validated, so its
+ * presence always means "finish the hand-off", never "roll back": rename any
+ * staged file that has not landed yet, re-verify the active pair, refresh the
+ * manifest, and clean up. A journal with no staged files left means only the
+ * final cleanup was interrupted — the promotion itself already completed.
+ * Runs on every builder entry point, including --check.
+ */
+function recoverPromotionIfNeeded(paths: LeaguePaths): void {
+  if (!fs.existsSync(paths.journal)) return;
+  const stagedTeams = path.join(paths.staging, 'teams.json');
+  const stagedPlayers = path.join(paths.staging, 'players.json');
+  const hasStagedTeams = fs.existsSync(stagedTeams);
+  const hasStagedPlayers = fs.existsSync(stagedPlayers);
+  if (hasStagedTeams && hasStagedPlayers) {
+    assertPromotablePair(fs.readFileSync(stagedTeams, 'utf8'), fs.readFileSync(stagedPlayers, 'utf8'), 'staged pair');
+  }
+  if (hasStagedTeams) fs.renameSync(stagedTeams, paths.teams);
+  if (hasStagedPlayers) fs.renameSync(stagedPlayers, paths.players);
+  if (!fs.existsSync(paths.teams) || !fs.existsSync(paths.players)) {
+    stop(`interrupted promotion journal at ${paths.journal} cannot be completed: the active pair is incomplete and no staged copy remains; restore from ${paths.previous} manually`);
+  }
+  const teamsJson = fs.readFileSync(paths.teams, 'utf8');
+  const playersJson = fs.readFileSync(paths.players, 'utf8');
+  assertPromotablePair(teamsJson, playersJson, 'recovered active pair');
+  writeManifest(paths, teamsJson, playersJson);
+  fs.rmSync(paths.staging, { recursive: true, force: true });
+  fs.rmSync(paths.journal, { force: true });
+  console.log('Completed an interrupted league promotion; active pair re-verified.');
+}
+
+/**
+ * Two files cannot be replaced in one atomic step. Each file is committed by
+ * an atomic same-directory rename from a validated staging pair; the window
+ * between the two renames is covered by the journal, which every builder
+ * entry point (including --check) completes before proceeding, so a torn
+ * pair can never outlive the next builder invocation. `.league-previous`
+ * retains the prior pair for MANUAL restore only — no automated path reads it.
+ */
+function promoteActiveLeague(paths: LeaguePaths, teamsJson: string, playersJson: string): void {
+  recoverPromotionIfNeeded(paths);
+  assertPromotablePair(teamsJson, playersJson, 'built pair');
+  fs.rmSync(paths.staging, { recursive: true, force: true });
+  fs.mkdirSync(paths.staging, { recursive: true });
+  const stagedTeams = path.join(paths.staging, 'teams.json');
+  const stagedPlayers = path.join(paths.staging, 'players.json');
+  fs.writeFileSync(stagedTeams, teamsJson, 'utf8');
+  fs.writeFileSync(stagedPlayers, playersJson, 'utf8');
+  if (fs.readFileSync(stagedTeams, 'utf8') !== teamsJson || fs.readFileSync(stagedPlayers, 'utf8') !== playersJson) {
+    stop('staged league pair does not byte-match the validated built pair');
+  }
+  fs.mkdirSync(paths.previous, { recursive: true });
+  if (fs.existsSync(paths.teams)) fs.copyFileSync(paths.teams, path.join(paths.previous, 'teams.json'));
+  if (fs.existsSync(paths.players)) fs.copyFileSync(paths.players, path.join(paths.previous, 'players.json'));
+  fs.writeFileSync(paths.journal, JSON.stringify({ version: 2, phase: 'staged-and-validated' }) + '\n', 'utf8');
+  fs.renameSync(stagedTeams, paths.teams);
+  fs.renameSync(stagedPlayers, paths.players);
+  writeManifest(paths, teamsJson, playersJson);
+  fs.rmSync(paths.staging, { recursive: true, force: true });
+  fs.rmSync(paths.journal, { force: true });
 }
 
 function main(): void {
-  const { check } = parseArgs(process.argv.slice(2));
+  const { check, outDir } = parseArgs(process.argv.slice(2));
+  const paths = leaguePaths(outDir);
 
   let result: BuildResult;
   try {
+    // Heal any interrupted promotion before reading or comparing the pool —
+    // --check must judge a consistent pair, not a half-renamed one.
+    recoverPromotionIfNeeded(paths);
     result = buildLeague();
   } catch (err) {
     if (err instanceof StopAndSurface) {
@@ -939,40 +898,72 @@ function main(): void {
   }
 
   if (check) {
-    const cmp = (label: string, filePath: string, expected: string): boolean => {
+    const rel = (p: string): string => path.relative(process.cwd(), p);
+    const cmp = (filePath: string, expected: string): boolean => {
       const actual = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
       if (actual === expected) {
-        console.log(`--check OK: ${label} byte-identical.`);
+        console.log(`--check OK: ${rel(filePath)} byte-identical.`);
         return true;
       }
-      console.error(`--check FAILED: ${label} differs (or is missing). Re-run without --check and review.`);
+      console.error(`--check FAILED: ${rel(filePath)} differs (or is missing). Re-run without --check and review.`);
       return false;
     };
+    const validateActive = (): boolean => {
+      try {
+        if (!fs.existsSync(paths.teams) || !fs.existsSync(paths.players)) {
+          console.error('--check FAILED: league pair is missing.');
+          return false;
+        }
+        assertPromotablePair(fs.readFileSync(paths.teams, 'utf8'), fs.readFileSync(paths.players, 'utf8'), 'active pair');
+        console.log('--check OK: league pair passes promotion invariants.');
+        return true;
+      } catch (error) {
+        console.error(`--check FAILED: league pair violates promotion invariants: ${(error as Error).message}`);
+        return false;
+      }
+    };
+    const validateManifest = (): boolean => {
+      try {
+        if (!fs.existsSync(paths.teams) || !fs.existsSync(paths.players)) return false; // validateActive already reported
+        if (!fs.existsSync(paths.manifest)) {
+          console.error('--check FAILED: league manifest is missing; re-run the builder to promote.');
+          return false;
+        }
+        const manifest = JSON.parse(fs.readFileSync(paths.manifest, 'utf8')) as {
+          teamsSha256?: string; playersSha256?: string; selectorId?: string; shotZoneTableId?: string;
+        };
+        const hashesOk = manifest.teamsSha256 === sha256Hex(fs.readFileSync(paths.teams, 'utf8'))
+          && manifest.playersSha256 === sha256Hex(fs.readFileSync(paths.players, 'utf8'));
+        const idsOk = manifest.selectorId === PRODUCTION_PLAY_TYPE_SELECTOR_ID
+          && manifest.shotZoneTableId === PRODUCTION_SHOT_ZONE_TABLE_ID;
+        if (hashesOk && idsOk) {
+          console.log('--check OK: league manifest matches the pair and production identities.');
+          return true;
+        }
+        console.error('--check FAILED: league manifest does not match the pair/production identities.');
+        return false;
+      } catch (error) {
+        console.error(`--check FAILED: league manifest unreadable: ${(error as Error).message}`);
+        return false;
+      }
+    };
     const ok = [
-      cmp('data/league-candidate/teams.json', TEAMS_PATH, result.teamsJson),
-      cmp('data/league-candidate/players.json', PLAYERS_PATH, result.playersJson),
-      cmp('docs/S2A_LEAGUE_COVERAGE.md', COVERAGE_PATH, result.report),
-      cmp('docs/S2B_RATINGS_CONTRACT.md', RATINGS_CONTRACT_PATH, result.ratingsReport),
-      cmp('docs/S2C1_TENDENCIES_CONTRACT.md', TENDENCIES_CONTRACT_PATH, result.tendenciesReport),
+      validateActive(),
+      validateManifest(),
+      cmp(paths.teams, result.teamsJson),
+      cmp(paths.players, result.playersJson),
     ].every(Boolean);
     if (!ok) process.exitCode = 1;
     return;
   }
 
-  fs.mkdirSync(CANDIDATE_DIR, { recursive: true });
-  fs.writeFileSync(TEAMS_PATH, result.teamsJson, 'utf-8');
-  fs.writeFileSync(PLAYERS_PATH, result.playersJson, 'utf-8');
-  fs.mkdirSync(path.dirname(COVERAGE_PATH), { recursive: true });
-  fs.writeFileSync(COVERAGE_PATH, result.report, 'utf-8');
-  fs.writeFileSync(RATINGS_CONTRACT_PATH, result.ratingsReport, 'utf-8');
-  fs.writeFileSync(TENDENCIES_CONTRACT_PATH, result.tendenciesReport, 'utf-8');
+  promoteActiveLeague(paths, result.teamsJson, result.playersJson);
 
   const s = result.summary;
-  console.log(`Wrote ${TEAMS_PATH}`);
-  console.log(`Wrote ${PLAYERS_PATH}`);
-  console.log(`Wrote ${COVERAGE_PATH}`);
-  console.log(`Wrote ${RATINGS_CONTRACT_PATH}`);
-  console.log(`Wrote ${TENDENCIES_CONTRACT_PATH}`);
+  console.log(`Wrote ${paths.teams}`);
+  console.log(`Wrote ${paths.players}`);
+  console.log(`Wrote ${paths.manifest}`);
+  console.log('Validated and promoted league pair; historical S2 reports were not rewritten.');
   console.log(
     `League: ${s.teamCount} teams | ${s.eligible} eligible | ${s.rostered} rostered | ` +
       `${s.freeAgents} free agents | ${s.excludedNoActivity} excluded (no 2025-26 activity)`,

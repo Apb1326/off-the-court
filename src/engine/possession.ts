@@ -5,7 +5,7 @@ import { SeededRNG } from '@/lib/rng';
 import { ClockState, advanceClock, resetShotClock, isShotClockViolation } from './clock';
 import { accumulateFatigue, getEffectiveRating } from './fatigue';
 import { resolveShot, resolveFreeThrows } from './shot';
-import { selectPlayType, selectShotZone, selectPrimaryPlayer, selectDefender, checkTransitionOpportunity, explainLegacyPlayTypeSelection, explainCandidatePlayTypeSelection, getCandidateTransitionOpportunityChance, getLegacyTransitionOpportunityChance, PlayTypeSelectionConfig, LEGACY_PLAY_TYPE_SELECTION } from './play-types';
+import { selectPlayType, selectShotZone, selectPrimaryPlayer, selectDefender, checkTransitionOpportunity, explainPlayTypeSelection, getTransitionOpportunityChance } from './play-types';
 import { resolveRebound } from './rebound';
 import { checkTurnover } from './turnover';
 import { buildContext, clockUsageMultiplier, threePointBias, shouldIntentionalFoul } from './tactics';
@@ -23,6 +23,7 @@ import {
   ADVANTAGE_BONUS_CEIL, SHOT_CLOCK_PRESSURE_THRESHOLD, SHOT_CLOCK_RUSH_PENALTY,
   SPACING_ADVANTAGE_COEF, SPACING_ADVANTAGE_MIN, SPACING_ADVANTAGE_MAX,
   COAST_LEAD_START, COAST_LEAD_FULL, COAST_SHOT_EFFORT_MAX,
+  TURNOVER_STEAL_BASE, TURNOVER_STEAL_RATING_COEF, TURNOVER_STEAL_CAP,
 } from './constants';
 
 export interface GameState {
@@ -69,7 +70,6 @@ export interface GameState {
   }) => void;
   diagInitialSelection?: (info: Parameters<NonNullable<import('./index').GameDiagObserver['onInitialSelection']>>[0]) => void;
   diagPrimarySelection?: (info: Parameters<NonNullable<import('./index').GameDiagObserver['onPrimarySelection']>>[0]) => void;
-  playTypeSelection?: PlayTypeSelectionConfig;
 }
 
 export interface PossessionResult {
@@ -173,7 +173,6 @@ export function simulatePossession(
     state.previousPossessionTurnover,
     state.previousPossessionLongRebound,
     state.rng,
-    state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION,
   );
 
   const playType = selectPlayType(
@@ -182,7 +181,6 @@ export function simulatePossession(
     { scoreDiff, gameClock: state.clock.gameClock, quarter: state.clock.quarter },
     isTransition,
     state.rng,
-    state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION,
     offPlayers,
   );
   const situation = { scoreDiff, gameClock: state.clock.gameClock, quarter: state.clock.quarter };
@@ -192,12 +190,8 @@ export function simulatePossession(
     isTransitionOpportunity: isTransition,
     previousPossessionWasTurnover: state.previousPossessionTurnover,
     previousPossessionWasLongRebound: state.previousPossessionLongRebound,
-    transitionChance: state.playTypeSelection?.mode === 'candidate'
-      ? getCandidateTransitionOpportunityChance(offPlayers)
-      : getLegacyTransitionOpportunityChance(offPlayers),
-    breakdown: state.playTypeSelection?.mode === 'candidate'
-      ? explainCandidatePlayTypeSelection(offPlayers, offensiveSystem, situation)
-      : explainLegacyPlayTypeSelection(offPlayers[0], offensiveSystem, situation),
+    transitionChance: getTransitionOpportunityChance(offPlayers),
+    breakdown: explainPlayTypeSelection(offPlayers, offensiveSystem, situation),
   });
 
   // Determine possession time, then stretch/shrink it for clock management.
@@ -339,13 +333,15 @@ export function simulatePossession(
     if (state.rng.nextBool(toRisk)) {
       // The pass is lost. Half-ish of forced giveaways are steals (the defender's
       // hands), the rest a bad pass out of bounds.
-      const stolen = state.rng.nextBool(Math.min(0.78, 0.20 + stealNorm * 0.45));
+      const stolen = state.rng.nextBool(Math.min(TURNOVER_STEAL_CAP, TURNOVER_STEAL_BASE + stealNorm * TURNOVER_STEAL_RATING_COEF));
       const toClock = advanceClock(state.clock, Math.min(state.clock.shotClock - 1, possTime));
       const toType: TurnoverType = stolen ? 'steal' : 'bad_pass';
       const desc = stolen
         ? `${stealer.firstName} ${stealer.lastName} steals the pass from ${finisher.firstName} ${finisher.lastName}`
         : `Bad pass by ${finisher.firstName} ${finisher.lastName} (turnover)`;
-      const event = createEvent(state, toClock, emittedPlayType(state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION, playType, finisherPlayType), finisher, 'turnover', desc);
+      // PBP events carry the possession's ORIGINATING play-type label (Synergy
+      // semantics); shot math still uses the physical finisher action.
+      const event = createEvent(state, toClock, playType, finisher, 'turnover', desc);
       event.turnoverType = toType;
       if (stolen) event.stealPlayerId = stealer.id;
       const ns = updateState(state, toClock, event);
@@ -410,7 +406,7 @@ export function simulatePossession(
     threePointBias: shotThreePointBias,
     rimDeterrence,
     spacing,
-  }, state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION);
+  });
   // More spacing → the on-ball defender gets less help → a softer contest,
   // routed through the existing contest/contestBonus path as a centered
   // subtraction from the effective pressure bonus. Poor spacing → tougher.
@@ -438,7 +434,8 @@ export function simulatePossession(
       effortMod: coastMod,
     },
   );
-  const eventPlayType = emittedPlayType(state.playTypeSelection ?? LEGACY_PLAY_TYPE_SELECTION, playType, finisherPlayType);
+  // Origin label for the emitted event (see the turnover emission note above).
+  const eventPlayType = playType;
 
   // Diagnostic emission (observer only) — no RNG, no state mutation.
   state.diagShot?.({
@@ -630,14 +627,6 @@ function selectReceiverPlayType(receiver: Player, rng: SeededRNG): PlayType {
 }
 
 // Helper functions for updating game state
-// Synergy play-type rows describe the possession's originating action. The
-// legacy event type is finisher-level after a pass; candidate evaluation keeps
-// that physical finisher action for shot math but emits the originating label so
-// the report denominator has the same possession-level semantic.
-function emittedPlayType(config: PlayTypeSelectionConfig, initial: PlayType, finisher: PlayType): PlayType {
-  return config.mode === 'candidate' ? initial : finisher;
-}
-
 function createEvent(
   state: GameState,
   clock: ClockState,
