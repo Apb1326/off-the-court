@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-14 · **Base commit:** `db5e27e` (`codex/s2d-activation`) + an **uncommitted S2d correction** (final review pending; no correction commit exists yet) · **Save schema:** v7 · **NBA data schema:** 3
+> **Date:** 2026-07-14 · **Base commit:** `349575c` (`main`) + an **uncommitted F2 implementation candidate** · **Save schema:** v8 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -11,10 +11,33 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (2026-07-14 run — S2d correction candidate)
+## Verification evidence (2026-07-14)
 
-The correction candidate is based on `db5e27e` and remains uncommitted pending the
-final read-only review. It adds one runtime production-pool gate shared by new-game
+### F2 playoffs acceptance (uncommitted candidate)
+
+F2 adds the deterministic play-in/conference/Finals bracket, separate playoff
+results/player stats, schema-v8 migration, the shared regular/postseason advancement
+loop, bracket UI, and champion save metadata. The live 86-game-per-team schedule is
+preserved: regular state freezes at its existing 1,290-game `totalGames` boundary.
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS (clean) |
+| `node --import tsx scripts/test-playoffs.ts` | PASS — pure fixed-season seeding; bracket-position IDs; play-in + 2-2-1-1-1 series; regular-state freeze; stable champion; replay idempotence; one-shot/day-by-day byte identity |
+| `node --import tsx scripts/test-save-migration.ts` | PASS — v7 midseason pending-init, legacy-completed grandfathering, and second-run byte identity |
+| `node --import tsx scripts/test-saves.ts` | PASS — playoff phase/champion persistence and metadata summaries |
+| `node --import tsx scripts/test-season-monotonic.ts` | PASS |
+| `node --import tsx scripts/test-determinism.ts` | PASS — four seeds identical |
+| `node --import tsx scripts/test-spacing-ab.ts` | PASS — +6.5pp rim, +2.9pp TS |
+| `node --import tsx scripts/test-injuries.ts` | PASS — same-seed histories identical; 9.52 missed games/player through the completed postseason |
+| profile stdout | PASS 32/32; before = after SHA-256 `c37dfded336b446e344f592e97a8c913aea2d4894602d86b06b3d5392de5438e` |
+| calibrate stdout | exit 0; before = after SHA-256 `5d097b907f7869ff9fc97c4c82778fe1b66354008bb38cc479ad262491c4b8c7` |
+| `npm run build` | PASS on Next.js 16.2.9 (existing broad-data-pattern warnings only) |
+
+## Earlier S2d verification evidence
+
+The S2d correction landed as `071fd5a` and was merged to main at `349575c`. It adds
+one runtime production-pool gate shared by new-game
 creation and activation-context checks: the exact active JSON pair is read once,
 structurally validated (including complete `rotation.minuteTargets`), required to use
 NBA-derived IDs, hash-matched to the builder-owned manifest, and matched to the sole
@@ -42,8 +65,7 @@ Active-pair proof for every correction run: `teams.json`
 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9`,
 `players.json` `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24`;
 selector `nba-derived-tendency-selector-v1`; table `PLAY_TYPE_SHOT_ZONES`;
-manifest `verified`. These are measurements/provenance; final status remains with the
-final reviewer.
+manifest `verified`. These measurements/provenance remain the accepted S2d baseline.
 
 ### Activation acceptance evidence (pre-correction)
 
@@ -110,18 +132,18 @@ source and the runs above.
 | Track | Verified state | Next unit |
 |---|---|---|
 | **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. | **S3** — Stage 3 mechanics, now unblocked. |
-| **F — Franchise** | F1 done (schema v7, `SaveFile.controlledTeamId`, accessors in `src/franchise/controlled.ts`; save-migration harness green today). | **F2 — playoffs** is dependency-ready now (ROADMAP §5.2); F3 → F4 → F5 follow in order. |
+| **F — Franchise** | F1 done; **F2 accepted locally** (schema v8, deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam** is next; F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
-| **U — Presentation** | App shell only: menu (saves/new game/team picker), league, roster, schedule+standings, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI, no playoffs UI, no offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
+| **U — Presentation** | App shell plus the F2 bracket/champion view: menu, league, roster, season standings/leaders/playoffs, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI or offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
 | **Pipeline (Stage 0/OP-1)** | Built and harvested; `npm run validate-nba-data` green in the recorded 2026-07-06 run. Manual, residential-IP, working-machine-only by design. | Only re-harvests (runbook in ROADMAP §4.0). |
 
 ## Gates and blockers
 
-- **Nothing currently in flight is blocked.** With S2d landed, the two startable units
-  are **S3** (Track S) and **F2** (Track F); per ROADMAP §3.2 ∥-rule they must land
-  sequentially, not on concurrent branches.
+- **Nothing currently in flight is blocked.** With S2d landed and F2 accepted locally,
+  the next independent track units are **S3** (Track S) and **F3** (Track F); per
+  ROADMAP §3.2 ∥-rule they must land sequentially, not on concurrent branches.
 - **T-5c and everything after it** (trade AI, ecosystem, RFA, draft) is blocked on the
-  remaining pre-baseline chain F2 → F3 → F4c → F5 (S2d is done).
+  remaining pre-baseline chain F3 → F4c → F5 (S2d and F2 are done).
 - Do **not** reintroduce a runtime selector/table/pool mode — the production interface
   is sole and unconfigurable (`AGENTS.md` "Sole production selector and table"); gated
   runs prove their context against `data/.league-manifest.json` via

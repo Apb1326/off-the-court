@@ -7,7 +7,7 @@ const TABS: { href: string; label: string; match: (p: string) => boolean }[] = [
   { href: '/league', label: 'Home', match: (p) => p.startsWith('/league') },
   { href: '/roster', label: 'Roster', match: (p) => p.startsWith('/roster') || p.startsWith('/player') },
   { href: '/game/sim', label: 'Game', match: (p) => p.startsWith('/game') },
-  { href: '/schedule', label: 'Standings', match: (p) => p.startsWith('/schedule') },
+  { href: '/schedule', label: 'Season', match: (p) => p.startsWith('/schedule') },
 ];
 
 export default function TopChrome() {
@@ -45,7 +45,7 @@ export default function TopChrome() {
           <div className="hidden sm:flex items-center gap-4 text-[11px] uppercase tracking-wider" style={{ color: 'var(--chrome-text)' }}>
             <span style={{ opacity: 0.65 }}>NBA</span>
             <span>2024-25 Season</span>
-            <span style={{ opacity: 0.65 }}>Regular Season</span>
+            <span style={{ opacity: 0.65 }}>Franchise Season</span>
           </div>
 
           <div className="ml-auto">

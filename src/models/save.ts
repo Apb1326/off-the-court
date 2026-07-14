@@ -19,15 +19,16 @@ import { getControlledTeamId } from '@/franchise/controlled';
  * v5 -> v6: recompute usage and free-throw fields from canonical career stats.
  * v6 -> v7 (F1): top-level `controlledTeamId` controlled-franchise identity;
  * pre-v7 saves migrate to `null` (spectator/commissioner mode).
+ * v7 -> v8 (F2): persisted playoff bracket/state and separate playoff stats.
  */
-export const SAVE_SCHEMA_VERSION = 7;
+export const SAVE_SCHEMA_VERSION = 8;
 
 /**
  * Coarse game phase. Finer states (sitting on the trade deadline, the All-Star
  * break) are derived from `season.currentDate` vs `season.markers` at read time;
  * this enum only captures the boundaries the save list cares about.
  */
-export type GamePhase = 'preseason' | 'regular_season' | 'offseason';
+export type GamePhase = 'preseason' | 'regular_season' | 'playoffs' | 'offseason';
 
 /**
  * A complete, self-contained snapshot of game progress — everything needed to
@@ -77,7 +78,12 @@ export interface SaveMetadata {
 
 /** Derive the phase from the season cursor. Recomputed on every write so it can't drift. */
 export function derivePhase(season: SeasonState): GamePhase {
-  if (season.gamesPlayed >= season.totalGames) return 'offseason';
+  if (season.playoffs.status === 'complete' || season.playoffs.status === 'grandfathered_complete') {
+    return 'offseason';
+  }
+  if (season.playoffs.status === 'in_progress' || season.gamesPlayed >= season.totalGames) {
+    return 'playoffs';
+  }
   if (season.gamesPlayed === 0 && season.currentDate < season.startDate) return 'preseason';
   return 'regular_season';
 }
@@ -97,6 +103,19 @@ export function buildSummary(
   const controlledTag = controlledTeamId
     ? `${abbrev.get(controlledTeamId) ?? controlledTeamId} · `
     : '';
+
+  if (season.playoffs.status === 'complete' && season.playoffs.championTeamId) {
+    const champion = abbrev.get(season.playoffs.championTeamId) ?? season.playoffs.championTeamId;
+    return `${controlledTag}Offseason · Champion ${champion}`;
+  }
+  if (season.playoffs.status === 'grandfathered_complete') {
+    return `${controlledTag}Offseason · Season complete`;
+  }
+  if (season.playoffs.status === 'in_progress' || season.gamesPlayed >= season.totalGames) {
+    const active = season.playoffs.series.filter((series) => !series.winnerTeamId);
+    const round = active[0]?.round.replaceAll('_', ' ') ?? 'playoffs';
+    return `${controlledTag}Playoffs · ${round.replace(/^./, (c) => c.toUpperCase())}`;
+  }
 
   if (season.gamesPlayed === 0) {
     const base = season.gamesPlayed >= season.totalGames

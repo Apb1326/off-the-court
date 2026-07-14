@@ -67,6 +67,21 @@ interface Marker {
   label: string;
 }
 
+interface PlayoffSeries {
+  id: string;
+  round: 'play_in' | 'first_round' | 'conference_semifinals' | 'conference_finals' | 'finals';
+  conference: 'East' | 'West' | null;
+  bracketPosition: string;
+  teamAId: string;
+  teamBId: string;
+  teamASeed: number;
+  teamBSeed: number;
+  teamAWins: number;
+  teamBWins: number;
+  winsRequired: number;
+  winnerTeamId: string | null;
+}
+
 interface SeasonData {
   seasonId: string;
   startDate: string;
@@ -74,6 +89,9 @@ interface SeasonData {
   currentDate: string;
   gamesPlayed: number;
   totalGames: number;
+  phase: 'preseason' | 'regular_season' | 'playoffs' | 'offseason';
+  regularSeasonComplete: boolean;
+  seasonComplete: boolean;
   seasonOver: boolean;
   markers: Marker[];
   standings: Standing[];
@@ -81,6 +99,13 @@ interface SeasonData {
   recentDate: string | null;
   recent: GameSummary[];
   upcoming: { date: string; games: { id: string; homeTeamId: string; awayTeamId: string }[] } | null;
+  playoffs: {
+    status: 'pending' | 'in_progress' | 'complete' | 'grandfathered_complete';
+    playInEnabled: boolean;
+    gamesPlayed: number;
+    championTeamId: string | null;
+    series: PlayoffSeries[];
+  };
 }
 
 type LeaderKey = 'ppg' | 'rpg' | 'apg' | 'spg' | 'bpg' | 'fgPct' | 'tpPct';
@@ -117,7 +142,7 @@ export default function SchedulePage() {
   const [season, setSeason] = useState<SeasonData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<'standings' | 'leaders'>('standings');
+  const [view, setView] = useState<'standings' | 'leaders' | 'playoffs'>('standings');
   const [leaderTab, setLeaderTab] = useState<LeaderKey>('ppg');
 
   useEffect(() => {
@@ -204,6 +229,9 @@ export default function SchedulePage() {
         busy={busy}
         onAdvance={advance}
         onNew={newSeason}
+        championName={season.playoffs.championTeamId
+          ? `${teamById(season.playoffs.championTeamId)?.city ?? ''} ${teamById(season.playoffs.championTeamId)?.name ?? season.playoffs.championTeamId}`.trim()
+          : null}
       />
 
       <MarkersTimeline season={season} />
@@ -216,6 +244,7 @@ export default function SchedulePage() {
       <div className="flex gap-2 mt-5 mb-3">
         <TabButton active={view === 'standings'} onClick={() => setView('standings')}>Standings</TabButton>
         <TabButton active={view === 'leaders'} onClick={() => setView('leaders')}>League Leaders</TabButton>
+        <TabButton active={view === 'playoffs'} onClick={() => setView('playoffs')}>Playoffs</TabButton>
       </div>
 
       {view === 'standings' && (
@@ -243,35 +272,46 @@ export default function SchedulePage() {
           />
         </div>
       )}
+
+      {view === 'playoffs' && (
+        <PlayoffBracket playoffs={season.playoffs} teamById={teamById} />
+      )}
     </div>
   );
 }
 
-function ControlBar({ season, nextMarker, busy, onAdvance, onNew }: {
+function ControlBar({ season, nextMarker, busy, onAdvance, onNew, championName }: {
   season: SeasonData;
   nextMarker?: Marker;
   busy: boolean;
   onAdvance: (m: AdvanceMode) => void;
   onNew: () => void;
+  championName: string | null;
 }) {
   const pct = Math.round((season.gamesPlayed / season.totalGames) * 100);
+  const activeRound = season.playoffs.series.find((series) => !series.winnerTeamId)?.round;
+  const playoffLabel = activeRound ? ROUND_LABEL[activeRound] : 'Postseason';
   return (
     <div className="ootp-panel">
       <div className="ootp-statusbar flex flex-wrap items-center gap-4 px-4 py-3">
         <div>
           <div className="text-lg font-bold text-white leading-tight">
-            {season.seasonOver ? 'Regular Season Complete' : fmtDate(season.currentDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            {season.seasonComplete
+              ? (championName ? `Champion: ${championName}` : 'Season Complete')
+              : fmtDate(season.currentDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </div>
           <div className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--chrome-text)', opacity: 0.8 }}>
-            Game {season.gamesPlayed.toLocaleString()} of {season.totalGames.toLocaleString()} · {pct}%
-            {nextMarker && !season.seasonOver && (
+            {season.phase === 'playoffs'
+              ? `${playoffLabel} · ${season.playoffs.gamesPlayed} postseason games played`
+              : `Game ${season.gamesPlayed.toLocaleString()} of ${season.totalGames.toLocaleString()} · ${pct}%`}
+            {nextMarker && !season.regularSeasonComplete && (
               <span> · {nextMarker.label} in {Math.max(0, daysBetween(season.currentDate, nextMarker.date))}d</span>
             )}
           </div>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!season.seasonOver ? (
+          {!season.seasonComplete ? (
             <>
               <button onClick={() => onAdvance('day')} disabled={busy} className="ootp-btn ootp-btn-primary">
                 {busy ? 'Simming…' : '▶ Next Day'}
@@ -282,17 +322,19 @@ function ControlBar({ season, nextMarker, busy, onAdvance, onNew }: {
                   To {nextMarker.label}
                 </button>
               )}
-              <button onClick={() => onAdvance('rest')} disabled={busy} className="ootp-btn">Sim to Finale</button>
+              <button onClick={() => onAdvance('rest')} disabled={busy} className="ootp-btn">Sim to Season End</button>
             </>
           ) : (
-            <span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>Season finished — view final standings below</span>
+            <span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>Season finished — view the bracket below</span>
           )}
           <button onClick={onNew} disabled={busy} className="ootp-btn" title="Start a new season">⟳ New</button>
         </div>
       </div>
-      <div style={{ height: '4px', background: 'var(--background)' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent)' }} />
-      </div>
+      {season.phase !== 'playoffs' && (
+        <div style={{ height: '4px', background: 'var(--background)' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent)' }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -384,7 +426,9 @@ function UpNextPanel({ season, teamById }: { season: SeasonData; teamById: (id: 
       </div>
       <div className="max-h-72 overflow-y-auto">
         {!season.upcoming ? (
-          <div className="px-4 py-6 text-center text-[13px]" style={{ color: 'var(--muted)' }}>Season complete.</div>
+          <div className="px-4 py-6 text-center text-[13px]" style={{ color: 'var(--muted)' }}>
+            {season.seasonComplete ? 'Season complete.' : 'Awaiting the next postseason matchup.'}
+          </div>
         ) : (
           season.upcoming.games.map((g) => (
             <div key={g.id} className="flex items-center gap-2 px-4 py-1.5 text-[13px]" style={{ borderBottom: '1px solid rgba(40,50,66,0.4)' }}>
@@ -414,6 +458,69 @@ function TabButton({ active, onClick, children, small }: { active: boolean; onCl
     >
       {children}
     </button>
+  );
+}
+
+const ROUND_LABEL: Record<PlayoffSeries['round'], string> = {
+  play_in: 'Play-In',
+  first_round: 'First Round',
+  conference_semifinals: 'Conference Semifinals',
+  conference_finals: 'Conference Finals',
+  finals: 'NBA Finals',
+};
+
+function PlayoffBracket({ playoffs, teamById }: {
+  playoffs: SeasonData['playoffs'];
+  teamById: (id: string) => Team | undefined;
+}) {
+  const rounds: PlayoffSeries['round'][] = [
+    'play_in', 'first_round', 'conference_semifinals', 'conference_finals', 'finals',
+  ];
+  if (playoffs.status === 'pending') {
+    return <div className="ootp-panel p-8 text-center" style={{ color: 'var(--muted)' }}>The bracket locks when the regular season ends.</div>;
+  }
+  if (playoffs.status === 'grandfathered_complete') {
+    return <div className="ootp-panel p-8 text-center" style={{ color: 'var(--muted)' }}>This legacy season finished before playoff brackets were tracked.</div>;
+  }
+  return (
+    <div className="space-y-4">
+      {playoffs.championTeamId && (
+        <div className="ootp-panel p-5 text-center">
+          <div className="text-[11px] uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Champion</div>
+          <div className="text-2xl font-black mt-1" style={{ color: 'var(--accent)' }}>
+            {teamById(playoffs.championTeamId)?.city} {teamById(playoffs.championTeamId)?.name}
+          </div>
+        </div>
+      )}
+      {rounds.map((round) => {
+        const series = playoffs.series.filter((item) => item.round === round);
+        if (series.length === 0) return null;
+        return (
+          <section key={round} className="ootp-panel">
+            <div className="ootp-panel-header">{ROUND_LABEL[round]}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 p-3">
+              {series.map((item) => (
+                <div key={item.id} className="p-3 rounded-sm" style={{ background: 'var(--table-header)', border: '1px solid var(--card-border)' }}>
+                  <div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--muted-dim)' }}>
+                    {item.conference ?? 'League'} · {item.bracketPosition}
+                  </div>
+                  {([
+                    [item.teamAId, item.teamASeed, item.teamAWins],
+                    [item.teamBId, item.teamBSeed, item.teamBWins],
+                  ] as const).map(([teamId, seed, wins]) => (
+                    <div key={teamId} className="flex items-center gap-2 py-1 text-sm" style={{ fontWeight: item.winnerTeamId === teamId ? 800 : 500 }}>
+                      <span className="w-5 text-right" style={{ color: 'var(--muted)' }}>{seed}</span>
+                      <span className="flex-1">{teamById(teamId)?.abbreviation ?? teamId}</span>
+                      <span className="font-mono" style={{ color: item.winnerTeamId === teamId ? 'var(--accent)' : 'var(--foreground)' }}>{wins}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 

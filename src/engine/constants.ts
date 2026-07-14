@@ -6,6 +6,19 @@ export const OVERTIME_LENGTH_SECONDS = 300; // 5 minutes
 export const MAX_FOULS = 6;
 export const TEAM_FOUL_BONUS_THRESHOLD = 5; // per quarter
 
+// Postseason format. These are intentionally named even when they mirror the
+// current NBA: F2 treats the format as a tunable game rule, not engine folklore.
+export const PLAY_IN_ENABLED = true;
+export const PLAY_IN_WINS_REQUIRED = 1;
+export const PLAYOFF_SERIES_WINS_REQUIRED = 4;
+export const PLAYOFF_HOME_COURT_PATTERN = [
+  'higher', 'higher', 'lower', 'lower', 'higher', 'lower', 'higher',
+] as const; // best-of-7, 2-2-1-1-1
+export const PLAYOFF_START_REST_DAYS = 2;
+export const PLAYOFF_GAME_INTERVAL_DAYS = 2;
+export const PLAYOFF_ROUND_REST_DAYS = 3;
+export const PLAYOFF_MAX_CALENDAR_DAYS = 90;
+
 // Team possessions per minute of game time (~100 possessions / 48 minutes),
 // used to estimate a player's usage rate from per-game counting stats. The
 // denominator (mpg * this) approximates team possessions during the player's

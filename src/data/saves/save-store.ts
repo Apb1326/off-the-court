@@ -10,6 +10,8 @@ import {
 } from '@/models/save';
 import { migrateSaveFile } from './migrations';
 import { normalizePlayersForSave } from '@/transactions/contracts';
+import { emptyPlayoffs } from '@/models/season';
+import { emptyStatLine } from '@/models/game';
 
 /** Reserved slot id for the auto-save. Lives alongside manual slots but is never a manual name. */
 export const AUTOSAVE_ID = '__autosave__';
@@ -110,14 +112,40 @@ export class SaveStore {
     opts: { name: string; isAutosave: boolean },
   ): Promise<SaveMetadata> {
     const now = new Date().toISOString();
+    // Legacy single-season imports reach this write boundary without passing
+    // through loadSave/migrations. Canonicalize the F2 fields before stamping
+    // the current schema so a malformed v8 save can never be written.
+    const season = file.season.playoffs && Array.isArray(file.season.playoffPlayerStats)
+      ? file.season
+      : {
+          ...file.season,
+          playoffs: file.season.playoffs ?? emptyPlayoffs(
+            file.season.gamesPlayed >= file.season.totalGames ? 'grandfathered_complete' : 'pending',
+          ),
+          playoffPlayerStats: Array.isArray(file.season.playoffPlayerStats)
+            ? file.season.playoffPlayerStats
+            : file.players.map((player) => ({
+                playerId: player.id,
+                teamId: player.teamId ?? '',
+                gamesPlayed: 0,
+                gamesStarted: 0,
+                minutes: 0,
+                totals: emptyStatLine(),
+              })),
+        };
+    const champion = season.playoffs.championTeamId;
+    if ((season.playoffs.status === 'complete') !==
+        (typeof champion === 'string' && champion.length > 0)) {
+      throw new Error('completed playoff state must carry exactly one championTeamId');
+    }
     const { players: normalizedPlayers, freeAgentPool: normalizedPool } =
-      normalizePlayersForSave(file.players, file.season.freeAgentPool, file.teams);
+      normalizePlayersForSave(file.players, season.freeAgentPool, file.teams);
     const full: SaveFile = {
       ...file,
       players: normalizedPlayers,
-      season: { ...file.season, freeAgentPool: normalizedPool },
+      season: { ...season, freeAgentPool: normalizedPool },
       schemaVersion: SAVE_SCHEMA_VERSION,
-      phase: derivePhase(file.season),
+      phase: derivePhase(season),
       createdAt: file.createdAt || now,
       updatedAt: now,
     };

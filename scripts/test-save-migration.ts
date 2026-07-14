@@ -35,6 +35,8 @@ function buildV1Save(teams: Team[], players: Player[]): Record<string, unknown> 
   // Simulate the old on-disk shape: these fields did not exist before v2.
   delete season.freeAgentPool;
   delete season.transactionLog;
+  delete season.playoffs;
+  delete season.playoffPlayerStats;
   const now = new Date().toISOString();
   return { schemaVersion: 1, phase, season, teams, players, createdAt: now, updatedAt: now };
 }
@@ -62,6 +64,10 @@ async function main() {
     Array.isArray(m1.file.season.transactionLog) && m1.file.season.transactionLog.length === 0);
   check('migrated save gains controlledTeamId: null (spectator)',
     m1.file.controlledTeamId === null);
+  check('migrated save gains an empty pending postseason',
+    m1.file.season.playoffs.status === 'pending' &&
+    m1.file.season.playoffs.series.length === 0 &&
+    m1.file.season.playoffPlayerStats.every((stat) => stat.gamesPlayed === 0));
 
   // --- 2. Re-serialize, then migrate again: must be a no-op ---
   const roundTripped = JSON.parse(JSON.stringify(m1.file)) as SaveFile;
@@ -127,6 +133,81 @@ async function main() {
     check('re-migration preserves a non-null controlledTeamId',
       withTeamAgain.ok && withTeamAgain.file.controlledTeamId === teams[0].id);
   }
+
+  // --- 3c. Direct v7 -> v8: F2 postseason state ---
+  const midseason = createSeasonState(teams, players, { seed: 8 });
+  const midseasonRaw = structuredClone(midseason) as unknown as Record<string, unknown>;
+  midseasonRaw.currentDate = midseason.startDate;
+  delete midseasonRaw.playoffs;
+  delete midseasonRaw.playoffPlayerStats;
+  const now = new Date(0).toISOString();
+  const v7mid = {
+    schemaVersion: 7,
+    phase: 'regular_season',
+    season: midseasonRaw,
+    teams,
+    players,
+    controlledTeamId: null,
+    createdAt: now,
+    updatedAt: now,
+  } as unknown as SaveFile;
+  const migratedMid = migrateSaveFile(v7mid);
+  check('v7 midseason migrates to an empty pending postseason',
+    migratedMid.ok && migratedMid.file.season.playoffs.status === 'pending' &&
+    migratedMid.file.season.playoffs.series.length === 0 &&
+    derivePhase(migratedMid.file.season) === 'regular_season');
+  if (migratedMid.ok) {
+    const again = migrateSaveFile(JSON.parse(JSON.stringify(migratedMid.file)) as SaveFile);
+    check('v7 midseason migration is idempotent on second run',
+      again.ok && !again.migrated && JSON.stringify(again.file) === JSON.stringify(migratedMid.file));
+
+    const partial = structuredClone(migratedMid.file) as unknown as Record<string, unknown>;
+    const partialSeason = partial.season as Record<string, unknown>;
+    const preservedPlayoffs = structuredClone(migratedMid.file.season.playoffs);
+    preservedPlayoffs.status = 'in_progress';
+    preservedPlayoffs.startDate = '2025-04-20';
+    preservedPlayoffs.endDate = '2025-07-01';
+    preservedPlayoffs.schedule.push({ id: 'PO-E-PI-78-G1', homeTeamId: teams[0].id,
+      awayTeamId: teams[1].id, day: 180, date: '2025-04-20' });
+    partialSeason.playoffs = preservedPlayoffs;
+    delete partialSeason.playoffPlayerStats;
+    const repaired = migrateSaveFile(partial as unknown as SaveFile);
+    check('partial current-v8 repair preserves an existing bracket while filling missing stats',
+      repaired.ok && repaired.migrated &&
+      JSON.stringify(repaired.file.season.playoffs) === JSON.stringify(preservedPlayoffs) &&
+      repaired.file.season.playoffPlayerStats.length === players.length);
+    const malformedStats = structuredClone(partial) as unknown as Record<string, unknown>;
+    (malformedStats.season as Record<string, unknown>).playoffPlayerStats = {};
+    const repairedMalformed = migrateSaveFile(malformedStats as unknown as SaveFile);
+    const repairedMalformedAgain = repairedMalformed.ok
+      ? migrateSaveFile(JSON.parse(JSON.stringify(repairedMalformed.file)) as SaveFile)
+      : null;
+    check('non-array current-v8 playoff stats repair once, then become a byte-identical no-op',
+      !!repairedMalformed?.ok && repairedMalformed.migrated &&
+      Array.isArray(repairedMalformed.file.season.playoffPlayerStats) &&
+      !!repairedMalformedAgain?.ok && !repairedMalformedAgain.migrated &&
+      JSON.stringify(repairedMalformedAgain.file) === JSON.stringify(repairedMalformed.file));
+
+    if (repaired.ok) {
+      const noChampion = structuredClone(repaired.file);
+      noChampion.season.playoffs.status = 'complete';
+      noChampion.season.playoffs.championTeamId = null;
+      check('malformed completed current-v8 state without a champion is rejected',
+        !migrateSaveFile(noChampion).ok);
+    }
+  }
+
+  const completedRaw = structuredClone(midseasonRaw) as Record<string, unknown>;
+  completedRaw.gamesPlayed = midseason.totalGames;
+  completedRaw.currentDate = midseason.endDate;
+  const v7complete = { ...v7mid, phase: 'offseason', season: completedRaw } as unknown as SaveFile;
+  const migratedComplete = migrateSaveFile(v7complete);
+  check('v7 completed season is grandfathered without fabricating a champion',
+    migratedComplete.ok &&
+    migratedComplete.file.season.playoffs.status === 'grandfathered_complete' &&
+    migratedComplete.file.season.playoffs.championTeamId === null &&
+    migratedComplete.file.season.playoffs.series.length === 0 &&
+    derivePhase(migratedComplete.file.season) === 'offseason');
 
   // --- 4. Real SaveStore.loadSave migrates an old on-disk save ---
   const tmp = await mkdtemp(path.join(tmpdir(), 'otc-migrate-'));
