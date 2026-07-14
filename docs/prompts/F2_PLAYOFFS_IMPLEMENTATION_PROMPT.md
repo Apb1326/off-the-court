@@ -3,7 +3,7 @@
 You are working on Off the Court, a possession-by-possession NBA simulation and
 franchise game (Next.js 16, React 19, TypeScript 5, Tailwind v4, JSON persistence).
 
-This is a **non-engine, schema-conscious franchise phase**: it adds a real
+This is a **non-sim-outcome, schema-conscious franchise phase**: it adds a real
 postseason — seeding, a play-in, best-of-7 conference brackets, the Finals, a
 champion — on top of the existing regular season, without changing how any
 single game simulates. `npm run profile` and `npm run calibrate` output must be
@@ -53,9 +53,11 @@ single game simulates. `npm run profile` and `npm run calibrate` output must be
      supports modes `day | week | rest | date | marker`, all capped at
      `state.endDate`.
    - `src/app/schedule/page.tsx` has a view state machine
-     `'standings' | 'leaders'` and consumes `seasonOver`; the menu page
-     consumes `seasonOver` too. The nav tabs live in
-     `src/app/components/TopChrome.tsx` (they will NOT change in F2).
+     `'standings' | 'leaders'` and consumes `seasonOver`. The menu page types
+     `seasonOver` in `ActiveState` but does not branch on it; its relevant
+     exhaustive surface is `PHASE_LABEL: Record<GamePhase, string>`. The nav
+     tabs live in `src/app/components/TopChrome.tsx` (they will NOT change in
+     F2).
    - `scripts/test-saves.ts`, `scripts/test-save-migration.ts`,
      `scripts/test-season-monotonic.ts`, `scripts/test-injuries.ts`, and
      `scripts/test-calendar.ts` exist and are green before you start.
@@ -74,7 +76,20 @@ single game simulates. `npm run profile` and `npm run calibrate` output must be
    live file records different hashes, those govern). Profile must be green
    (PASS 32/32, exit 0, activation-context banner). If the pre-flight run
    does not reproduce the recorded baselines, STOP.
-8. Run the pre-existing harnesses in item 5 before editing so inherited
+8. Capture a **regular-season advancement behavior baseline** before editing;
+   profile/calibrate do not call `advanceSeason` and therefore cannot prove the
+   Deliverable-4 extraction preserved it. From a seed-2026 state advanced to
+   `endDate`, write a stable JSON projection outside the repo containing
+   `currentDate`, `gamesPlayed`, `results`, `standings`, `playerStats`,
+   `injuries`, and `recoveries`. Exclude the two fields F2 intentionally adds
+   (`playoffs`, `playoffPlayerStats`) and exclude `injuryHistory` entirely:
+   decision 13 intentionally corrects that report's representation and the old
+   in-game missed-count overstatement. Record the projection's SHA-256 and
+   retain it for the post-change comparison. Separately capture the pre-F2
+   injury-history summary so its intentional delta can be reported, not used as
+   an equality gate. If this fixture skips a scheduled game, STOP under the
+   condition below.
+9. Run the pre-existing harnesses in item 5 before editing so inherited
    failures are separated from regressions introduced by this phase.
 
 If any live fact above fails, the schema is not v7, or `docs/ROADMAP.md` §5.2
@@ -134,14 +149,19 @@ a conscious simplification (Horizon item), stated in the module docblock.
 9. **`seasonOver` splits.** The API's `seasonOver` currently means "regular
    season complete"; F2 renames that meaning to `regularSeasonOver` and
    redefines `seasonOver` as "the season is over" (champion crowned, or
-   legacy-finished). Both internal consumers (schedule + menu pages) update in
-   this same diff.
-10. **Force-play in the playoffs.** The regular-season loop silently skips a
-    game when a team has <5 healthy players (a practically-unreachable latent
-    pathology). A skipped playoff game would deadlock a series, so the playoff
-    path never skips: fill to 5 from injured players in deterministic order
-    (`gamesRemaining` asc, then `playerId` asc); filled players play without
-    an exit time. Documented simplification.
+   legacy-finished). The schedule page updates its old-semantic reads; the menu
+   adds the new exhaustive `GamePhase` label but has no live `seasonOver`
+   branch to rewire. This is a deliberate response-semantic change plus
+   additive fields, not a wholly additive API change.
+10. **Use the existing hardship floor; fail loudly on an invalid roster.**
+    `getHealthyPlayers` already adds injured hardship players until
+    `INJURY_MIN_HEALTHY_ROSTER = 8`; do not add a second force-play algorithm,
+    do not change its ordering, and do not perturb the regular path. A result
+    below five therefore means the team's total roster is itself below five,
+    which injured-player fill cannot repair. The regular path retains its
+    existing null/skip behavior for byte identity; the playoff path throws a
+    descriptive invariant error before simulation rather than silently
+    deadlocking the bracket. The fixed-seed harness must never hit it.
 11. **`deterministicSeed` becomes a named export** from `src/engine/season.ts`
     (zero behavior change; the harness and playoff code need it).
     `injury.ts`'s `hash01` near-duplicate stays untouched — it feeds a
@@ -149,18 +169,37 @@ a conscious simplification (Horizon item), stated in the module docblock.
 12. **The bracket UI is a third view in the schedule page**, not a new route
     or nav tab (a `/playoffs` tab would be dead ~90% of a season and would
     duplicate the advance controls).
+13. **Injury history stays append-only by deriving new-entry missed counts from
+    results.** The current onset-time `gamesMissed` snapshot can be finalized
+    only because the complete regular schedule already exists; it cannot see
+    future playoff rounds and would undercount both late-regular-season and
+    postseason injuries. F2 therefore gives every **new** history entry
+    immutable onset evidence (`onsetGameId`, whether the player played the
+    onset game, and the maximum games this injury can actually keep them out
+    under today's tick-before-roster semantics). A shared pure helper derives
+    missed games from the team's completed `results`, capped by that maximum.
+    Legacy entries without onset evidence continue to use their stored
+    `gamesMissed`; migration never rewrites them. No history entry is mutated,
+    no future bracket is guessed, and elimination naturally caps the derived
+    total. This representation change is intentional; game availability, RNG,
+    and every simulation outcome remain unchanged.
 
 Decisions intentionally left open: **none** — the format is fully settled
 above. The stop-and-surface list below covers live-state divergence.
 
 ## Hard constraints (restate; do not paraphrase away)
 
-- No `Math.random`, no `Date.now`, no ambient seeds anywhere in this phase.
-  Bracket construction consumes **no RNG at all** (pure function of standings
-  + results + tiebreakers). Playoff game/injury seeds descend from
-  `deterministicSeed(season.seed, gameId)` exactly like regular games.
-- RNG draw order in the existing regular-season path must be **unchanged** —
-  the machinery refactor (Deliverable 4) is a byte-preserving extraction.
+- Introduce no `Math.random`, no `Date.now`, and no ambient seeds in this
+  phase. Bracket construction consumes **no RNG at all** (pure function of
+  standings + results + tiebreakers). Playoff game/injury seeds descend from
+  `deterministicSeed(season.seed, gameId)` exactly like regular games. The
+  menu's pre-existing UI-only seed picker and relative-time display are valid
+  boundary/display uses and remain untouched.
+- RNG draw order and every game outcome in the existing regular-season path
+  must be **unchanged**. Deliverable 4 is behavior-preserving; only the raw
+  injury-history representation and its corrected derived missed counts change
+  intentionally under decision 13; both are excluded from the dedicated
+  game-behavior before/after oracle and reported separately.
 - Stats derive from the `PlayByPlayEvent` stream via the existing
   accumulators; the `addXStats` stubs stay no-ops; no hand-assigned stats.
 - Never read scouted ratings on a sim path. Never sum ratings to value a
@@ -222,6 +261,56 @@ export interface PlayoffsState {
 playoffs: PlayoffsState | null;          // null = no postseason exists (in-progress regular season, or legacy-finished save)
 playoffPlayerStats: PlayerSeasonStats[]; // separate postseason accumulation; empty until playoffs run
 ```
+
+Also refactor `InjuryHistoryEntry` into a shared base plus these two append-only
+representations (this changes the entry shape, **not** the number of
+`SeasonState` fields):
+
+```ts
+export type InjuryHistoryEntry = InjuryHistoryBase & (
+  | {
+      // Pre-v8 entry. Absence of onsetGameId is the legacy discriminator.
+      gamesMissed: number;
+      onsetGameId?: never;
+      playedOnset?: never;
+      maxGamesMissed?: never;
+    }
+  | {
+      // v8+ entry. Missed games derive from completed results; never mutate it.
+      gamesMissed?: never;
+      onsetGameId: string;
+      playedOnset: boolean;
+      maxGamesMissed: number;
+    }
+);
+```
+
+`InjuryHistoryBase` carries the existing `id`, `season`, `playerId`, `teamId`,
+`injuryType`, `region`, `severity`, and `startDate` fields unchanged. Add in
+`src/engine/injury.ts`:
+
+```ts
+export function injuryGamesMissed(
+  entry: InjuryHistoryEntry,
+  results: GameSummary[],
+): number
+```
+
+For a legacy entry (`onsetGameId` absent), return its stored `gamesMissed`. For
+a v8+ entry, take that team's completed results in persisted order, find
+`onsetGameId`, count from the onset game for a pre-game injury or strictly after
+it for an in-game injury, and cap at `maxGamesMissed`; return `0` if the onset
+result is not recorded. New pre-game entries use
+`maxGamesMissed = injury.gamesRemaining`; new in-game entries use
+`maxGamesMissed = Math.max(0, injury.gamesRemaining - 1)` because the existing
+tick-before-roster order clears a one-game in-game injury before the following
+tip. This records today's actual availability semantics without changing them.
+For an active injury this is the actual missed count **to date**; it becomes
+final when the team has no more games or the cap is reached. Legacy entries
+remain stored snapshots because their missing onset evidence cannot be
+reconstructed safely.
+All API/report/test consumers read missed counts through this helper. Do not add
+a second stored total and do not mutate an entry after append.
 
 In `src/models/save.ts`: `GamePhase` gains `'playoffs'` (between
 `'regular_season'` and `'offseason'` conceptually; union order is free).
@@ -296,7 +385,7 @@ export function initPlayoffs(state: SeasonState, teams: Team[], opts?: { playIn?
  *  R1 after the play-in, later-round series as soon as BOTH feeder series are
  *  decided). Appends to playoffs.playIn[].games / playoffs.series; idempotent
  *  (only builds missing stages); returns true if anything new was materialized.
- *  Pure function of (bracket structure, results). No RNG. */
+ *  Deterministic, idempotent state mutator; consumes no RNG. */
 export function advanceBracket(state: SeasonState): boolean
 ```
 
@@ -348,10 +437,17 @@ teams landed there. No collision with regular ids `g0`…`g1289`.
 **Derivation/read helpers** (all pure, exported): `seriesTally(series, results)`,
 `seriesWinner(series, results)`, `roundComplete(playoffs, round, results)`,
 `playoffChampion(season)` (the Finals winner or `null`),
-`nextPlayoffGameDate(state)`, `postseasonEndDate(endDate)`, and
-`bracketView(state)` — the client payload builder returning ids + derived
-tallies + per-game results joined from `state.results` by id (shape in
-Deliverable 7).
+`playablePlayoffGames(state)`, `nextPlayoffGameDate(state)`,
+`postseasonEndDate(endDate)`, and `bracketView(state)` — the client payload
+builder returning ids + derived tallies + per-game results joined from
+`state.results` by id (shape in Deliverable 7).
+
+`playablePlayoffGames` is the **single selector** for advancement and API
+upcoming/next-date reads. It returns only materialized games whose participants
+are known, whose id is absent from `results`, and whose play-in branch or series
+is still live. It excludes permanently retired G5–G7 slots after a clinch. Sort
+its result by `(date, id)`. `nextPlayoffGameDate` derives from this selector;
+do not duplicate the retired/completed-game rules in the API.
 
 Import direction: this module imports only `models/*` and
 `engine/calendar.ts`. `models/save.ts` will import `playoffChampion` from it
@@ -362,7 +458,7 @@ Import direction: this module imports only `models/*` and
 Extend `advanceSeason` itself; **no sibling `advancePlayoffs`**. Signature and
 return type (`GameSummary[]`) unchanged.
 
-- **(a) Byte-preserving extraction.** Move the per-game loop body (tick
+- **(a) Behavior-preserving extraction.** Move the per-game loop body (tick
   injuries → recoveries → roll new injuries on the `inj_` stream → healthy
   rosters → `adjustRotation` → in-game exits → `simulateGame` → append
   injuries/history → record → summary → push to `results` + completed set)
@@ -373,16 +469,22 @@ return type (`GameSummary[]`) unchanged.
     standings: Map<string, TeamStanding> | null; // null in playoffs — standings frozen
     statsSink: Map<string, PlayerSeasonStats>;   // regular map, or the playoff map
     createMissingStatEntries: boolean;           // true for playoffs (create-on-first-touch)
-    forcePlay: boolean;                          // true for playoffs — never skip
+    requirePlayableRoster: boolean;              // true in playoffs: throw if total roster <5
   }): GameSummary | null
   ```
 
   The regular-season loop calls it with the standings map,
   `state.playerStats`, `createMissingStatEntries: false`,
-  `forcePlay: false` — behavior and RNG draw order **byte-identical to
-  today**. `test-injuries`, `test-saves`, and `test-season-monotonic` must
-  pass unchanged (and profile/calibrate are structurally untouched — they
-  drive `simulateSeason`/`simulateGame`, not `advanceSeason`).
+  `requirePlayableRoster: false`; the playoff loop passes `true`. Do not alter
+  `getHealthyPlayers`: its existing hardship floor already supplies injured
+  players when possible. Regular-season game results, availability, RNG draw
+  order, standings, stats, active injuries, and recoveries stay byte-identical
+  to today. The only intentional regular-path data change is that newly logged
+  injury-history entries use decision 13's immutable onset evidence; its
+  corrected count delta is reported separately. `test-injuries`,
+  `test-saves`, and `test-season-monotonic` remain green (profile/calibrate are
+  structurally untouched — they drive `simulateSeason`/`simulateGame`, not
+  `advanceSeason`).
 - **(b) Two-phase target** replacing the single `endDate` clamp: the regular
   loop runs against `min(targetDate, endDate)` exactly as today; after the
   transition, the playoff loop runs against
@@ -406,15 +508,22 @@ return type (`GameSummary[]`) unchanged.
   ```
   loop:
     changed = advanceBracket(state)           // materialize newly-decided stages
-    due = materialized playoff games in (date, id) order where
-          !completed.has(id) && date <= playoffTarget
-          && the game's series is still undecided
-          (play-in games: not completed && participants materialized)
-    play each due game via playOneGame(..., { standings: null,
-          statsSink: playoffMap, createMissingStatEntries: true, forcePlay: true })
-    until advanceBracket() materializes nothing new AND due is empty
+    next = first playablePlayoffGames(state) entry with date <= playoffTarget
+    if next exists:
+      RE-CHECK immediately before tip that next is still returned by
+      playablePlayoffGames(state)       // a prior game may just have clinched
+      play exactly that one game via playOneGame(..., { standings: null,
+        statsSink: playoffMap, createMissingStatEntries: true,
+        requirePlayableRoster: true })
+      continue                          // recompute bracket + playability
+    until advanceBracket() materializes nothing new AND no next game is due
           (or the champion is decided)
   ```
+
+  Never build a batch containing all currently-due games and then play it
+  without rechecking between games: on a horizon advance, G1–G7 are initially
+  eligible but G4 may retire G5–G7. One-at-a-time selection is the normative
+  algorithm.
 
   Properties to preserve:
   - **Idempotent/monotonic** via the same completed-id ledger (playoff
@@ -436,11 +545,11 @@ return type (`GameSummary[]`) unchanged.
   - **Injuries continue** on the identical tick/roll/recovery flow with the
     `inj_` stream keyed by playoff gameId. `scheduleStressMultiplier`
     reading `state.results` now sees playoff back-to-back density — correct
-    behavior, not a bug. The injury `historyEntry` games-missed window is
-    computed lazily at roll time from the team's regular-schedule dates
-    **plus currently materialized playoff games** (documented
-    simplification: it cannot see unmaterialized future rounds).
-  - **Force-play** per settled decision 10.
+    behavior, not a bug. Every new history entry records decision 13's onset
+    evidence; `injuryGamesMissed` derives the count from completed regular +
+    playoff results, so a future round is neither guessed nor lost.
+  - **Roster solvency** follows settled decision 10: reuse the existing
+    hardship floor; a playoff roster still below five throws before simulation.
 - **(e)** Export `deterministicSeed` (named export, zero behavior change).
 
 ### 5. `derivePhase` and `buildSummary` (`src/models/save.ts`)
@@ -471,10 +580,12 @@ offseason text. Flows to the save list and menu through the single
 - Bump `SAVE_SCHEMA_VERSION` 7 → 8; extend the schema-history docblock in
   `src/models/save.ts`: *v7 → v8 (F2): `SeasonState` gains `playoffs`
   (null-init) and `playoffPlayerStats` (empty-init); a `playoffs`
-  `GamePhase`. Pre-v8 seasons already at `gamesPlayed >= totalGames` are
-  grandfathered as finished — `playoffs` stays `null` and no retroactive
-  postseason is ever constructed (bracket construction only fires in the
-  advance that completes the regular season).*
+  `GamePhase`; new injury-history entries carry result-derived onset evidence
+  while legacy entries retain their stored finalized count. Pre-v8 seasons
+  already at `gamesPlayed >= totalGames` are grandfathered as finished —
+  `playoffs` stays `null` and no retroactive postseason is ever constructed
+  (bracket construction only fires in the advance that completes the regular
+  season).*
 - Add `migrateV7toV8` in `src/data/saves/migrations.ts` at the marked
   insertion point (before the idempotent normalization block), modeled on
   `migrateV6toV7`:
@@ -495,7 +606,9 @@ offseason text. Flows to the save list and menu through the single
 
   Deterministic, no RNG, idempotent via `??`. Mid-regular-season saves are
   untouched beyond the two empty inits (they earn a bracket naturally on
-  completion — progression, not retroactivity).
+  completion — progression, not retroactivity). Existing `injuryHistory`
+  entries are carried byte-for-byte; absence of `onsetGameId` selects the
+  legacy read path, so migration never rewrites an append-only event.
 - Extend `scripts/test-save-migration.ts` (no parallel harness): a direct
   v7→v8 mid-season fixture; a v7 **completed** fixture asserting
   `playoffs === null` and `derivePhase === 'offseason'` post-migration; the
@@ -507,7 +620,7 @@ offseason text. Flows to the save list and menu through the single
   with `derivePhase(state) === 'offseason'` → `advanced: 0` — playoff
   advancement flows; legacy-finished/post-champion saves still no-op. The
   monotonic backward-target rejection stays.
-- **`clientState` additions (response shape stays additive):**
+- **`clientState` additions plus one intentional semantic change:**
   `regularSeasonOver: gamesPlayed >= totalGames`;
   `seasonOver: derivePhase(state) === 'offseason'` (redefinition — settled
   decision 9); `champion: playoffChampion(state)`;
@@ -515,14 +628,17 @@ offseason text. Flows to the save list and menu through the single
   `{ playInEnabled, playIn, rounds: [{ round, series: [{ id, conference,
   slot, homeCourtTeamId, seeds, tally, winnerId, games: [{ id, date,
   homeTeamId, awayTeamId, result? }] }] }], champion }` — the UI maps ids to
-  the teams it already fetches.
+  the teams it already fetches. Map injury-history `gamesMissed` through
+  `injuryGamesMissed(entry, state.results)`; never read a v8+ entry as a stored
+  total.
 - **`nextGameDate`** becomes playoff-aware (`min(regular next,
-  nextPlayoffGameDate(state))`); `upcoming` includes playoff games on that
-  date (same `{id, homeTeamId, awayTeamId}` shape); `recent` picks up playoff
-  results automatically from `state.results`.
+  nextPlayoffGameDate(state))`); `upcoming` includes only entries returned by
+  `playablePlayoffGames(state)` on that date (same
+  `{id, homeTeamId, awayTeamId}` shape), so completed or retired G5–G7 slots
+  never appear. `recent` picks up playoff results automatically from
+  `state.results`.
 - **`resolveTarget`:** `rest` → `postseasonEndDate(state.endDate)` when
   playoffs are active, else `state.endDate` ("Sim to Finale" still pauses the
-  user at the regular-season boundary before the postseason — deliberate UX);
   `day` → the playoff-aware `nextGameDate`; `week` unchanged; `marker` → next
   marker if any remain, else next playoff game date ?? horizon; `date`
   unchanged (the engine's two-phase clamp governs). **No new mode names.**
@@ -542,8 +658,9 @@ offseason text. Flows to the save list and menu through the single
   the new `seasonOver` collapses controls to "Season complete — Champion
   {abbrev}". Rewire the page's previous `seasonOver` uses to
   `regularSeasonOver` where the old meaning was intended.
-- `src/app/menu/page.tsx`: same `seasonOver` treatment; the champion tag in
-  save summaries arrives via `buildSummary` for free.
+- `src/app/menu/page.tsx`: add `playoffs: 'Playoffs'` to the exhaustive
+  `PHASE_LABEL` map. There is no live `seasonOver` branch to rewire. The
+  champion tag in save summaries arrives via `buildSummary` for free.
 - Optional, explicitly non-blocking: extend the standings top-8 accent to
   mark seeds 7–10 as play-in; skip if it grows the diff.
 
@@ -564,55 +681,86 @@ regular season + two postseasons) in the header comment.
 4. → conference-record rung.
 5. → point-differential rung.
 6. → teamId rung (stable).
-7. Same inputs twice → deep-equal output (no-RNG smoke check).
-8. `deterministicSeed` is exported and stable for a known (seed, id) pair.
+7. A three-team tie uses per-team H2H keys against the complete tied group and
+   produces the declared transitive order (never a pairwise comparator).
+8. Finals home court: better overall record wins; an exact record tie follows
+   Finals H2H → point differential → teamId, with a fixture for each rung.
+9. Same inputs twice → deep-equal output (no-RNG smoke check), and
+   `deterministicSeed` is exported and stable for a known `(seed, id)` pair.
 
 **Section B — full postseason from a fixed-seed season (e.g. seed 2026):**
-9. `advanceSeason(state, state.endDate)` → `gamesPlayed === totalGames`,
+10. `advanceSeason(state, state.endDate)` → `gamesPlayed === totalGames`,
    `playoffs !== null` (transition fired in the completing call),
    `derivePhase === 'playoffs'`. Snapshot standings/playerStats/gamesPlayed
    (JSON).
-10. Play-in: exactly 4 openers, ids match the documented format, hosted by
+11. Play-in: exactly 4 openers, ids match the documented format, hosted by
     the better seed, dates = endDate+2; deciders absent until openers
     resolve; R1 absent until the play-in resolves.
-11. Advancing through the play-in day-by-day: deciders materialize with the
+12. Advancing through the play-in day-by-day: deciders materialize with the
     fixed id/date; then R1 = 8 series with correct slot matchups from
     post-play-in seeds; all 7 games per series materialized; host sequence
     matches 2-2-1-1-1.
-12. Deep-copy the completed-regular-season state → run the postseason twice
-    from independent copies, once day-by-day and once via a single
+13. Synthetic feeder-result fixtures prove the exact R2, R3, and Finals
+    topology, each later round's home-court anchor, and that a stage is not
+    materialized until **both** feeders are decided.
+14. Deep-copy the saved step-10 completed-regular-season state → run the
+    postseason twice from independent copies, once day-by-day and once via a
+    single
     `advanceSeason(copy, horizon)`: final `playoffs` JSON, results set,
     `playoffPlayerStats`, and champion all byte-identical (champion stable
     across two runs AND granularity independence in one check).
-13. Full postseason completes: every constructed series has a derived
+15. Full postseason completes: every constructed series has a derived
     winner; `playoffChampion !== null`; unneeded games 5–7 of short series
-    absent from `results`.
-14. Freeze: post-champion standings/playerStats/gamesPlayed byte-identical to
-    the step-9 snapshot; playoff summaries present in `results` with `PO-`
+    absent from `results`, `playablePlayoffGames`, `nextPlayoffGameDate`, and
+    API-style upcoming selection. A one-shot horizon run must never play a
+    post-clinch slot.
+16. Freeze: post-champion standings/playerStats/gamesPlayed byte-identical to
+    the step-10 snapshot; playoff summaries present in `results` with `PO-`
     ids; `playoffPlayerStats` non-empty and only for postseason
     participants.
-15. Idempotency: hand-rewind `currentDate`, re-advance to the horizon → zero
+17. Idempotency: hand-rewind `currentDate`, re-advance to the horizon → zero
     games returned, full-state snapshot unchanged.
-16. `derivePhase === 'offseason'` after the champion; `buildSummary` contains
+18. `derivePhase === 'offseason'` after the champion; `buildSummary` contains
     the champion's abbreviation.
-17. Play-in disabled: `initPlayoffs(state, teams, { playIn: false })` on the
+19. Play-in disabled: `initPlayoffs(state, teams, { playIn: false })` on the
     completed season → no play-in games, R1 direct from seeds 1–8,
     deterministic.
-18. Grandfather at engine level: a completed state with `playoffs` forced to
+20. Grandfather at engine level: a completed state with `playoffs` forced to
     `null` and no regular games left → `advanceSeason(…, horizon)` constructs
     nothing and plays nothing; `derivePhase === 'offseason'`.
 
-(No probabilistic playoff-injury assertions — the mechanism is covered by
-check 12's byte-identity.)
+**Section C — injury and persistence contracts (deterministic):**
+21. Legacy history fixture: an entry without `onsetGameId` returns its stored
+    `gamesMissed` unchanged.
+22. Result-derived history fixtures: pre-game onset includes the onset game;
+    in-game onset excludes it; both cap at `maxGamesMissed`; a team eliminated
+    before the cap reports only games it actually played; a late regular-season
+    injury correctly continues counting its team's playoff results.
+23. Inject an active injury and recovery on a known playoff participant, then
+    advance its next playoff game: the existing tick/recovery transitions occur
+    exactly once. This is a functional assertion, not merely a same-code
+    determinism comparison. Keep random new-injury totals informational.
+24. Mid-playoff persistence: write a save through `SaveStore`, reload it, and
+    advance to the horizon; compare the full post-load continuation to an
+    in-memory control, including bracket structure, results order, active
+    injuries/recoveries, derived history counts, playoff stats, and champion.
+25. Playoff roster solvency: the production fixed-seed run never reaches the
+    below-five invariant; a synthetic below-five total roster throws the
+    documented error rather than returning null and deadlocking.
 
 ### 10. Documentation (only after acceptance passes — see Verification)
 
 - `docs/ROADMAP.md`: F2 outcome record in §5.2 (the F1 pattern), Wave-3 row
   status in §3.2, and §9.8 ledger → "v8 = current (F2 playoffs; v7 = F1 …)".
 - `docs/PROJECT_STATUS.md`: verification evidence table entries and — since
-  clientState/summary output changes are UI/API-side only and profile/calibrate
-  are unchanged — re-affirm the existing SHA baselines (do not re-record
-  unless the captured bytes differ, which would itself be a failure).
+  profile/calibrate are unchanged — re-affirm the existing SHA baselines (do
+  not re-record unless the captured bytes differ, which would itself be a
+  failure). Also record the regular-season advancement projection's identical
+  before/after SHA and the intentional result-derived injury-history shape.
+- `AGENTS.md`: codify the live v8 injury-history rule — entries stay
+  append-only; legacy entries use their stored count; v8+ entries derive the
+  actual-to-date/final count through `injuryGamesMissed` from immutable onset
+  evidence plus `results`; consumers never invent a parallel count.
 - `src/models/save.ts` docblock ledger (done in Deliverable 6).
 - `README.md` only if its live text enumerates phases or the save shape.
 
@@ -620,8 +768,10 @@ check 12's byte-identity.)
 
 - Do not modify `simulateGame`, possession/shot/foul/fatigue logic,
   `spacing.ts`, `defense.ts`, ratings, tendencies, or `engine/constants.ts`.
-- Do not change RNG draw order on the regular-season path; the extraction in
-  Deliverable 4 is byte-preserving.
+- Do not change RNG draw order, availability, or game outcomes on the
+  regular-season path. The only permitted raw-state delta there is decision
+  13's append-only injury-history representation and corrected derived counts;
+  both are excluded from the game-behavior projection and reported separately.
 - Do not add playoff-specific sim behavior (rotation tightening, leverage
   minutes, effort changes) — Horizon, stated as a simplification.
 - Do not build anything from F3+ : no `advanceToNextSeason`, no offseason
@@ -652,9 +802,13 @@ Stop and report evidence instead of guessing if:
   materially diverge from the shapes this prompt cites.
 - Implementing any deliverable appears to require touching `simulateGame`,
   possession internals, `engine/constants.ts` tunables, or sim RNG order.
-- The fixed-seed test season actually skips a regular-season game (the <5
-  healthy pathology): that surfaces the latent completion-trigger issue —
-  report it; do not work around it inside F2.
+- The fixed-seed test season actually skips a regular-season game, or a
+  production playoff team has a total roster below five. `getHealthyPlayers`
+  already applies the hardship floor; report the roster-solvency violation and
+  do not invent a second fill algorithm inside F2.
+- The pre-change regular-season advancement projection cannot be reproduced
+  after the extraction once the two new F2 fields and `injuryHistory` are
+  excluded.
 - Overlapping user changes make the scoped diff unsafe.
 
 ## Verification
@@ -682,12 +836,21 @@ Run and report all of the following:
 8. `node --import tsx scripts/test-injuries.ts` and
    `node --import tsx scripts/test-calendar.ts` — green (both advance to
    `endDate`; they will now leave `playoffs` initialized, which their
-   assertions do not read — they must stay green regardless).
+   assertions do not read). `test-injuries` must consume
+   `injuryGamesMissed`; report any output delta caused by correcting the old
+   in-game-history overcount, but its acceptance bands and deterministic rerun
+   must remain green.
 9. `node --import tsx scripts/test-playoffs.ts` — all checks green
    (~3 min).
-10. Scope audit: `git diff --stat` contains nothing under `src/engine/`
-    except `season.ts` and the new `playoffs.ts`; no `engine/constants.ts`
-    change; no F3+ surface.
+10. Re-run the exact pre-flight regular-season advancement projection after
+    the implementation, again excluding `injuryHistory` and the two F2 fields.
+    Its SHA-256 must equal the pre-change SHA. This is the extraction A/B
+    oracle; profile/calibrate hashes are not a substitute. Separately report
+    the old stored versus new derived injury-history summary and explain the
+    expected in-game/carry-into-playoffs correction.
+11. Scope audit: `git diff --stat` contains nothing under `src/engine/`
+    except `season.ts`, `injury.ts`, and the new `playoffs.ts`; no
+    `engine/constants.ts` change; no F3+ surface.
 
 Manual/runtime checks — **persistence safety is mandatory.** `getSaveStore()`
 is rooted at `process.cwd()/data/saves`; never run the app against the live
@@ -720,8 +883,14 @@ Report:
   formats);
 - confirmation that bracket construction consumes no RNG and that playoff
   seeds derive from `deterministicSeed(season.seed, gameId)`;
-- confirmation the `playOneGame` extraction was byte-preserving (harness
-  evidence: monotonic/injury/save tests green, profile/calibrate SHA-identical);
+- confirmation the `playOneGame` extraction preserved regular-season
+  availability, results, RNG order, standings, stats, active injuries, and
+  recoveries, with the exact before/after advancement-projection SHA; separately
+  report the intentional result-derived injury-history representation change;
+- proof that post-clinch games are excluded by the shared playability selector
+  from simulation, next-date, and upcoming reads;
+- injury evidence: legacy-count fallback, result-derived late-season/playoff
+  counts, active-injury ticking, and mid-playoff save/reload identity;
 - v7→v8 migration behavior, grandfather evidence, and second-run no-op
   evidence;
 - before/after profile and calibrate SHA-256 comparisons (must be identical);
