@@ -11,6 +11,7 @@ import {
   FT_PCT_SLOPE,
   FT_SIM_PCT_MIN,
   FT_SIM_PCT_MAX,
+  BLOCK_BASE_RATE,
 } from './constants';
 
 export type ContestLevel = 'open' | 'lightly_contested' | 'contested' | 'heavily_contested';
@@ -180,7 +181,7 @@ export function resolveShot(
 
   // Block check (before shot)
   const blockRating = getEffectiveRating(defender.ratings.block, defenderFatigue);
-  const blockChance = (blockRating / 80) * 0.10 * (zone === 'rim' ? 2.0 : zone === 'short_midrange' ? 0.5 : 0.1);
+  const blockChance = (blockRating / 80) * BLOCK_BASE_RATE * (zone === 'rim' ? 2.0 : zone === 'short_midrange' ? 0.5 : 0.1);
   const blocked = rng.nextBool(blockChance);
 
   if (blocked) {

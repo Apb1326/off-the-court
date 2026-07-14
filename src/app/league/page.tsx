@@ -37,15 +37,12 @@ export default function LeaguePage() {
       <div className="text-center py-20">
         <h1 className="text-3xl font-bold mb-4">Welcome to Off The Court</h1>
         <p className="mb-6" style={{ color: 'var(--muted)' }}>
-          No team data found. Run the data ingestion script first:
+          No team data found. Build the NBA-derived production league first:
         </p>
         <pre className="inline-block px-4 py-2 rounded text-sm" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-          BALLDONTLIE_API_KEY=your_key npm run ingest
+          npm run build-league
         </pre>
-        <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>
-          Get a free API key at{' '}
-          <span style={{ color: 'var(--accent)' }}>https://app.balldontlie.io</span>
-        </p>
+        <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>The builder requires the local normalized NBA-data artifacts.</p>
       </div>
     );
   }

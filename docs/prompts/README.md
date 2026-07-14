@@ -13,6 +13,7 @@ back into `docs/ROADMAP.md` (see §4.1's `[DIVERGENCE]` markers), never patched 
 | `PHASE_5B_IMPLEMENTATION_PROMPT.md` | Transactions Phase 5b — sign-and-trade |
 | `F1_TEAM_SELECTION_IMPLEMENTATION_PROMPT.md` | F1 — controlled-franchise identity (schema v7) |
 | `S2C2_IMPLEMENTATION_PROMPT.md` | S2c2 — assist definition and candidate-only diet unwind |
+| `S2D_IMPLEMENTATION_PROMPT.md` | S2d — activation, coupled re-baseline, and legacy-ingest retirement |
 
 **Known archive gap (recorded 2026-07-11):** the prompts for **S2a, S2b/S2b-R, S2c1,
 and S2c1-R** (landed 2026-07-07 → 2026-07-10) were never committed here — a lapse, not a

@@ -9,6 +9,7 @@ import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
 import { normalizePlayersForSave } from '@/transactions/contracts';
 import { resolveSeedFromBody } from '@/lib/seed';
+import { validatePool } from '@/lib/pool-validation';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -177,10 +178,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Snapshot the global roster template into a fresh, independent save.
+    // A save is built from this snapshot exactly once, so a torn or invalid
+    // pool must be rejected here — the script-side gates don't cover runtime.
     const store = getStore();
     const [teams, players] = await Promise.all([store.loadTeams(), store.loadPlayers()]);
-    if (teams.length < 2) {
-      return NextResponse.json({ error: 'Need teams. Run data ingestion first.' }, { status: 400 });
+    if (teams.length === 0) {
+      return NextResponse.json({ error: 'Need teams. Run npm run build-league first.' }, { status: 400 });
+    }
+    try {
+      validatePool(teams, players, 'data');
+    } catch (error) {
+      return NextResponse.json(
+        { error: `League data failed validation — re-run npm run build-league. (${(error as Error).message})` },
+        { status: 500 },
+      );
     }
 
     // Controlled-franchise identity is chosen at new-game time and validated

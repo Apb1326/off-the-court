@@ -35,12 +35,8 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-The app reads its league from a gitignored `data/` directory, which you generate one of two ways:
-
-| Path | Command | What it does |
-|------|---------|--------------|
-| Synthetic | `npm run seed` | Generates a self-contained league from scratch — no external dependencies. Fastest way to get running. |
-| Real data | `npm run ingest` | Pulls real teams/players via the BallDontLie API into `data/`. Requires `BALLDONTLIE_API_KEY` (free key at https://app.balldontlie.io). |
+The app reads its gitignored `data/` directory from the deterministic NBA-derived
+production builder. Populate `data/nba/normalized/`, then run `npm run build-league`.
 
 ## Scripts
 
@@ -52,13 +48,11 @@ Wired into `package.json`:
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run seed` | Generate a synthetic league into `data/` |
-| `npm run ingest` | Ingest real data via BallDontLie |
 | `npm run download-history` | Fetch historical CSVs into `data/history/` (prerequisite for `calibrate`) |
 | `npm run calibrate` | Deterministic historical drift comparison vs. six decades of real games by era (benchmark ends 2015 — informational, not pass/fail) |
 | `npm run profile` | The engine acceptance test: season profile vs. modern-NBA targets with derived tolerance bands; exits non-zero on enforced failure |
 | `npm run validate-nba-data` | Structural validation of `data/nba/normalized/` contracts (missing files are SKIPPED) |
-| `npm run build-league` | Builds the **inactive** pipeline-derived candidate league (`data/league-candidate/`) from `data/nba/normalized/`, plus the generated S2 reports (`docs/S2A_LEAGUE_COVERAGE.md`, `S2B_RATINGS_CONTRACT.md`, `S2C1_TENDENCIES_CONTRACT.md`); `--check` byte-compares. Does not touch the active league — activation is S2d's job |
+| `npm run build-league` | Deterministically validates and promotes the NBA-derived active `data/teams.json` + `data/players.json`, recording a promotion manifest that profile/calibrate verify; `--check` byte-compares the pair + manifest; `--out-dir` redirects output (harness isolation) |
 
 Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 
@@ -67,7 +61,7 @@ Run directly with `tsx` (not wired to npm), each requires a populated `data/`:
 | `tsx scripts/test-determinism.ts` | Asserts same seed → identical box score + play-by-play hash |
 | `tsx scripts/test-spacing-ab.ts` | A/B: same star with four shooters vs. four non-shooters; asserts a material rim-rate and TS% gain (exits non-zero if not met) |
 | `tsx scripts/test-defense-ab.ts` | Defensive-versatility A/B |
-| `tsx scripts/calibrate-spacing.ts` | Derives `SPACING_BASELINE_OFFBALL_FOUR` and `SPACING_SPREAD` from the real player pool |
+| `tsx scripts/calibrate-spacing.ts` | Derives spacing and defensive-versatility baselines/spreads from representative active-pool lineups |
 | `tsx scripts/derive-league-targets.ts` | Derives the profile's league targets + tolerance bands from `data/nba/normalized/`; writes `docs/LEAGUE_TARGETS.md` (`--check` verifies byte-identical; `--seasons=` overrides the 3-season default) |
 | `tsx scripts/test-sim.ts` · `test-season.ts` · `test-calendar.ts` | Single-game, full-season, and calendar smoke tests |
 
@@ -97,13 +91,12 @@ src/
     store/         JSON persistence (JsonStore) and types
     saves/         Multi-save store: per-slot folders, atomic writes, schema migrations
     nba/           Read-only loaders/types for data/nba/normalized/ contracts
-    ingest/        BallDontLie client + transforms (legacy path; retired at Stage 2)
   app/             Next.js App Router — pages (/, menu, league, roster, schedule,
                    player/[id], game/sim) and API routes (players, teams, sim, season, saves)
-scripts/           seed, ingest, history download, calibration, profiling, target derivation,
+scripts/           league builder, history download, calibration, profiling, target derivation,
                    diagnostics, A/B + smoke tests, save-migration round-trips
 docs/              ROADMAP, TRANSACTIONS_ROADMAP, PROJECT_STATUS (verified snapshot),
-                   LEAGUE_TARGETS (target provenance), S2A/S2B/S2C1 generated reports,
+                   LEAGUE_TARGETS (target provenance), frozen S2 evidence records,
                    prompts/ (archived phase implementation prompts)
 data/              Generated league + saves (gitignored): teams.json, players.json, season.json,
                    saves/<slot>/, seasons/<id>/games/*.json, history/*.csv, nba/ (pipeline output)

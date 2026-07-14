@@ -31,15 +31,16 @@ The derivation layer must honor the same 40-centered convention. The
 `engine/constants.ts` form the free-throw derivation/resolution inverse pair;
 change them together so real percentage → rating → sim percentage still round-trips.
 
-**Candidate selector guard (S2c1-R).** The legacy/default play-type selector and
-emitted finisher labels remain the active runtime behavior until S2d. The
-explicit candidate selection configuration is evaluation-only and must be
-threaded from the alternate-pool profiling seam; do not infer it from data
-paths, player IDs, or environment state, and do not activate it globally early.
-
-**S2c2 dual-table guard.** `PLAY_TYPE_SHOT_ZONES` remains the legacy-active
-compensation table; `PLAY_TYPE_SHOT_ZONES_REAL` is an explicit candidate/S2d
-evaluation input only. Do not collapse or promote the tables before S2d.
+**Sole production selector and table (post-S2d).** The NBA-derived tendency
+selector and the single `PLAY_TYPE_SHOT_ZONES` table are the only runtime
+behavior; the legacy selector, the candidate/`_REAL` dual table, and every
+runtime selector/table mode were retired at S2d activation. Do not reintroduce
+a configurable selection seam, and never infer behavior from data paths,
+player IDs, or environment state. Gated runs (profile, calibrate) verify their
+context against the promotion manifest (`data/.league-manifest.json`, written
+only by `scripts/build-league.ts`) via `scripts/s2d-activation-context.ts` —
+a numerical result is only valid alongside its printed activation-context
+banner.
 
 **Shot math is additive and clamped.** `resolveShot` sums base zone % plus shooter, defender, fatigue, play-type, contest, form, double-team, momentum, advantage, and rush terms, then clamps to `[0.05, 0.95]`. Keep new modifiers additive and inside the clamp — no multiplicative terms that escape the bounds.
 
@@ -135,7 +136,7 @@ derivation; `--check` verifies the committed copy byte-for-byte). Rules:
 Run after any engine change and report results. (Environment: node lives under nvm, not on PATH — see `CLAUDE.md`'s quickstart; if the `tsx` CLI hits sandbox `listen EPERM`, use `node --import tsx <script>`.)
 
 - [ ] `npm run typecheck` — clean. (Seconds; no output on success.)
-- [ ] `npm run profile` — the modern engine acceptance test: all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed. (~2–3 min — a full 1,290-game season; success ends with `PASS (32 of 32 enforced stats within tolerance)` and exit 0. The INFORMATIONAL tables printed after the PASS line never gate; ⚠️ OUT flags on enforced rows are *expected and non-gating* in alternate-pool/candidate runs, which print an `INFORMATIONAL — alternate pool` banner.)
+- [ ] `npm run profile` — the modern engine acceptance test: all ENFORCED stats within their derived tolerance bands (targets from `scripts/derive-league-targets.ts`; provenance in `docs/LEAGUE_TARGETS.md`); exits non-zero on failure. Report before/after deltas; watch assists and turnovers when chain logic changed. (~2–3 min — a full 1,290-game season; success prints the `S2D ACTIVATION CONTEXT — VERIFIED` banner first and ends with `PASS (32 of 32 enforced stats within tolerance)` and exit 0. The INFORMATIONAL tables printed after the PASS line never gate.)
 - [ ] `npm run calibrate` — a **deterministic historical drift comparison, not pass/fail era acceptance** (its benchmark ends in 2015, so a 2023–26-tuned engine sits above its era rows by design). Engine changes report the deltas and explain their direction; the comparison stays useful precisely because it is deterministic — no silent drift. (~1 min; prints era benchmark tables, a 400-game engine row, and `Saved data/history/benchmarks.json`; exit 0.)
 - [ ] `tsx scripts/test-determinism.ts` — same seed → identical game. (Seconds; every seed line must end `IDENTICAL`, final line `DETERMINISM PASSED`.)
 - [ ] `tsx scripts/test-spacing-ab.ts` — spacing still shows a material, correctly-signed effect. (Seconds; success ends `SPACING A/B PASSED`; exits non-zero if the effect is missing or wrong-signed.)

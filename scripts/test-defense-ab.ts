@@ -72,25 +72,31 @@ function makeStar(): Player {
   return { ...d, id: 'STAR', position: 'PG' as Position, teamId: 'OFF' };
 }
 
-// (a) Switchable: high FLOOR (60), low spread.
+// Fixture rating levels are scaled to the S2d NBA-derived pool: the
+// versatility baseline/spread (VERSATILITY_BASELINE/SPREAD, re-derived by
+// calibrate-spacing from real starter fives) center much lower than the
+// retired heuristic pool, so "elite floor" here is ~mid-30s perimeter D and
+// a sieve is ~18 — chosen so the fixtures land at z ≈ +1.8 / -2.0 / +0.7 /
+// -1.0 instead of all saturating the ±VERSATILITY_CLAMP.
+// (a) Switchable: high FLOOR (33), low spread.
 const switchable = (): Player[] => {
-  const perim = [62, 64, 60, 63, 61], ath = [56, 58, 55, 57, 56], ht = [78, 79, 78, 80, 79];
-  return perim.map((p, i) => mkDef(p, ath[i], ht[i], 60, 55));
+  const perim = [33, 35, 34, 36, 34], ath = [46, 48, 45, 47, 46], ht = [78, 79, 78, 80, 79];
+  return perim.map((p, i) => mkDef(p, ath[i], ht[i], 45, 45));
 };
-// (b) Studs + sieve: mean perim ≈ switchable, but FLOOR 30, high spread.
+// (b) Studs + sieve: mean perim ≈ switchable (34.4), but FLOOR 18, high spread.
 const studsSieve = (): Player[] => {
-  const perim = [70, 72, 71, 69, 30], ath = [60, 62, 58, 61, 40], ht = [78, 79, 80, 81, 76], dIQ = [62, 60, 64, 61, 40];
-  return perim.map((p, i) => mkDef(p, ath[i], ht[i], dIQ[i], 55));
+  const perim = [40, 39, 38, 37, 18], ath = [50, 52, 48, 51, 30], ht = [78, 79, 80, 81, 76], dIQ = [46, 44, 48, 45, 25];
+  return perim.map((p, i) => mkDef(p, ath[i], ht[i], dIQ[i], 45));
 };
 // (c) Average control: realistic league spread, mid floor.
 const average = (): Player[] => {
-  const perim = [46, 50, 52, 48, 54], ath = [44, 50, 55, 48, 58], ht = [74, 77, 79, 81, 84], dIQ = [48, 50, 52, 50, 50];
-  return perim.map((p, i) => mkDef(p, ath[i], ht[i], dIQ[i], 52));
+  const perim = [34, 38, 40, 36, 42], ath = [40, 46, 50, 44, 52], ht = [74, 77, 79, 81, 84], dIQ = [44, 46, 48, 45, 46];
+  return perim.map((p, i) => mkDef(p, ath[i], ht[i], dIQ[i], 45));
 };
 // (d) Five immobile rim protectors: elite interior D, poor/immobile perimeter D.
 const rimProtectors = (): Player[] => {
-  const perim = [38, 36, 35, 40, 37], ath = [40, 38, 36, 42, 39], ht = [83, 84, 85, 84, 86], intDef = [72, 74, 76, 73, 78];
-  return perim.map((p, i) => mkDef(p, ath[i], ht[i], 50, intDef[i]));
+  const perim = [20, 18, 17, 22, 19], ath = [30, 28, 26, 32, 29], ht = [83, 84, 85, 84, 86], intDef = [62, 64, 66, 63, 68];
+  return perim.map((p, i) => mkDef(p, ath[i], ht[i], 40, intDef[i]));
 };
 
 const combined = (d: Player) =>

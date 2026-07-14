@@ -25,12 +25,13 @@
   `docs/PROJECT_STATUS.md` (verified snapshot + baselines) · `README.md` ·
   `docs/S2C2_ASSIST_DECISION.md` (S2c2 decision record).
 - *Generated — regenerate, never hand-edit:* `docs/LEAGUE_TARGETS.md`
-  (`scripts/derive-league-targets.ts`) · `docs/S2A_LEAGUE_COVERAGE.md`,
-  `docs/S2B_RATINGS_CONTRACT.md`, `docs/S2C1_TENDENCIES_CONTRACT.md`
-  (`scripts/build-league.ts`) · `docs/S2C1_R_SELECTION_DIAGNOSIS.md`
-  (`scripts/diagnose-s2c1-selection.ts`) · `docs/S2C2_ASSIST_AND_DIET_REPORT.md`
-  (`scripts/report-s2c2.ts`). Generated docs carry measurements and
+  (`scripts/derive-league-targets.ts`). Generated docs carry measurements and
   provenance only; status and interpretation live in ROADMAP/PROJECT_STATUS.
 - *Historical — background, not required reading:* `docs/ROADMAP_HISTORY.md` (revision
   changelogs) · `docs/prompts/` (archived phase prompts; see its README for the known
-  gap) · `docs/S2C1_CANDIDATE_PROFILE.md` (phase record: generated body + addendum).
+  gap) · `docs/S2C1_CANDIDATE_PROFILE.md` (phase record: generated body + addendum) ·
+  the S2 evidence records frozen at S2d when their generators were deleted or
+  stopped writing them: `docs/S2A_LEAGUE_COVERAGE.md`, `docs/S2B_RATINGS_CONTRACT.md`,
+  `docs/S2C1_TENDENCIES_CONTRACT.md`, `docs/S2C1_R_SELECTION_DIAGNOSIS.md`,
+  `docs/S2C2_ASSIST_AND_DIET_REPORT.md` · `docs/S2D_PREFLIGHT.md` and
+  `docs/S2D_ACTIVATION_CONTEXT.md` (S2d evidence records).

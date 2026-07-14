@@ -13,7 +13,7 @@ import { Team } from '../src/models/team';
 import { Player } from '../src/models/player';
 import { simulateGame } from '../src/engine';
 import { SeededRNG } from '../src/lib/rng';
-import { loadLeaguePool } from './league-pool';
+import { loadActivationContext, printActivationContextBanner } from './s2d-activation-context';
 
 // Fixed seed for matchup selection so the engine benchmark is reproducible
 // run-to-run and comparable across engine changes.
@@ -210,7 +210,11 @@ function row(b: EraBenchmark): string {
 }
 
 async function main() {
-  const pool = await loadLeaguePool(process.argv.slice(2));
+  if (process.argv.length > 2) throw new Error(`Unknown argument: ${process.argv[2]}`);
+  // Same activation-context gate as profile: calibrate persists benchmark
+  // artifacts, so it too must prove which pool/selector/table produced them.
+  const pool = await loadActivationContext();
+  printActivationContextBanner(pool);
   if (!existsSync(path.join(HISTORY_DIR, 'nbaallelo.csv'))) {
     console.error('Missing data/history/nbaallelo.csv. Run: npm run download-history');
     process.exit(1);
@@ -236,7 +240,6 @@ async function main() {
   console.log(`  Star-level seasons (RAPTOR ≥ +5): ${raptor.starSeasons}`);
 
   console.log('\nRunning engine for comparison...');
-  if (pool.alternate) console.log(`INFORMATIONAL — alternate pool (${pool.directory}); no gate; S2d owns the gated run`);
   const sim = await simBenchmark(pool.teams, pool.players);
   const modern = eras.find((e) => e.label === '2010-2015')!;
 
@@ -246,10 +249,6 @@ async function main() {
   console.log(row(modern));
   console.log(row(sim));
 
-  if (pool.alternate) {
-    console.log('\nINFORMATIONAL — alternate pool; no cache was written.');
-    return;
-  }
   // Persist benchmarks so they can serve as calibration targets.
   const benchmarks = {
     source: 'FiveThirtyeight open data (CC BY 4.0)',

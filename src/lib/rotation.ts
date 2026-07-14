@@ -1,7 +1,7 @@
 /**
  * Shared rotation setup for constructing team lineups from a roster.
  *
- * Extracted verbatim from `scripts/ingest.ts` (S2a) so both the BDL ingest
+ * Extracted into the shared production builder seam (S2a) so both the NBA build
  * path and the pipeline-derived league builder (`scripts/build-league.ts`)
  * fill starters / rotation order / minute targets identically. The logic is
  * unchanged from its original home — this is a behavior-preserving move, not

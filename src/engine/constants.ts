@@ -17,7 +17,7 @@ export const USAGE_TEAM_POSS_PER_MINUTE = 100 / 48;
 // engine/shot.ts (rating -> sim pct). Rating 40 is the league-average shooter.
 // FT_DERIVE_SCALE is defined from FT_PCT_SLOPE so the round trip is exact by
 // construction apart from integer rating rounding and endpoint clamps.
-export const FT_LEAGUE_AVG_PCT = 0.781;
+export const FT_LEAGUE_AVG_PCT = 0.7823;          // empirical 2023-26 FTA-weighted anchor
 export const FT_PCT_SLOPE = 0.25;                 // pct swing across centered rating range +/-1
 export const FT_DERIVE_SCALE = 40 / FT_PCT_SLOPE; // rating points per unit of real percentage
 export const FT_SIM_PCT_MIN = 0.45;
@@ -50,12 +50,32 @@ export const FT_SIM_PCT_MAX = 0.95;
 //   long_midrange .4135 (n=47,966) | corner_three .3881 (n=69,306)
 //   above_break_three .3603 (n=152,549) | deep_three .3379 (n=46,212)
 export const BASE_FG_PCT_BY_ZONE: Record<ShotZone, number> = {
-  rim: 0.716,
-  short_midrange: 0.444,
-  long_midrange: 0.442,
-  corner_three: 0.375,
-  above_break_three: 0.367,
-  deep_three: 0.357,
+  rim: 0.689,
+  short_midrange: 0.428,
+  long_midrange: 0.421,
+  corner_three: 0.356,
+  above_break_three: 0.342,
+  deep_three: 0.325,
+};
+
+// Per-zone frequency MULTIPLIERS inside shot-zone selection (play-types.ts) —
+// they rescale relative zone weights only and never touch shot percentages.
+// Sane range ~0.5-1.2 per zone; 1.0 disables a zone's factor. This table is
+// the S2d successor to the former global THREE_POINT_FREQUENCY_DAMPENER
+// (0.62 legacy / 0.72 candidate), folded here per zone: the engine's
+// finisher-level zone selection (chain kick-outs finish spot-up-like more
+// often than possession-level Synergy rows imply) systematically overweights
+// rim and corner threes and underweights midrange, so the compensation is
+// per-zone rather than one global three-zone scalar. Tuned against the
+// profile's shot-mix rows; because it rescales zones uniformly across play
+// types, keep it as close to 1.0 as the mix rows allow (pool-artifact rule).
+export const SHOT_ZONE_FREQUENCY_FACTORS: Record<ShotZone, number> = {
+  rim: 0.89,
+  short_midrange: 1.06,
+  long_midrange: 1.06,
+  corner_three: 0.63,
+  above_break_three: 0.76,
+  deep_three: 0.76,
 };
 
 export const POINTS_BY_ZONE: Record<ShotZone, number> = {
@@ -89,12 +109,8 @@ export const PLAY_TYPE_EFFICIENCY_MOD: Record<PlayType, number> = {
 // runners belong to short_midrange — and each play type's profile must stay
 // recognizable as that play type's real shot diet (pool-artifact rule).
 //
-// KNOWN STAGE 2 ARTIFACT: this shaded table is the legacy-active Stage-1
-// compensation. It stays the sole default table through S2c2 because the
-// active pool's legacy play-type frequencies need it for the accepted profile.
-// S2c2's candidate-only `_REAL` table restores the documented cut/spot-up
-// diets; S2d must promote `_REAL` to the sole table and delete this shaded
-// compensation rather than silently collapsing the two tables early.
+// S2d production diets. Cut and spot-up were restored to their documented real
+// ranges in S2c2 and are now the sole active table; there is no shaded fallback.
 export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
   isolation: [
     // Self-created: drives that finish at the rim, plus heavy pull-up traffic
@@ -124,13 +140,14 @@ export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: nu
   spot_up: [
     // Mostly catch-and-shoot threes (corner-heavy), with closeout attacks
     // producing rim/short-mid finishes and one-dribble middies. Real spot-up
-    // rim share is ~.12-.15; shaded low here per the Stage 2 artifact note.
-    { zone: 'corner_three', weight: 0.34 },
-    { zone: 'above_break_three', weight: 0.35 },
+    // rim share is the documented .12-.15 midpoint. The added rim mass is
+    // taken proportionally from the former shaded short-mid/three weights.
+    { zone: 'corner_three', weight: 0.317 },
+    { zone: 'above_break_three', weight: 0.326 },
     { zone: 'long_midrange', weight: 0.05 },
-    { zone: 'deep_three', weight: 0.10 },
-    { zone: 'short_midrange', weight: 0.09 },
-    { zone: 'rim', weight: 0.07 },
+    { zone: 'deep_three', weight: 0.093 },
+    { zone: 'short_midrange', weight: 0.084 },
+    { zone: 'rim', weight: 0.130 },
   ],
   transition: [
     // Rim-heavy, trailing threes above the break / corners, some early
@@ -144,10 +161,9 @@ export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: nu
   ],
   cut: [
     // Finishes at the basket, plus dunker-spot floaters/short push shots.
-    // Real cut rim share is ~.75-.85; shaded toward short_midrange per the
-    // Stage 2 artifact note (cut is heavily over-selected by play-types.ts).
-    { zone: 'rim', weight: 0.65 },
-    { zone: 'short_midrange', weight: 0.35 },
+    // Real cut rim share midpoint (.75-.85), locked before observation.
+    { zone: 'rim', weight: 0.800 },
+    { zone: 'short_midrange', weight: 0.200 },
   ],
   off_screen: [
     // Movement shooters: above-break threes (some from deep), corner relocations,
@@ -174,28 +190,8 @@ export const PLAY_TYPE_SHOT_ZONES: Record<PlayType, { zone: ShotZone; weight: nu
   ],
 };
 
-/**
- * Candidate/S2d target diets locked by S2c2 (2026-07-11). The seven
- * unshaded play types are structurally shared with the legacy-active table.
- * Cut restores the .75-.85 rim midpoint. Spot-up restores the .12-.15 rim
- * midpoint; its added .060 rim mass comes proportionally from the .880 shaded
- * short-mid/corner/above-break/deep total: each weight × (.880-.060)/.880.
- */
-export const PLAY_TYPE_SHOT_ZONES_REAL: Record<PlayType, { zone: ShotZone; weight: number }[]> = {
-  ...PLAY_TYPE_SHOT_ZONES,
-  cut: [
-    { zone: 'rim', weight: 0.800 },
-    { zone: 'short_midrange', weight: 0.200 },
-  ],
-  spot_up: [
-    { zone: 'corner_three', weight: 0.317 },
-    { zone: 'above_break_three', weight: 0.326 },
-    { zone: 'long_midrange', weight: 0.050 },
-    { zone: 'deep_three', weight: 0.093 },
-    { zone: 'short_midrange', weight: 0.084 },
-    { zone: 'rim', weight: 0.130 },
-  ],
-};
+/** Machine-readable identity for S2d context checks; this is the only runtime shot-zone table. */
+export const PRODUCTION_SHOT_ZONE_TABLE_ID = 'PLAY_TYPE_SHOT_ZONES';
 
 // Turnover rate by play type (~14% of possessions — real TOV ~14/team/game).
 // These carry the full turnover load now that phantom shot-clock violations
@@ -223,20 +219,35 @@ export const PLAY_TYPE_TURNOVER_RATE: Record<PlayType, number> = {
 // inflates and-one frequency; see the informational and-one line in
 // `npm run profile`. Do not raise the three-point rates to chase FTA.
 export const SHOOTING_FOUL_RATE_BY_ZONE: Record<ShotZone, number> = {
-  rim: 0.26,
-  short_midrange: 0.10,
-  long_midrange: 0.05,
+  rim: 0.285,
+  short_midrange: 0.11,
+  long_midrange: 0.06,
   corner_three: 0.018,
   above_break_three: 0.018,
   deep_three: 0.01,
 };
+
+// Steal share of a forced live-ball turnover: base + coefficient on the best
+// on-ball defender's normalized (0-1) steal rating, capped. Shared by the
+// possession chain's bad-pass split and checkTurnover so the two live-ball
+// paths stay on one model. Tuned against the profile STL row (~8.0/team-game,
+// ~57% of real turnovers are steals); sane base range ~0.15-0.35, cap <= 0.85.
+export const TURNOVER_STEAL_BASE = 0.28;
+export const TURNOVER_STEAL_RATING_COEF = 0.45;
+export const TURNOVER_STEAL_CAP = 0.78;
+
+// Base per-shot block probability at rating 80, before the per-zone factor
+// (rim 2.0x, short-mid 0.5x, other 0.1x in resolveShot). A block forces the
+// miss before the make roll, so this also drags league FG% down slightly.
+// Tuned against the profile BLK row (~5.0/team-game); sane range ~0.08-0.18.
+export const BLOCK_BASE_RATE = 0.14;
 
 // Per-possession chance of a non-shooting defensive foul (reach-in, off-ball,
 // loose-ball). Only yields free throws once the defense is in the penalty,
 // which is how a big share of real FTA is generated. ~10-11 non-shooting
 // defensive fouls per team-game sits at the high end of the real range and
 // carries the FTA share the (now-realistic) three-point foul rates gave back.
-export const NON_SHOOTING_FOUL_RATE = 0.105;
+export const NON_SHOOTING_FOUL_RATE = 0.11;
 
 // Fatigue
 export const BASE_FATIGUE_PER_POSSESSION = 0.012;
@@ -325,13 +336,13 @@ export const BASE_OFFENSIVE_REBOUND_RATE = 0.25;
 // Share of rebounds that are uncredited "team rebounds" (ball out of bounds,
 // kicked, etc.). Without this, every miss becomes a player rebound and team
 // totals run ~3/game above the real ~43.
-export const TEAM_REBOUND_RATE = 0.07;
+export const TEAM_REBOUND_RATE = 0.05;
 
-// Possession timing. Mean ~15s lands the league near the derived FGA/pace
+// Possession timing. Mean ~16s lands the league near the derived FGA/pace
 // targets (89.08 FGA, 101.98 estimated poss per team-game —
 // docs/LEAGUE_TARGETS.md).
-export const BASE_POSSESSION_TIME_MIN = 8;
-export const BASE_POSSESSION_TIME_MAX = 22;
+export const BASE_POSSESSION_TIME_MIN = 9;
+export const BASE_POSSESSION_TIME_MAX = 23;
 export const TRANSITION_POSSESSION_TIME_MIN = 3;
 export const TRANSITION_POSSESSION_TIME_MAX = 8;
 
@@ -378,8 +389,8 @@ export const SPACING_MOVEMENT_WEIGHT = 1.5;
 // league pool over a franchise's lifetime. A dynamic per-season snapshot
 // (deterministically computed, never via rng) would track that drift; it is
 // intentionally deferred — a static constant is acceptable for this task.
-export const SPACING_BASELINE_OFFBALL_FOUR = 0.3171;
-export const SPACING_SPREAD = 0.0622;
+export const SPACING_BASELINE_OFFBALL_FOUR = 0.2168;
+export const SPACING_SPREAD = 0.0707;
 
 // Clamp on the spacing z-score so a pathological lineup can't run the hooks off
 // the rails (keeps the additive offsets bounded, which matters because the shot
@@ -394,13 +405,13 @@ export const SPACING_CLAMP = 2.2;
 // All three are additive offsets to the per-zone weight, scaled by the centered
 // spacing z, so spacing=0 changes nothing. Bounded by the rim/mid/three shot-mix
 // targets in the profile, which is the binding constraint on their size.
-export const SPACING_RIM_FREQ_COEF = 0.030;
-export const SPACING_MID_FREQ_COEF = 0.034;
+export const SPACING_RIM_FREQ_COEF = 0.015;
+export const SPACING_MID_FREQ_COEF = 0.017;
 export const SPACING_THREE_FREQ_COEF = 0.006;
 // Additive offset to the rim-PROTECTION term specifically: good spacing reduces
 // how much elite rim protection deters drives (the help defender is occupied),
 // scaled by how much deterrence is present. Centered on spacing.
-export const SPACING_RIM_DETER_RELIEF_COEF = 0.040;
+export const SPACING_RIM_DETER_RELIEF_COEF = 0.020;
 
 // resolveShot openness: more spacing → less help on the ball → the contest runs
 // softer. Routed through the existing contest / contestBonus path as a centered
@@ -429,8 +440,8 @@ export const VERSATILITY_W_RIM = 0.12;        // rim protection — minor, must 
 // Center + normalize versatility to a z-score, measured as the live
 // possession-weighted mean/spread of the on-court defensive five (same static-
 // baseline tradeoff and drift caveat as the spacing baseline above).
-export const VERSATILITY_BASELINE = 0.6789;
-export const VERSATILITY_SPREAD = 0.0928;
+export const VERSATILITY_BASELINE = 0.4917;
+export const VERSATILITY_SPREAD = 0.0743;
 export const VERSATILITY_CLAMP = 2.2;
 
 // Additive, centered offset to the mismatch-hunt probability in selectDefender:
@@ -458,35 +469,34 @@ export const MAX_EXTRA_PASSES = 2;
 // posWeight * skillFit combinations. Must be > 0 to keep weightedChoice sane.
 export const PRIMARY_PLAYER_MIN_WEIGHT = 0.01;
 
-// S2c1-R candidate-only selector knobs. The legacy selector remains unchanged
-// until S2d. Candidate transitionFreq is an unconditional possession share;
+// Production selector knobs. TransitionFreq is an unconditional possession share;
 // this denominator converts it to a probability conditional on the existing
 // turnover/long-rebound transition precursor gate (measured at ~40% in the
 // S2c1 diagnosis). Re-measure if that upstream gate changes.
-export const CANDIDATE_TRANSITION_ELIGIBLE_RATE = 0.40;
+export const TRANSITION_ELIGIBLE_RATE = 0.40;
 // A tiny finite floor keeps malformed-but-valid zero-frequency vectors safe for
 // weightedChoice without creating meaningful mass in a category with no signal.
-export const CANDIDATE_SELECTOR_MIN_WEIGHT = 0.0001;
-// Candidate system/position/situation effects remain centered modifiers around
+export const PLAY_TYPE_SELECTOR_MIN_WEIGHT = 0.0001;
+// System/position/situation effects remain centered modifiers around
 // the derived tendency rather than replacing it. These are bounded in [0, 1].
-export const CANDIDATE_SYSTEM_MODIFIER_STRENGTH = 0.25;
-export const CANDIDATE_POSITION_MODIFIER_STRENGTH = 0.25;
-export const CANDIDATE_SITUATION_MODIFIER_STRENGTH = 0.25;
+export const PLAY_TYPE_SYSTEM_MODIFIER_STRENGTH = 0.25;
+export const PLAY_TYPE_POSITION_MODIFIER_STRENGTH = 0.25;
+export const PLAY_TYPE_SITUATION_MODIFIER_STRENGTH = 0.25;
 
 // Base probability the ball moves to a teammate after an action of this type,
 // i.e. how much this action tends to generate a pass-to-a-finisher rather than a
 // self-created shot. Seeded from realistic assisted-make rates; the league
 // assist total (~26/team/game) is the binding constraint that pins these. 0-1.
 export const PLAY_TYPE_PASS_RATE: Record<PlayType, number> = {
-  isolation: 0.24,
-  pick_and_roll: 0.74,
-  post_up: 0.34,
-  spot_up: 0.42,    // a spot-up that re-swings; lower than the assisted-make rate
-  transition: 0.64,
-  cut: 0.48,
-  off_screen: 0.74,
-  handoff: 0.70,
-  putback: 0.05,
+  isolation: 0.29,
+  pick_and_roll: 0.79,
+  post_up: 0.39,
+  spot_up: 0.47,    // a spot-up that re-swings; lower than the assisted-make rate
+  transition: 0.69,
+  cut: 0.53,
+  off_screen: 0.79,
+  handoff: 0.75,
+  putback: 0.07,
 };
 
 // Pass-probability modulation, all CENTERED so an average possession lands on the

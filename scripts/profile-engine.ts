@@ -21,15 +21,13 @@
  * gap. Tier assignment is fixed per-task before tuning, never outcome-based.
  */
 import { Player } from '../src/models/player';
-import { Team } from '../src/models/team';
 import { PlayType, ShotZone } from '../src/models/game';
 import { SeededRNG } from '../src/lib/rng';
 import { simulateGame } from '../src/engine';
-import { CANDIDATE_PLAY_TYPE_SELECTION, PlayTypeSelectionConfig } from '../src/engine/play-types';
 import { generateSchedule } from '../src/engine/schedule';
 import { selectLatestCareerStats } from '../src/ratings/derivation';
-import { loadLeaguePool } from './league-pool';
 import { createAssistMeasurements, hasCornerProxySignStructure } from './assist-measurement';
+import { loadActivationContext, printActivationContextBanner } from './s2d-activation-context';
 
 // ---------------------------------------------------------------------------
 // ENFORCED targets — derived from real NBA data, 2023-24..2025-26 pooled
@@ -187,23 +185,17 @@ function spearman(xs: number[], ys: number[]): number {
 
 async function main() {
   const cliArgs = process.argv.slice(2);
-  const leagueArgIndex = cliArgs.indexOf('--league-dir');
-  const leagueArgs = leagueArgIndex === -1 ? [] : cliArgs.slice(leagueArgIndex, leagueArgIndex + 2);
-  const pool = await loadLeaguePool(leagueArgs);
-  const unknownArgs = cliArgs.filter((arg, index) =>
-    !(arg === '--league-dir' || (leagueArgIndex !== -1 && index === leagueArgIndex + 1) || arg.startsWith('--shot-zones=') || arg.startsWith('--seed=')));
+  const unknownArgs = cliArgs.filter((arg) => !arg.startsWith('--seed='));
   if (unknownArgs.length) throw new Error(`Unknown argument: ${unknownArgs[0]}`);
-  const shotZonesArg = cliArgs.find((arg) => arg.startsWith('--shot-zones='))?.split('=')[1] ?? 'shaded';
-  if (shotZonesArg !== 'shaded' && shotZonesArg !== 'real') throw new Error('--shot-zones must be shaded or real');
-  if (shotZonesArg === 'real' && !pool.alternate) throw new Error('--shot-zones=real is a candidate evaluation input; pass --league-dir (AGENTS.md S2c2 dual-table guard)');
   const seedArg = cliArgs.find((arg) => arg.startsWith('--seed='))?.split('=')[1];
   const seed = seedArg === undefined ? 2026 : Number(seedArg);
   if (!Number.isSafeInteger(seed) || seed < 1 || seed > 2_000_000_000) throw new Error('--seed must be an integer in 1..2000000000');
-  const selection: PlayTypeSelectionConfig | undefined = pool.alternate
-    ? (shotZonesArg === 'shaded' ? CANDIDATE_PLAY_TYPE_SELECTION : Object.freeze({ ...CANDIDATE_PLAY_TYPE_SELECTION, shotZones: 'real' as const }))
-    : undefined;
-  const { teams, players } = pool;
-  if (pool.alternate) console.log(`INFORMATIONAL — alternate pool (${pool.directory}); no gate; S2d owns the gated run`);
+  // This is intentionally before any simulation work: profile acceptance is
+  // invalid unless the active NBA pool, sole selector/table, and promotion
+  // manifest assertions all hold.
+  const activationContext = await loadActivationContext();
+  printActivationContextBanner(activationContext);
+  const { teams, players } = activationContext;
 
   // Mirror simulateSeason's RNG/seed sequence so aggregates match `npm run
   // profile`-via-season exactly, while also exposing PBP-derived stats.
@@ -242,7 +234,7 @@ async function main() {
     const gameSeed = rng.nextInt(1, 2_000_000_000);
     const sim = simulateGame(
       home, away, homePlayers, awayPlayers, sg.id, 'profile', `day-${sg.day}`, gameSeed,
-      new Map(), { onShot: assistMeasurements.record }, selection,
+      new Map(), { onShot: assistMeasurements.record },
     );
     gamesPlayed++;
 
@@ -371,7 +363,7 @@ async function main() {
   for (const b of ['rim', 'mid', 'three'] as const) printEnforced(`share bucket:${b}`, `bucketShare.${b}`);
 
   console.log('-'.repeat(64));
-  console.log(pool.alternate ? 'INFORMATIONAL — alternate pool; band outcomes do not gate S2c1.' : fails === 0
+  console.log(fails === 0
     ? `PASS (${enforcedCount} of ${enforcedCount} enforced stats within tolerance)`
     : `FAIL (${fails} of ${enforcedCount} enforced stats out of tolerance)`);
 
@@ -497,7 +489,7 @@ async function main() {
   console.log(`Qualified FT% sim vs real:     ${(simFtm / simFta * 100).toFixed(1)}% vs ${(realFtm / realFta * 100).toFixed(1)}% (n=${ftQualified.length}, real FTA >= 2)`);
   console.log(`Qualified sim FT% min/max:     ${(Math.min(...simFtPcts) * 100).toFixed(1)}% / ${(Math.max(...simFtPcts) * 100).toFixed(1)}%`);
 
-  process.exitCode = fails > 0 && !pool.alternate ? 1 : 0;
+  process.exitCode = fails > 0 ? 1 : 0;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

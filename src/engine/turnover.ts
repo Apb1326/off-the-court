@@ -2,7 +2,7 @@ import { Player } from '@/models/player';
 import { PlayType, TurnoverType } from '@/models/game';
 import { SeededRNG } from '@/lib/rng';
 import { getEffectiveRating } from './fatigue';
-import { PLAY_TYPE_TURNOVER_RATE } from './constants';
+import { PLAY_TYPE_TURNOVER_RATE, TURNOVER_STEAL_BASE, TURNOVER_STEAL_RATING_COEF, TURNOVER_STEAL_CAP } from './constants';
 
 export interface TurnoverResult {
   occurred: boolean;
@@ -45,10 +45,10 @@ export function checkTurnover(
     return { occurred: false };
   }
 
-  // Determine turnover type. Roughly half of real turnovers are steals, so a
-  // forced turnover lands as a steal more often than not (scaled by the best
-  // on-ball defender's hands).
-  const stealChance = Math.min(0.78, 0.20 + defSteal / 80 * 0.45);
+  // Determine turnover type. Well over half of real turnovers are steals
+  // (~8.0 STL vs ~14.1 TOV per team-game), scaled by the best on-ball
+  // defender's hands. Shared constants with the chain bad-pass split.
+  const stealChance = Math.min(TURNOVER_STEAL_CAP, TURNOVER_STEAL_BASE + defSteal / 80 * TURNOVER_STEAL_RATING_COEF);
   if (rng.nextBool(stealChance)) {
     return { occurred: true, type: 'steal', stealBy: bestDefender };
   }
