@@ -9,7 +9,6 @@ import {
   SeasonState,
   GameSummary,
   PlayerInjury,
-  InjuryHistoryEntry,
   emptyStanding,
   emptyPlayoffs,
 } from '@/models/season';
@@ -19,7 +18,7 @@ import { generateSchedule } from './schedule';
 import { buildCalendar, addDays, DEFAULT_SEASON_START } from './calendar';
 import { rollInjuries, tickInjuries, tickRecoveries, startRecoveries, getHealthyPlayers, scheduleStressMultiplier, adjustRotation, injuryRegion } from './injury';
 import { PLAYOFF_MAX_CALENDAR_DAYS } from './constants';
-import { allSeasonResults, isSeasonComplete, isTeamEliminated, recordPlayoffResult, syncPlayoffs } from './playoffs';
+import { allSeasonResults, isSeasonComplete, syncPlayoffs } from './playoffs';
 
 export interface SimulateSeasonOptions {
   seasonId?: string;
@@ -101,6 +100,13 @@ export interface CreateSeasonOptions {
   startDate?: string;
 }
 
+/** The UI's existing `rest` action stops at the regular/postseason boundary. */
+export function seasonRestTarget(state: SeasonState): string {
+  return state.gamesPlayed < state.totalGames
+    ? state.endDate
+    : (state.playoffs.endDate ?? addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS));
+}
+
 /**
  * Builds a fresh, unplayed season: a dated schedule, calendar markers, and
  * empty standings/stats. `currentDate` sits one day before tip-off so the first
@@ -175,6 +181,28 @@ export function advanceSeason(
   teams: Team[],
   players: Player[],
 ): GameSummary[] {
+  const before = JSON.stringify(state);
+  const postseasonInScope = state.gamesPlayed >= state.totalGames || targetDate > state.endDate;
+  try {
+    return advanceSeasonMutable(state, targetDate, teams, players);
+  } catch (error) {
+    // A playoff invariant is an all-or-nothing operation. Restoring by JSON
+    // round-trip also preserves the byte representation callers persist.
+    if (postseasonInScope) {
+      const restored = JSON.parse(before) as SeasonState;
+      for (const key of Object.keys(state)) delete (state as unknown as Record<string, unknown>)[key];
+      Object.assign(state, restored);
+    }
+    throw error;
+  }
+}
+
+function advanceSeasonMutable(
+  state: SeasonState,
+  targetDate: string,
+  teams: Team[],
+  players: Player[],
+): GameSummary[] {
   const postseasonHorizon = state.playoffs.endDate ?? addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS);
   const target = targetDate > postseasonHorizon ? postseasonHorizon : targetDate;
 
@@ -199,63 +227,39 @@ export function advanceSeason(
   const playerStats = new Map(state.playerStats.map((s) => [s.playerId, s]));
   const playoffPlayerStats = new Map(state.playoffPlayerStats.map((s) => [s.playerId, s]));
 
-  // Finalized games an injury keeps a player out: their team's games during the
-  // recovery window (from the injury date), capped by the projected recovery. An
-  // in-game injury is logged after the player has played the onset game, so it
-  // counts only games strictly after the start date.
-  const historyEntry = (inj: PlayerInjury, playedOnset: boolean, actualMissed?: number): InjuryHistoryEntry => {
-    const teamDates = new Map<string, string[]>();
-    for (const scheduled of [...state.schedule, ...state.playoffs.schedule]) {
-      for (const tid of [scheduled.homeTeamId, scheduled.awayTeamId]) {
-        const dates = teamDates.get(tid) ?? [];
-        dates.push(scheduled.date!);
-        teamDates.set(tid, dates);
-      }
-    }
-    const dates = teamDates.get(inj.teamId) ?? [];
-    const window = dates.filter((d) => (playedOnset ? d > inj.startDate : d >= inj.startDate)).length;
-    return {
-      id: `${inj.playerId}|${inj.startDate}`,
-      season: state.seasonId,
-      playerId: inj.playerId,
-      teamId: inj.teamId,
-      injuryType: inj.injuryType,
-      region: injuryRegion(inj.injuryType),
-      severity: inj.severity,
-      startDate: inj.startDate,
-      gamesMissed: actualMissed ?? Math.min(inj.gamesRemaining, window),
-    };
-  };
-
-  const finalizePendingInjuries = (shouldFinalize: (injury: PlayerInjury) => boolean): void => {
-    const retained: typeof state.playoffs.pendingInjuryHistory = [];
-    for (const pending of state.playoffs.pendingInjuryHistory) {
-      if (shouldFinalize(pending.injury)) {
-        state.injuryHistory.push(historyEntry(pending.injury, true, pending.gamesMissed));
-      } else {
-        retained.push(pending);
-      }
-    }
-    state.playoffs.pendingInjuryHistory = retained;
-  };
-
   const played: GameSummary[] = [];
+  const skipped = new Set<string>();
 
   // One advancement loop owns both regular-season and postseason games. The
   // bracket may append the next deterministic game after a result, so select
   // the next eligible game afresh each iteration rather than snapshotting.
   while (true) {
     syncPlayoffs(state, teams);
-    const sg = [...state.schedule, ...state.playoffs.schedule]
-      .filter((game) => !completed.has(game.id) && game.date! > state.currentDate && game.date! <= target)
-      .sort((a, b) => a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : a.id < b.id ? -1 : 1)[0];
+    let sg: (typeof state.schedule)[number] | undefined;
+    for (const game of [...state.schedule, ...state.playoffs.schedule]) {
+      if (completed.has(game.id) || skipped.has(game.id) || game.date! <= state.currentDate || game.date! > target) continue;
+      // Keep the persisted order for same-date games. In particular, do not
+      // lexically re-sort regular game ids: that was a post-F2 behavior drift.
+      if (!sg || game.date! < sg.date!) sg = game;
+    }
     if (!sg) break;
     const date = sg.date!;
     const isPlayoff = sg.id.startsWith('PO-');
 
     const home = teamById.get(sg.homeTeamId);
     const away = teamById.get(sg.awayTeamId);
-    if (!home || !away) throw new Error(`scheduled game ${sg.id} references an unknown team`);
+    if (!home || !away) {
+      if (isPlayoff) throw new Error(`playoff invariant: scheduled game ${sg.id} references an unknown team`);
+      skipped.add(sg.id);
+      continue;
+    }
+    const homeAllPlayers = playersByTeam.get(home.id) ?? [];
+    const awayAllPlayers = playersByTeam.get(away.id) ?? [];
+    if (homeAllPlayers.length < 5 || awayAllPlayers.length < 5) {
+      if (isPlayoff) throw new Error(`playoff invariant: scheduled game ${sg.id} cannot field five players per team`);
+      skipped.add(sg.id);
+      continue;
+    }
 
     // 1. Tick down existing injuries for both teams (one game each). A player
     //    whose counter hits 0 now clears before the new-injury roll below, so
@@ -274,26 +278,13 @@ export function advanceSeason(
       ...homeActiveBefore.filter((i) => !homeStillOut.has(i.playerId)),
       ...awayActiveBefore.filter((i) => !awayStillOut.has(i.playerId)),
     ];
-    if (expired.length > 0) {
-      const expiredIds = new Set(expired.map((injury) => `${injury.playerId}|${injury.startDate}`));
-      finalizePendingInjuries((injury) => expiredIds.has(`${injury.playerId}|${injury.startDate}`));
-    }
     state.recoveries = tickRecoveries(state.recoveries, home.id);
     state.recoveries = tickRecoveries(state.recoveries, away.id);
     state.recoveries = [...state.recoveries, ...startRecoveries(expired)];
 
-    const stillOut = new Set(state.injuries
-      .filter((injury) => injury.teamId === home.id || injury.teamId === away.id)
-      .map((injury) => `${injury.playerId}|${injury.startDate}`));
-    for (const pending of state.playoffs.pendingInjuryHistory) {
-      if (stillOut.has(`${pending.injury.playerId}|${pending.injury.startDate}`)) pending.gamesMissed++;
-    }
-
     // 2. Roll new injuries on a separate RNG stream so injury outcomes are
     //    reproducible but independent of the game RNG.
     const injuryRng = new SeededRNG(deterministicSeed(state.seed, 'inj_' + sg.id));
-    const homeAllPlayers = playersByTeam.get(home.id) ?? [];
-    const awayAllPlayers = playersByTeam.get(away.id) ?? [];
 
     // Schedule-stress multiplier folds in the back-to-back and dense-stretch risk.
     const priorResults = allSeasonResults(state);
@@ -319,7 +310,9 @@ export function advanceSeason(
     const homePlayers = getHealthyPlayers(homeAllPlayers, state.injuries);
     const awayPlayers = getHealthyPlayers(awayAllPlayers, state.injuries);
     if (homePlayers.length < 5 || awayPlayers.length < 5) {
-      throw new Error(`scheduled game ${sg.id} cannot field five healthy players per team`);
+      if (isPlayoff) throw new Error(`playoff invariant: scheduled game ${sg.id} cannot field five healthy players per team`);
+      skipped.add(sg.id);
+      continue;
     }
 
     // 4. Adjust each rotation so injured starters are actually benched — the
@@ -344,12 +337,23 @@ export function advanceSeason(
       ...awayRoll.inGame.map((e) => e.injury),
     ];
 
-    // Retain actual missed-game counts until recovery or season elimination.
-    // This is necessary even for regular-season onset: an unresolved injury can
-    // cross into a dynamically materialized playoff schedule.
-    state.playoffs.pendingInjuryHistory.push(
-      ...[...homeRoll.preGame, ...awayRoll.preGame].map((injury) => ({ injury, gamesMissed: 1 })),
-      ...[...homeRoll.inGame, ...awayRoll.inGame].map((event) => ({ injury: event.injury, gamesMissed: 0 })),
+    // Append immutable onset evidence only after the game result exists. The
+    // missed-game count is derived later from this unified result ledger.
+    state.injuryHistory.push(
+      ...[...homeRoll.preGame, ...awayRoll.preGame].map((injury) => ({
+        id: `${injury.playerId}|${injury.startDate}`, season: state.seasonId, playerId: injury.playerId,
+        teamId: injury.teamId, injuryType: injury.injuryType, region: injuryRegion(injury.injuryType),
+        severity: injury.severity, startDate: injury.startDate, onsetGameId: sg.id, playedOnset: false,
+        maxGamesMissed: injury.gamesRemaining,
+      })),
+      ...[...homeRoll.inGame, ...awayRoll.inGame].map((event) => ({
+        id: `${event.injury.playerId}|${event.injury.startDate}`, season: state.seasonId, playerId: event.injury.playerId,
+        teamId: event.injury.teamId, injuryType: event.injury.injuryType, region: injuryRegion(event.injury.injuryType),
+        severity: event.injury.severity, startDate: event.injury.startDate, onsetGameId: sg.id, playedOnset: true,
+        // The onset game was played. `tickInjuries` runs before the next team
+        // game, so one remaining game clears without a missed appearance.
+        maxGamesMissed: Math.max(0, event.injury.gamesRemaining - 1),
+      })),
     );
 
     if (!isPlayoff) {
@@ -375,18 +379,14 @@ export function advanceSeason(
     // schedule-stress multiplier sees games played earlier in this same advance —
     // otherwise back-to-back/dense-stretch risk would depend on how far the user
     // advances at once, breaking injury determinism.
-    if (isPlayoff) {
-      state.playoffs.results.push(summary);
-      recordPlayoffResult(state, summary);
-      syncPlayoffs(state, teams);
-    } else {
-      state.results.push(summary);
+    state.results.push(summary);
+    if (!isPlayoff) {
       // The last regular result is the exact boundary where postseason state
       // becomes eligible; no standings or regular stats move after this point.
       state.gamesPlayed++;
       syncPlayoffs(state, teams);
     }
-    finalizePendingInjuries((injury) => isSeasonComplete(state) || isTeamEliminated(state, injury.teamId));
+    syncPlayoffs(state, teams);
     completed.add(sg.id);
     played.push(summary);
   }

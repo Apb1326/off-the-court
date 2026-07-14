@@ -322,7 +322,9 @@ function ControlBar({ season, nextMarker, busy, onAdvance, onNew, championName }
                   To {nextMarker.label}
                 </button>
               )}
-              <button onClick={() => onAdvance('rest')} disabled={busy} className="ootp-btn">Sim to Season End</button>
+              <button onClick={() => onAdvance('rest')} disabled={busy} className="ootp-btn">
+                {season.phase === 'playoffs' ? 'Sim Playoffs' : 'Sim to Regular-Season End'}
+              </button>
             </>
           ) : (
             <span className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>Season finished — view the bracket below</span>

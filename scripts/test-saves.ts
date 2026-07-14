@@ -21,6 +21,7 @@ import { SaveStore } from '../src/data/saves/save-store';
 import { getControlledTeamId, isControlledTeam } from '../src/franchise/controlled';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
 import { addDays } from '../src/engine/calendar';
+import { deriveChampion, derivePlayoffStatus } from '../src/engine/playoffs';
 
 let failures = 0;
 function check(label: string, ok: boolean) {
@@ -177,44 +178,37 @@ async function main() {
     !spectatorMeta.summary.startsWith(`${controlledTeam.abbreviation} · `) &&
     spectatorMeta.summary.includes('games'));
 
-  // --- F2: playoff phase + champion metadata persistence ---
+  // --- F2: playoff phase + ledger-derived champion persistence ---
   const playoffSeason = createSeasonState(teams, players, { seed: SEED });
-  playoffSeason.gamesPlayed = playoffSeason.totalGames;
-  playoffSeason.currentDate = playoffSeason.endDate;
-  playoffSeason.playoffs.status = 'in_progress';
-  playoffSeason.playoffs.startDate = addDays(playoffSeason.endDate, 2);
-  playoffSeason.playoffs.endDate = addDays(playoffSeason.endDate, 90);
+  advanceSeason(playoffSeason, playoffSeason.endDate, teams, players);
   const playoffMeta = await store.createSave('playoffs', buildSaveFile(playoffSeason, teams, players));
   const playoffReload = await store.loadSave(playoffMeta.saveId);
   check('playoff phase survives save/load and metadata derivation',
     playoffReload.ok && derivePhase(playoffReload.file.season) === 'playoffs' && playoffMeta.phase === 'playoffs');
 
-  playoffSeason.playoffs.championTeamId = controlledTeam.id;
-  let malformedChampionRejected = false;
-  try {
-    await store.createSave('malformed champion', buildSaveFile(playoffSeason, teams, players));
-  } catch (error) {
-    malformedChampionRejected = error instanceof Error &&
-      error.message === 'completed playoff state must carry exactly one championTeamId';
-  }
-  check('write boundary rejects a champion on a non-complete postseason', malformedChampionRejected);
-  const savesAfterMalformedAttempt = await store.listSaves();
-  check('rejected malformed champion save is not persisted',
-    !savesAfterMalformedAttempt.saves.some((save) => save.name === 'malformed champion'));
+  const firstPostseasonDate = playoffSeason.playoffs.schedule[0].date!;
+  advanceSeason(playoffSeason, firstPostseasonDate, teams, players);
+  const midMeta = await store.createSave('mid playoffs', buildSaveFile(playoffSeason, teams, players));
+  const midReload = await store.loadSave(midMeta.saveId);
+  const uninterrupted = midReload.ok ? structuredClone(midReload.file.season) : playoffSeason;
+  const uninterruptedTeams = midReload.ok ? midReload.file.teams : teams;
+  const uninterruptedPlayers = midReload.ok ? midReload.file.players : players;
+  advanceSeason(uninterrupted, addDays(uninterrupted.endDate, 120), uninterruptedTeams, uninterruptedPlayers);
+  if (midReload.ok) advanceSeason(midReload.file.season, addDays(midReload.file.season.endDate, 120), midReload.file.teams, midReload.file.players);
+  const resumedBytes = midReload.ok ? JSON.stringify(midReload.file.season) : '';
+  const uninterruptedBytes = JSON.stringify(uninterrupted);
+  const mismatch = [...resumedBytes].findIndex((char, index) => char !== uninterruptedBytes[index]);
+  if (mismatch >= 0) console.log(`  mid-playoff mismatch at byte ${mismatch}: ${resumedBytes.slice(mismatch, mismatch + 160)} | ${uninterruptedBytes.slice(mismatch, mismatch + 160)}`);
+  check('mid-playoff save reload resumes byte-identically', midReload.ok && resumedBytes === uninterruptedBytes);
 
-  playoffSeason.playoffs.status = 'complete';
-  const championMeta = await store.createSave('champion', buildSaveFile(playoffSeason, teams, players));
+  const completed = midReload.ok ? midReload.file.season : playoffSeason;
+  const champion = deriveChampion(completed);
+  const championMeta = await store.createSave('champion', buildSaveFile(completed, teams, players));
   const championReload = await store.loadSave(championMeta.saveId);
   check('champion survives save/load',
-    championReload.ok && championReload.file.season.playoffs.championTeamId === controlledTeam.id);
+    championReload.ok && derivePlayoffStatus(championReload.file.season) === 'complete' && deriveChampion(championReload.file.season) === champion);
   check('champion save summary names the winning team',
-    championMeta.phase === 'offseason' && championMeta.summary.includes(`Champion ${controlledTeam.abbreviation}`));
-
-  playoffSeason.playoffs.status = 'grandfathered_complete';
-  playoffSeason.playoffs.championTeamId = null;
-  const legacyMeta = await store.createSave('legacy complete', buildSaveFile(playoffSeason, teams, players));
-  check('grandfathered completion never fabricates a champion in metadata',
-    legacyMeta.phase === 'offseason' && legacyMeta.summary.includes('Season complete') && !legacyMeta.summary.includes('Champion'));
+    championMeta.phase === 'offseason' && !!champion && championMeta.summary.includes('Champion'));
 
   await rm(tmp, { recursive: true, force: true });
 

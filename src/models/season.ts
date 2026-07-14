@@ -81,17 +81,16 @@ export interface PlayoffSeries {
   teamASeed: number;
   teamBSeed: number;
   homeCourtTeamId: string;
-  teamAWins: number;
-  teamBWins: number;
   winsRequired: number;
   startDate: string;
-  gameIds: string[];
-  winnerTeamId: string | null;
 }
 
-export interface PendingPlayoffInjuryHistory {
-  injury: PlayerInjury;
-  gamesMissed: number;
+/** A bracket slot enriched from the authoritative completed-results ledger. */
+export interface DerivedPlayoffSeries extends PlayoffSeries {
+  teamAWins: number;
+  teamBWins: number;
+  gameIds: string[];
+  winnerTeamId: string | null;
 }
 
 /**
@@ -99,32 +98,25 @@ export interface PendingPlayoffInjuryHistory {
  * separate and freeze once their slate completes.
  */
 export interface PlayoffsState {
-  status: PlayoffStatus;
   playInEnabled: boolean;
   startDate: string | null;
   endDate: string | null;
   seeds: PlayoffSeed[];
   series: PlayoffSeries[];
   schedule: ScheduledGame[];
-  results: GameSummary[];
-  /** Playoff injuries finalize only after healing/elimination, so counts are actual. */
-  pendingInjuryHistory: PendingPlayoffInjuryHistory[];
-  /** Non-null if and only if status is `complete`. */
-  championTeamId: string | null;
+  /** Migration fact for a completed pre-F2 v7 season with no playoff evidence. */
+  grandfatheredComplete?: true;
 }
 
-export function emptyPlayoffs(status: PlayoffStatus = 'pending'): PlayoffsState {
+export function emptyPlayoffs(grandfatheredComplete = false): PlayoffsState {
   return {
-    status,
     playInEnabled: true,
     startDate: null,
     endDate: null,
     seeds: [],
     series: [],
     schedule: [],
-    results: [],
-    pendingInjuryHistory: [],
-    championTeamId: null,
+    ...(grandfatheredComplete ? { grandfatheredComplete: true as const } : {}),
   };
 }
 
@@ -159,9 +151,8 @@ export interface PlayerRecovery {
 /**
  * An immutable, append-only record of one injury that occurred. Stored per season
  * on SeasonState.injuryHistory. Designed to roll up into a career history later:
- * each entry is fully self-contained — it carries its own `season` and a finalized
- * `gamesMissed` — so a multi-season/career log is just these entries concatenated
- * across seasons, with no dependency on any season's live schedule to interpret.
+ * Legacy entries carry a finalized `gamesMissed`. New F2 entries are immutable
+ * onset evidence; their missed-game count is derived from the result ledger.
  */
 export interface InjuryHistoryEntry {
   id: string;            // unique within a season: `${playerId}|${startDate}`
@@ -172,7 +163,12 @@ export interface InjuryHistoryEntry {
   region: string;
   severity: PlayerInjury['severity'];
   startDate: string;     // YYYY-MM-DD the injury occurred
-  gamesMissed: number;   // finalized games missed, capped by season length
+  /** Present only on legacy pre-v8 entries. */
+  gamesMissed?: number;
+  /** New v8 onset evidence. */
+  onsetGameId?: string;
+  playedOnset?: boolean;
+  maxGamesMissed?: number;
 }
 
 /** A persisted, in-progress season the user advances through day by day. */

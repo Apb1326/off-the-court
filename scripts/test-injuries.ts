@@ -11,18 +11,19 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
-import { InjuryHistoryEntry } from '../src/models/season';
+import { InjuryHistoryEntry, SeasonState } from '../src/models/season';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
+import { injuryGamesMissed } from '../src/engine/injury';
 import { addDays } from '../src/engine/calendar';
 import { PLAYOFF_MAX_CALENDAR_DAYS } from '../src/engine/constants';
 
 /** Runs a full season and returns its injury history. */
-function runSeason(teams: Team[], players: Player[], seed: number): InjuryHistoryEntry[] {
+function runSeason(teams: Team[], players: Player[], seed: number): SeasonState {
   const state = createSeasonState(teams, players, { seed });
   // F2 injuries can cross the regular/postseason boundary; advance through the
   // champion so every pending history entry is finalized from actual missed games.
   advanceSeason(state, addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS), teams, players);
-  return state.injuryHistory;
+  return state;
 }
 
 async function main() {
@@ -32,7 +33,8 @@ async function main() {
 
   const SEED = 2026;
   console.log(`Simulating full season (seed ${SEED})...`);
-  const history = runSeason(teams, players, SEED);
+  const completed = runSeason(teams, players, SEED);
+  const history = completed.injuryHistory;
 
   const playerById = new Map(players.map((p) => [p.id, p]));
   const teamById = new Map(teams.map((t) => [t.id, t]));
@@ -44,8 +46,9 @@ async function main() {
   let totalMissed = 0;
 
   for (const h of history) {
-    totalMissed += h.gamesMissed;
-    missedByPlayer.set(h.playerId, (missedByPlayer.get(h.playerId) ?? 0) + h.gamesMissed);
+    const gamesMissed = injuryGamesMissed(h, completed.results);
+    totalMissed += gamesMissed;
+    missedByPlayer.set(h.playerId, (missedByPlayer.get(h.playerId) ?? 0) + gamesMissed);
     injuriesByTeam.set(h.teamId, (injuriesByTeam.get(h.teamId) ?? 0) + 1);
     if (h.severity === 'season_ending') seasonEndingCount++;
   }
@@ -86,7 +89,7 @@ async function main() {
     const p = playerById.get(mostInjured[0])!;
     console.log(`\n=== SAMPLE HISTORY: ${p.firstName} ${p.lastName} (${mostInjured[1]} games missed) ===`);
     for (const h of history.filter((e) => e.playerId === mostInjured[0])) {
-      console.log(`  ${h.startDate}  ${h.injuryType} (${h.region}, ${h.severity}) — missed ${h.gamesMissed}`);
+      console.log(`  ${h.startDate}  ${h.injuryType} (${h.region}, ${h.severity}) — missed ${injuryGamesMissed(h, completed.results)}`);
     }
   }
 
@@ -97,10 +100,11 @@ async function main() {
   console.log(`Season-ending (ACL) injuries: ${seasonEndingCount}`);
 
   // Determinism: a second identical run must produce the identical history.
-  const history2 = runSeason(teams, players, SEED);
-  const key = (h: InjuryHistoryEntry) => `${h.id}|${h.injuryType}|${h.severity}|${h.gamesMissed}`;
-  const a = history.map(key).sort();
-  const b = history2.map(key).sort();
+  const completed2 = runSeason(teams, players, SEED);
+  const history2 = completed2.injuryHistory;
+  const key = (h: InjuryHistoryEntry, results: SeasonState['results']) => `${h.id}|${h.injuryType}|${h.severity}|${injuryGamesMissed(h, results)}`;
+  const a = history.map((h) => key(h, completed.results)).sort();
+  const b = history2.map((h) => key(h, completed2.results)).sort();
   const identical = a.length === b.length && a.every((v, i) => v === b[i]);
 
   // Assertions.
