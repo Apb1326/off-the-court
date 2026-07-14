@@ -399,7 +399,7 @@ function testMigration(): void {
   check('old cut remains byte-identical and contributes dead money', snap(migrated.file.season.transactionLog) === logBefore && close(computeDeadMoney(migrated.file, f.aId), 8));
   const roundTrip = JSON.parse(JSON.stringify(migrated.file)) as SaveFile;
   const again = migrateSaveFile(roundTrip);
-  check('migration run twice and fresh current-schema round-trip are byte-identical', again.ok && !again.migrated && snap(again.file) === snap(roundTrip) && SAVE_SCHEMA_VERSION === 7);
+  check('migration run twice and fresh current-schema round-trip are byte-identical', again.ok && !again.migrated && snap(again.file) === snap(roundTrip));
 }
 
 async function main(): Promise<void> {

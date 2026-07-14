@@ -13,11 +13,15 @@ import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
 import { InjuryHistoryEntry } from '../src/models/season';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
+import { addDays } from '../src/engine/calendar';
+import { PLAYOFF_MAX_CALENDAR_DAYS } from '../src/engine/constants';
 
 /** Runs a full season and returns its injury history. */
 function runSeason(teams: Team[], players: Player[], seed: number): InjuryHistoryEntry[] {
   const state = createSeasonState(teams, players, { seed });
-  advanceSeason(state, state.endDate, teams, players);
+  // F2 injuries can cross the regular/postseason boundary; advance through the
+  // champion so every pending history entry is finalized from actual missed games.
+  advanceSeason(state, addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS), teams, players);
   return state.injuryHistory;
 }
 

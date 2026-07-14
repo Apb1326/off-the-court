@@ -55,6 +55,79 @@ export interface GameSummary {
   winnerId: string;
 }
 
+export type PlayoffConference = 'East' | 'West';
+export type PlayoffRound =
+  | 'play_in'
+  | 'first_round'
+  | 'conference_semifinals'
+  | 'conference_finals'
+  | 'finals';
+export type PlayoffStatus = 'pending' | 'in_progress' | 'complete' | 'grandfathered_complete';
+
+export interface PlayoffSeed {
+  conference: PlayoffConference;
+  seed: number;
+  teamId: string;
+}
+
+/** One persisted bracket slot. Team A/B order never controls game identity. */
+export interface PlayoffSeries {
+  id: string;
+  round: PlayoffRound;
+  conference: PlayoffConference | null;
+  bracketPosition: string;
+  teamAId: string;
+  teamBId: string;
+  teamASeed: number;
+  teamBSeed: number;
+  homeCourtTeamId: string;
+  teamAWins: number;
+  teamBWins: number;
+  winsRequired: number;
+  startDate: string;
+  gameIds: string[];
+  winnerTeamId: string | null;
+}
+
+export interface PendingPlayoffInjuryHistory {
+  injury: PlayerInjury;
+  gamesMissed: number;
+}
+
+/**
+ * Persisted postseason state. Regular-season schedule/results/standings remain
+ * separate and freeze once their slate completes.
+ */
+export interface PlayoffsState {
+  status: PlayoffStatus;
+  playInEnabled: boolean;
+  startDate: string | null;
+  endDate: string | null;
+  seeds: PlayoffSeed[];
+  series: PlayoffSeries[];
+  schedule: ScheduledGame[];
+  results: GameSummary[];
+  /** Playoff injuries finalize only after healing/elimination, so counts are actual. */
+  pendingInjuryHistory: PendingPlayoffInjuryHistory[];
+  /** Non-null if and only if status is `complete`. */
+  championTeamId: string | null;
+}
+
+export function emptyPlayoffs(status: PlayoffStatus = 'pending'): PlayoffsState {
+  return {
+    status,
+    playInEnabled: true,
+    startDate: null,
+    endDate: null,
+    seeds: [],
+    series: [],
+    schedule: [],
+    results: [],
+    pendingInjuryHistory: [],
+    championTeamId: null,
+  };
+}
+
 /**
  * A temporal, season-level injury record. Injuries are not permanent player
  * attributes — they live on the SeasonState (out from one game through a later
@@ -113,7 +186,9 @@ export interface SeasonState {
   markers: SeasonMarker[];
   standings: TeamStanding[];
   playerStats: PlayerSeasonStats[];
+  playoffPlayerStats: PlayerSeasonStats[];
   results: GameSummary[];
+  playoffs: PlayoffsState;
   injuries: PlayerInjury[];
   recoveries: PlayerRecovery[];
   injuryHistory: InjuryHistoryEntry[];

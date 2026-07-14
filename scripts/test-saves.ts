@@ -177,6 +177,45 @@ async function main() {
     !spectatorMeta.summary.startsWith(`${controlledTeam.abbreviation} · `) &&
     spectatorMeta.summary.includes('games'));
 
+  // --- F2: playoff phase + champion metadata persistence ---
+  const playoffSeason = createSeasonState(teams, players, { seed: SEED });
+  playoffSeason.gamesPlayed = playoffSeason.totalGames;
+  playoffSeason.currentDate = playoffSeason.endDate;
+  playoffSeason.playoffs.status = 'in_progress';
+  playoffSeason.playoffs.startDate = addDays(playoffSeason.endDate, 2);
+  playoffSeason.playoffs.endDate = addDays(playoffSeason.endDate, 90);
+  const playoffMeta = await store.createSave('playoffs', buildSaveFile(playoffSeason, teams, players));
+  const playoffReload = await store.loadSave(playoffMeta.saveId);
+  check('playoff phase survives save/load and metadata derivation',
+    playoffReload.ok && derivePhase(playoffReload.file.season) === 'playoffs' && playoffMeta.phase === 'playoffs');
+
+  playoffSeason.playoffs.championTeamId = controlledTeam.id;
+  let malformedChampionRejected = false;
+  try {
+    await store.createSave('malformed champion', buildSaveFile(playoffSeason, teams, players));
+  } catch (error) {
+    malformedChampionRejected = error instanceof Error &&
+      error.message === 'completed playoff state must carry exactly one championTeamId';
+  }
+  check('write boundary rejects a champion on a non-complete postseason', malformedChampionRejected);
+  const savesAfterMalformedAttempt = await store.listSaves();
+  check('rejected malformed champion save is not persisted',
+    !savesAfterMalformedAttempt.saves.some((save) => save.name === 'malformed champion'));
+
+  playoffSeason.playoffs.status = 'complete';
+  const championMeta = await store.createSave('champion', buildSaveFile(playoffSeason, teams, players));
+  const championReload = await store.loadSave(championMeta.saveId);
+  check('champion survives save/load',
+    championReload.ok && championReload.file.season.playoffs.championTeamId === controlledTeam.id);
+  check('champion save summary names the winning team',
+    championMeta.phase === 'offseason' && championMeta.summary.includes(`Champion ${controlledTeam.abbreviation}`));
+
+  playoffSeason.playoffs.status = 'grandfathered_complete';
+  playoffSeason.playoffs.championTeamId = null;
+  const legacyMeta = await store.createSave('legacy complete', buildSaveFile(playoffSeason, teams, players));
+  check('grandfathered completion never fabricates a champion in metadata',
+    legacyMeta.phase === 'offseason' && legacyMeta.summary.includes('Season complete') && !legacyMeta.summary.includes('Champion'));
+
   await rm(tmp, { recursive: true, force: true });
 
   console.log(`\n${failures === 0 ? 'PASS — all checks green' : `FAIL — ${failures} check(s) failed`}`);

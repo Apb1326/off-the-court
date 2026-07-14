@@ -1,9 +1,10 @@
 # Off the Court — Transactions Roadmap
 
 > **Status:** living, implementation-aligned design doc. Phases 1–5b are
-> implemented on `main`; the repository's current save schema is **v7** (F1).
+> implemented on `main`; the repository's current save schema is **v8** (F2).
 > Phase 5b itself added no persisted shape and last shipped on schema v6. Phase 5c is the
-> next transaction unit, gated on **S2d, F2, F3, F4c, and F5** in `docs/ROADMAP.md`. Read alongside
+> next transaction unit; S2d and F2 are complete, and it remains gated on **F3, F4c, and F5**
+> in `docs/ROADMAP.md`. Read alongside
 > `AGENTS.md` (hard engineering rules) and the master roadmap — this document does not
 > restate those rules. Where documents conflict, `AGENTS.md` wins.
 
@@ -318,7 +319,7 @@ must call the rollover seam before lifecycle behavior is user-facing.
 **Status:** Implemented. `scripts/test-phase5b.ts` is the focused executable acceptance
 harness. The implementation composed the existing ledgers and validators without a new
 persisted shape, so it remained on schema v6 at landing; the repository later advanced to
-schema v7 through F1.
+schema v7 through F1 and schema v8 through F2.
 
 **Goal:** one mechanic, deliberately isolated, because it is **the integration test of the whole financial stack** — it composes the trade engine (Phase 1) + contract instantiation (Phase 2) + salary matching (Phase 4) + exception/dead-money logic (Phase 5a), and it **triggers a hard cap** (Phase 4 event-state).
 
@@ -479,7 +480,7 @@ Phase 3    Salary cap & financial state (compute only)      IMPLEMENTED
 Phase 4    Salary matching & cap enforcement                IMPLEMENTED
 Phase 5a   Dead money, exceptions & contract lifecycle      IMPLEMENTED
 Phase 5b   Sign-and-trade (composition stress test)         IMPLEMENTED
-Phase 5c   League-balance harness (paired seed suite)        PLANNED — gated by S2d/F2/F3/F4c/F5
+Phase 5c   League-balance harness (paired seed suite)        PLANNED — gated by F3/F4c/F5 (S2d/F2 complete)
 Phase 6    Trade AI (CPU valuation)                         PLANNED
 Phase 7    AI-initiated trades & ecosystem                  PLANNED
 Phase 7.5  Restricted free agency                          PLANNED

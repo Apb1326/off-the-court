@@ -22,6 +22,7 @@ interface MenuData {
 const PHASE_LABEL: Record<GamePhase, string> = {
   preseason: 'Preseason',
   regular_season: 'Regular Season',
+  playoffs: 'Playoffs',
   offseason: 'Offseason',
 };
 

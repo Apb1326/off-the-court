@@ -4,6 +4,8 @@ import {
   normalizePlayersForSave,
 } from '@/transactions/contracts';
 import { recomputeUsageAndFreeThrowFields } from '@/ratings/derivation';
+import { emptyPlayoffs } from '@/models/season';
+import { emptyStatLine } from '@/models/game';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -73,6 +75,38 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
   if (version < 7) {
     working = migrateV6toV7(working);
     migrated = true;
+  }
+
+  // --- v7 -> v8: F2 postseason state ---
+  if (version < 8) {
+    working = migrateV7toV8(working);
+    migrated = true;
+  }
+
+  // Defensive repair for a current-version file stamped by an older direct
+  // write path. Current schema always implies both F2 fields are present.
+  if (!working.season.playoffs || !Array.isArray(working.season.playoffPlayerStats)) {
+    working = {
+      ...working,
+      season: {
+        ...working.season,
+        playoffs: working.season.playoffs ?? emptyPlayoffs(
+          working.season.gamesPlayed >= working.season.totalGames
+            ? 'grandfathered_complete'
+            : 'pending',
+        ),
+        playoffPlayerStats: Array.isArray(working.season.playoffPlayerStats)
+          ? working.season.playoffPlayerStats
+          : zeroPlayoffStats(working),
+      },
+    };
+    migrated = true;
+  }
+
+  const playoffStatus = working.season.playoffs.status;
+  const champion = working.season.playoffs.championTeamId;
+  if ((playoffStatus === 'complete') !== (typeof champion === 'string' && champion.length > 0)) {
+    return { ok: false, reason: 'completed playoff state must carry exactly one championTeamId' };
   }
 
   // Normalize even current-schema saves so stale FA pools/back-references cannot
@@ -228,4 +262,33 @@ function migrateV6toV7(file: SaveFile): SaveFile {
     schemaVersion: 7,
     controlledTeamId: file.controlledTeamId ?? null,
   };
+}
+
+/**
+ * v7 -> v8 (F2): incomplete seasons receive an empty pending postseason.
+ * Already-completed legacy seasons are grandfathered as finished rather than
+ * fabricating a bracket or champion from regular-season standings.
+ */
+function migrateV7toV8(file: SaveFile): SaveFile {
+  const legacyFinished = file.season.gamesPlayed >= file.season.totalGames;
+  return {
+    ...file,
+    schemaVersion: 8,
+    season: {
+      ...file.season,
+      playoffs: emptyPlayoffs(legacyFinished ? 'grandfathered_complete' : 'pending'),
+      playoffPlayerStats: zeroPlayoffStats(file),
+    },
+  };
+}
+
+function zeroPlayoffStats(file: SaveFile) {
+  return file.players.map((player) => ({
+    playerId: player.id,
+    teamId: player.teamId ?? '',
+    gamesPlayed: 0,
+    gamesStarted: 0,
+    minutes: 0,
+    totals: emptyStatLine(),
+  }));
 }
