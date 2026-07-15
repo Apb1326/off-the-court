@@ -3,6 +3,7 @@ import { Team } from './team';
 import { SeasonState } from './season';
 import { getControlledTeamId } from '@/franchise/controlled';
 import { deriveChampion, derivePlayoffSeries, derivePlayoffStatus } from '@/engine/playoffs';
+import { earliestUnresolvedPlayoffSeries } from './season';
 
 /**
  * Bump when the on-disk shape of a SaveFile changes in a way that older files
@@ -116,8 +117,7 @@ export function buildSummary(
     return `${controlledTag}Offseason · Season complete`;
   }
   if (playoffStatus === 'in_progress' || season.gamesPlayed >= season.totalGames) {
-    const active = derivePlayoffSeries(season).filter((series) => !series.winnerTeamId);
-    const round = active[0]?.round.replaceAll('_', ' ') ?? 'playoffs';
+    const round = earliestUnresolvedPlayoffSeries(derivePlayoffSeries(season))?.round.replaceAll('_', ' ') ?? 'playoffs';
     return `${controlledTag}Playoffs · ${round.replace(/^./, (c) => c.toUpperCase())}`;
   }
 
