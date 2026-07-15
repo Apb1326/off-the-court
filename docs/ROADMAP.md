@@ -1,6 +1,6 @@
 # Off the Court — Master Roadmap
 
-> **Status:** living master plan, **revision 8 + S2c1-R acceptance addendum (2026-07-10)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; and **F2 accepted locally 2026-07-14** (deterministic playoffs/champion, migration and UI, profile/calibrate byte-identical — evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3 and F3 are the next independent track units**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
+> **Status:** living master plan, **revision 8 + S3 execution-plan addendum (2026-07-15)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; and **F2 accepted and merged 2026-07-15** (deterministic playoffs/champion, migration and UI, profile/calibrate byte-identical — evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3.a is the next simulation unit and F3 is the next independent franchise unit**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
 >
 > **Revision history:** the per-revision change logs (revisions 2–8) were moved verbatim to `docs/ROADMAP_HISTORY.md` on 2026-07-11 — background reading, not required for executing a phase. Phase statuses and outcome records below remain current and grounded; the §-numbered structure is stable and cross-referenced from other docs.
 >
@@ -151,7 +151,7 @@ Sim-engine quality before GM features; saves before transactions (done); team se
 | 2b | **S2c1 — candidate tendencies + evaluation seam** | S | **Implemented.** Candidate-only real usage/play-type/shot-mix derivation, coverage contract, and read-only informational profiling seam landed; candidate remains inactive. **S2c1-R complete:** candidate selection now consumes possession-level tendencies through an explicit candidate-only configuration, with terminal bands passing on seeds 2026, 7, and 42; active default remains byte-identical. |
 | 2c | **S2c2 — assist decision + compensation unwind** | S | **Implemented.** Candidate-only scorekeeper proxy and locked real diets; decision/report in `docs/S2C2_*`. |
 | 2d | **S2d — activation, re-baseline, legacy retirement** ✅ 2026-07-14 | S | Done. Promoted the real diets into the sole table, retired the shaded table + legacy selector + BDL/seed paths, re-derived baselines, re-passed profile 32/32; promotion manifest + activation-context gate anchor gated runs. |
-| 3 | **F2 — playoffs** ✅ 2026-07-14 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted locally. S3 is unlocked.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
+| 3 | **F2 — playoffs** ✅ merged 2026-07-15 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted and merged. S3.a is unlocked.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
 | 4 | **F3 — multi-season seam (offseason v1) + rotation normalization** | F | Wires `processContractRollover` into a pure season→season advance — now including the shared deterministic rotation-repair primitive (§5.3), because rollover/autofill themselves mutate rosters. The 5c harness drives *this* seam — never a private fork of it. |
 | 5 | **F4a–c — curves, development, retirement/continuity** | F | Three ordered execution units (§5.4): empirical curve artifact; development and evolved-pool profiling; then retirement, replacement generation, and dynamic baselines. Retirement uses the F3 rotation primitive. Before the authoritative 5c baseline. |
 | 6 | **F5 — in-season transaction integration** | F | Ahead of the harness. Reuses the F3 rotation primitive for in-season mutations; adds stat stints and live-deadline wiring — the parts genuinely in-season-specific. |
@@ -329,28 +329,95 @@ No unit may borrow from the next to make its own checks green. S2a through S2c2 
 
 #### S2a/S2b implementation outcome — 2026-07-09 (condensed in revision 8)
 
-S2a landed in PR #24; S2b and repair unit **S2b-R** landed in PR #25. S2b-R replaced the erroneous `box_advanced.per100.tov` blend with usage-normalized `box_advanced.advanced.tmTovPct`, split shared overall defended-FG inputs into category-specific perimeter/interior signals, and added a population-level defended-category validator after repairing the normalizer's raw-column mappings. S2c1 and **S2c1-R** now land on the inactive candidate; S2c2 owns the assist/shot-diet unwind and S2d remains the sole activation point.
+S2a landed in PR #24; S2b and repair unit **S2b-R** landed in PR #25. S2b-R replaced the erroneous `box_advanced.per100.tov` blend with usage-normalized `box_advanced.advanced.tmTovPct`, split shared overall defended-FG inputs into category-specific perimeter/interior signals, and added a population-level defended-category validator after repairing the normalizer's raw-column mappings. S2c1/**S2c1-R** and S2c2 then landed on the inactive candidate; S2d subsequently activated that accepted pool/selector/diet as the sole production path.
 
-The current candidate, coverage/fallback policy, per-rating inputs, repaired raw-column mappings, tail policy, and inherited limitations are the generated source of truth in `docs/S2A_LEAGUE_COVERAGE.md` and `docs/S2B_RATINGS_CONTRACT.md`. S2d owns star-separation behavioral evaluation, single-season defense-data noise, the avgSpeed-as-athleticism limitation, and the durability DNP-CD/role conflation.
+The frozen candidate-era coverage/fallback policy, per-rating inputs, repaired raw-column mappings, tail policy, and inherited limitations remain recorded in `docs/S2A_LEAGUE_COVERAGE.md` and `docs/S2B_RATINGS_CONTRACT.md`; S2d retired their executable generators after activation. Star-separation behavior, single-season defense-data noise, the avgSpeed-as-athleticism limitation, and the durability DNP-CD/role conflation remain inherited limitations unless a later evidence-gated phase owns them explicitly.
 
-### 4.3 S3 — Stage 3: mechanics from richer data (a gated menu, not a monolith)
+### 4.3 S3 — Stage 3: mechanics from richer data (sequential execution roadmap)
 
-**Goal:** spend the data on the sim itself — one mechanic per prompt, each independently profiled, each with its own named constants. Stage 3 is a *menu with rules*: its items are separable and the failure mode is bundling three plausible ideas into one uncalibratable diff.
+**Goal:** spend the normalized NBA data on the sim itself without turning Stage 3 into an uncalibratable rewrite. Each execution unit owns exactly one measurement surface or one gameplay mechanism, lands on `main` alone, and receives its own profile sign-off before the next unit starts.
 
-**Rules for every S3 item:** additive-and-clamped only; centered so league aggregate is unchanged unless the item's explicit purpose is to move a target; new constants in `engine/constants.ts` with source annotations; RNG draws in stable order; `spacing.ts` stays pure; one item per prompt with its own profile sign-off; items land sequentially on main (the §3.2 ∥ rule). The committed informational references in `profile-engine.ts` are the starting evidence base — except the putback-attempt proxy as a frequency target (Appendix A #13).
+**Accepted starting baseline (2026-07-15, seed 2026):** activated-pool profile PASS 32/32; average margin 13.1 vs 12.9; assists 26.7 vs 26.7; ORB rate 25.6% vs 25.2%; and-one rate 13.7% vs 5.6%. The first three are preservation constraints. The and-one gap is the clearest already-measured Stage-3 texture residual. The PBP putback row remains semantically non-comparable to engine play-type frequency (Appendix A #13).
 
-**Candidate menu (ordered by expected value; pick deliberately):**
-- **S3.a Lineup-model validation harness.** `tsx scripts/validate-lineups.ts` scoring the spacing+versatility model against real five-man `lineups` net ratings (2007–25). This lands first: it is cheap, high leverage, and becomes the regression check for every later fit change.
-- **S3.b Defender-matchup fidelity.** `defense.matchupsByOppPosition` and defended-category FG%± to sharpen `selectDefender` and the defender term in `resolveShot`. Directly deepens the weak-link versatility story.
-- **S3.c Contest & pressure realism.** `hustle.contestedShots`/deflections and `tracking.defense` informing contest-level distributions and steal pressure.
-- **S3.d Drive/touch texture.** `tracking.drives`, `paintTouch`/`postTouch`/`elbowTouch` refining advantage-creation probabilities per player-context — carefully centered.
-- **S3.e Rebounding positioning.** `hustle` boxouts + oreb%/dreb% into rebound weighting (ORB-rate reference 0.2518 is the league anchor).
-- **S3.f Screener credit & handoff texture.** `screenAssists` informing screener involvement in PnR/handoff chains (event-stream credit only).
-- **S3.g Assist-definition alignment**: if S2 chose the "loosen the engine definition" branch, the mechanics land here — a bounded, documented widening of chain-assist credit, calibrated so the per-zone assisted sign structure emerges (closing the loop on the S1-R diagnosis) and the enforced assist total stays in band.
+#### S3 standing rules
 
-**Out of scope for the whole stage:** anything that changes persisted schemas; anything that reads scouted ratings; new play types (possession-model redesign — Horizon).
+1. **One mechanic per prompt and PR.** A diagnostic/refactor needed solely to construct an item's oracle may share that item's prompt only when production behavior is proven byte-identical before the mechanic starts.
+2. **Data is offline evidence, not a runtime dependency.** `src/engine` never reads `data/nba/normalized/`, infers behavior from player IDs/paths, or gains an environment-selected mode. Derive centered constants or use existing `PlayerRatings` / `PlayerTendencies` at runtime.
+3. **No persisted-shape expansion.** `SaveFile` snapshots `Player[]`; adding a new player feature is a save-schema change and is out of S3 scope. If a proposed mechanic cannot be expressed through existing ratings, tendencies, positions, game state, and non-persisted event context, stop and surface.
+4. **Additive, clamped, centered.** New shot-quality effects stay inside the existing additive clamp. Effects are centered on the production population unless their declared purpose is to close a named league target. New knobs live in `engine/constants.ts` with source, units, centering population, and sane range.
+5. **Stable RNG.** No new conditional draw sites. Reuse an existing draw or restructure to a fixed draw count; prove same-seed determinism. `spacing.ts` remains pure and RNG-free.
+6. **Preserve the possession invariants.** No post-hoc assist roll, no assist outside the pass-into-the-make chain, no direct stat assignment, no pass-count quality bonus, and no change to `MAX_EXTRA_PASSES`.
+7. **Targets stay fixed.** No target/tolerance/era-window edits, re-tiering, or silent table shading. `npm run calibrate` remains a drift report, not acceptance.
+8. **Generated artifacts are neutral.** Measurement reports contain numbers, coverage, formulas, and provenance only. Interpretation, readiness, and deferrals live here and in `docs/PROJECT_STATUS.md`.
 
-**Acceptance per item:** the standard engine checklist (profile PASS with deltas, determinism, A/Bs, calibrate deltas reported), plus S3.b's lineup-validation score not regressing once it exists.
+#### Wave S3-1 — mandatory measurement foundation
+
+**S3.a — historical lineup-model validation.** Prompt: `docs/prompts/S3A_LINEUP_VALIDATION_IMPLEMENTATION_PROMPT.md`.
+
+Build `scripts/validate-lineups.ts` against normalized five-man lineup seasons 2007-08 through 2024-25. It must evaluate the production spacing + versatility model without summing player ratings as lineup value:
+
+- construct season-as-of player projections through one shared derivation seam rather than copying S2 formulas into the harness;
+- prove the default 2025-26 `build-league` output remains byte-identical if that seam requires a behavior-preserving extraction;
+- compute expected off-ball spacing with the same production finisher-selection weight and compute versatility through `spacing.ts`;
+- use within-team/season four-of-five lineup substitutions as the primary fit comparison, with possession-weighted and leave-one-season-out results;
+- report the long-run 2007-25 cohort separately from modern full-input cohorts because defense/tracking begins in 2013-14 and hustle in 2015-16;
+- add deterministic `--check` output and a generated `docs/S3_LINEUP_VALIDATION.md` measurement record.
+
+The first accepted run freezes a regression floor; it does **not** have to flatter the current model. If the signs or held-out score are weak, land the honest measurement and diagnose before changing fit constants.
+
+**S3.a acceptance:** profile and calibrate stdout byte-identical; production pool/build byte-identical; lineup report deterministic; coverage/fallback strata explicit; no future-season leakage; no scouted ratings; no runtime behavior change.
+
+#### Wave S3-2 — pre-approved first mechanics tranche
+
+These units are ordered and may not run in parallel. Each starts from the prior unit merged on `main`.
+
+**S3.b1 — defender assignment fidelity.** Prompt: `docs/prompts/S3B1_DEFENDER_ASSIGNMENT_IMPLEMENTATION_PROMPT.md`.
+
+Derive an opponent-position matchup matrix from `defense.matchupsByOppPosition.partialPoss`. Use it to sharpen `selectDefender` through existing position, secondary position, defensive ratings, play type, and centered versatility. This unit changes defender assignment only — not zone defender strength, contest levels, fouls, steals, or ratings derivation. Add a focused distribution/A-B harness and preserve a fixed RNG draw contract.
+
+**S3.b2 — zone-specific defender influence.** Prompt: `docs/prompts/S3B2_DEFENDER_INFLUENCE_IMPLEMENTATION_PROMPT.md`.
+
+Use defended-category FG%± to derive the existing perimeter/interior-defense blend by shot zone. Change only `getDefenderRating` / the current defender term in `resolveShot`; do not add a second defense modifier or change defender selection. An average defender remains net zero and S3.a's lineup score may not regress.
+
+**S3.c1 — made/missed shooting-foul conditioning.** Prompt: `docs/prompts/S3C1_AND_ONE_CONDITIONING_IMPLEMENTATION_PROMPT.md`.
+
+Repair the measured 13.7%-vs-5.6% and-one gap by conditioning the existing single shooting-foul roll on whether the shot was made. Preserve one foul RNG draw, the enforced FTA anchor, player draw-foul ordering, and defensive pressure; derive and report the necessary change in foul-event incidence (made fouls yield one attempt while missed fouls yield two or three, so event incidence and FTA cannot both remain fixed). This is not permission to retune base shot percentages, targets/tolerances, or free-throw resolution.
+
+#### S3 checkpoint A — mandatory go/no-go review
+
+After S3.c1 lands, run a read-only checkpoint using `docs/prompts/S3_CHECKPOINT_A_REVIEW_PROMPT.md`. Compare the accepted S3.a baseline, each mechanic's profile/calibrate deltas, the informational texture rows, and the active source. Update this roadmap with one disposition per remaining unit: **authorize next**, **defer with evidence**, or **retire as unnecessary**. Do not create or execute later implementation prompts before this checkpoint authorizes them.
+
+#### Wave S3-3 — provisional menu, authorization required
+
+The order below is expected-value order, not a commitment that every item ships.
+
+**S3.c2 — contest-level distributions.** Candidate source: `hustle.contestedShots`, 2pt/3pt splits, and `tracking.defense`. Scope is the existing contest-level distribution only. It may not also change steal pressure or foul conditioning.
+
+**S3.c3 — deflection/pass pressure.** Candidate source: hustle deflections. Scope is pass/turnover pressure only. Do not suppress turnovers to mask an over-strong advantage or pressure mechanic; preserve turnover-type accounting.
+
+**S3.d — drive/touch advantage creation.** Candidate source: `tracking.drives`, `paintTouch`, `postTouch`, and `elbowTouch`. Replace only the global advantage-creation probability with a centered player/context term expressed through existing ratings/tendencies. Preserve the pass ceiling, real-kick-out chain, spacing-gated realization, and late-clock degradation.
+
+**S3.e — rebounder positioning.** Candidate source: hustle boxouts plus tracking rebound chances / contested rebounds. Refine which player wins a rebound before touching the team ORB decision; the league ORB rate is already on target. A putback-continuation mechanic requires its own later semantic derivation and may not use the PBP putback-FGA share as an engine-frequency target.
+
+**S3.f — screener/handoff involvement.** Candidate source: hustle screen assists. Select and credit a screener through non-persisted event context only; do not add a play type, hand-increment stats, or change the one-assist-source rule. Stop if meaningful credit would require a persisted schema change.
+
+**S3.g — assist-definition alignment: dormant / no implementation prompt.** S2c2 chose the scorekeeper-aligned measurement proxy and retained strict chain credit. The proxy now has the intended corner-three-highest sign structure and the enforced assist total is on target. Reopening mechanics requires a new written decision with evidence; the NBA-vs-chain level gap alone is not authorization.
+
+#### Acceptance for every engine-touching S3 unit
+
+- Capture pre/post `npm run profile --silent` and `npm run calibrate --silent` stdout plus SHA-256 and activation-context banner.
+- `npm run typecheck` clean.
+- `npm run profile` exits 0 with all 32 ENFORCED rows in band; report every delta, including informational rows relevant to the item.
+- `npm run calibrate` exits 0 and remains deterministic; report and explain drift deltas without treating it as acceptance.
+- `scripts/test-determinism.ts`, `test-spacing-ab.ts`, and `test-defense-ab.ts` pass.
+- `scripts/validate-lineups.ts --check` passes and its frozen score does not regress beyond its declared tolerance for any fit-affecting item.
+- Item-specific derivation and A/B harnesses pass on fixed seeds.
+- `build-league --check` passes whenever derivation or production-player construction is touched.
+- Update `docs/PROJECT_STATUS.md` with the merged commit, exact verification evidence, stdout hashes, and next S3 unit. Generated reports remain interpretation-free.
+
+#### Stage exit
+
+S3 is complete only when S3.a and every authorized mechanics unit have landed sequentially, every remaining candidate has an explicit evidence-backed defer/retire disposition, S3.g remains closed or has a separately approved decision record, and the final activated-pool profile is green. No item is considered complete merely because its code exists; its profile, determinism, A/B, lineup-regression, and documentation gates must all be accepted.
 
 ---
 
@@ -678,12 +745,13 @@ The tuned/derived artifacts the re-baseline matrix (§3.3) governs — location,
 | Artifact | Lives in | Refresh via | Notes |
 |---|---|---|---|
 | **Profile targets + tolerance bands** | `scripts/profile-engine.ts` (transcribed) ← `scripts/derive-league-targets.ts` → `docs/LEAGUE_TARGETS.md` | Re-run the derivation (`--check` gates the committed report; `--seasons` for a window change), re-transcribe via the printed block | **Live (S1).** Era window 2023-24..2025-26 pooled. Targets change only when the data or the declared window changes — never by hand-edit, never to make a run pass. |
-| **Profile PASS status** | the engine itself | `npm run profile` (exit code) | **PASSING** (32/32 ENFORCED, exit 0; margin 13.4 vs 12.87 ± 1.0 — S1-Rb accepted run, 2026-07-06). Every subsequent phase's baseline. |
-| Zone bases & shot-context constants (`BASE_FG_PCT_BY_ZONE`, `PLAY_TYPE_SHOT_ZONES`, …) | `engine/constants.ts` | `npm run profile` tuning against the derived targets | Annotated tuned knobs (pre-modifier ≠ observed). Carries the documented `KNOWN STAGE 2 ARTIFACT` shading — S2 owns the unwind. |
+| **Profile PASS status** | the engine itself | `npm run profile` (exit code) | **PASSING** (32/32 ENFORCED, exit 0; activated-pool snapshot and exact stdout SHA live in `docs/PROJECT_STATUS.md`). Every subsequent engine phase must report deltas and remain green. |
+| Zone bases & shot-context constants (`BASE_FG_PCT_BY_ZONE`, `PLAY_TYPE_SHOT_ZONES`, …) | `engine/constants.ts` | `npm run profile` tuning against the derived targets | Annotated tuned knobs (pre-modifier ≠ observed). The Stage-2 shaded/`_REAL` dual-table artifact was retired at S2d; the sole production table and residual finisher-frequency factors are the active contract. |
 | Six-zone mapping + heave rule + `deep_three` boundary | `derive-league-targets.ts` constants + `constants.ts` mapping block + `docs/LEAGUE_TARGETS.md` | Settled Stage-1 decisions; re-open only with a deliberate era-window change (2025-26 heave-basis caveat) | 14 ft short/long split · 27 ft deep-three · 32 ft ∧ ≤3 s heave. |
 | **Calibrate drift report** | `scripts/calibrate-history.ts` (+ `npm run download-history` data) | Re-run; report deltas | **Reclassified (revision 4):** historical data ends 2015 → a drift comparison, not an era acceptance. Expected gap vs a 2023–26-tuned engine (~114.4 vs 99.3). A complete modern-era row requires its own normalized-games derivation (Horizon); it is not part of S1-R. |
 | FT inverse pair (`FT_LEAGUE_AVG_PCT`/`FT_PCT_SLOPE`/`FT_DERIVE_SCALE`) | `engine/constants.ts` | Round-trip asserted by the S2d harness (`scripts/test-s2c1-r.ts`) | Change together, always. Settled at S2d (2026-07-14): anchored to the empirical 0.7823. |
 | Spacing/versatility baselines (`SPACING_*`, `VERSATILITY_*`) | `engine/constants.ts` | `tsx scripts/calibrate-spacing.ts` | Re-derived at S2d (2026-07-14) from the activated pool, spacing weighted by production finisher-selection shares (shared `primaryPlayerWeight`); per-season deterministic snapshots at F4 (constants remain the season-1 anchor). |
+| S3 lineup-fit oracle | `scripts/validate-lineups.ts` → `docs/S3_LINEUP_VALIDATION.md` | S3.a derivation; `--check` verifies the committed measurement report | Planned S3.a artifact: historical 2007-08..2024-25 within-team four-of-five comparisons, coverage strata, held-out metrics, and a frozen non-regression tolerance. Generated report carries measurements/provenance only. |
 | A/B expectations | `scripts/test-spacing-ab.ts`, `test-defense-ab.ts` | Re-verified at S2d on the activated pool (defense fixtures rescaled to its rating scale) | Material, correctly-signed effects. Green 2026-07-14. |
 | Rating statistical contract (spread/tails/shrinkage/correlations) | S2 derivation module + its committed report | S2 derivation re-run | New at S2 (§4.2). The modifier-distribution comparison is the operative check. |
 | Aging/development curves + evolved-pool profile | `engine`- or `ratings`-side constants (F4) plus the reusable pool-profile harness | `tsx scripts/derive-aging-curves.ts` over Stage-0 longitudinal data; profile deterministic year-3/year-5/year-10 pools | New at F4a–c; proxy-mapping table + coverage windows + survivor-bias correction + era normalization + held-out validation, followed by enforced behavioral checks on evolved leagues (§5.4). |
