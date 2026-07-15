@@ -22,38 +22,8 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
-import { PlayType } from '../src/models/game';
 import { rawOffBallGravity, rawVersatility } from '../src/engine/spacing';
-import { explainPlayTypeSelection, getTransitionOpportunityChance, primaryPlayerWeight } from '../src/engine/play-types';
-import { TRANSITION_ELIGIBLE_RATE } from '../src/engine/constants';
-
-/** No clutch and no trailing modifier: every situationFactor is exactly 1. */
-const NEUTRAL_SITUATION = { scoreDiff: 0, gameClock: 720, quarter: 2 };
-
-/**
- * Per-possession share of each play type for this lineup, mirroring the
- * production pipeline: the half-court selector mix scaled down by the
- * lineup's unconditional transition share (conditional transition chance ×
- * the measured precursor rate the TRANSITION_ELIGIBLE_RATE denominator
- * encodes).
- */
-function playTypeMix(five: Player[], team: Team): { playType: PlayType; share: number }[] {
-  const halfCourt = explainPlayTypeSelection(five, team.offensiveSystem, NEUTRAL_SITUATION);
-  const halfCourtTotal = halfCourt.reduce((sum, row) => sum + row.finalWeight, 0);
-  const transitionShare = Math.min(1, getTransitionOpportunityChance(five)) * TRANSITION_ELIGIBLE_RATE;
-  return [
-    ...halfCourt.map((row) => ({ playType: row.playType, share: (1 - transitionShare) * (row.finalWeight / halfCourtTotal) })),
-    { playType: 'transition' as PlayType, share: transitionShare },
-  ];
-}
-
-/** The finisher's production selection probability over the lineup's mix. */
-function finisherShare(finisher: Player, five: Player[], mix: { playType: PlayType; share: number }[]): number {
-  return mix.reduce((sum, { playType, share }) => {
-    const total = five.reduce((lineupSum, player) => lineupSum + primaryPlayerWeight(player, playType), 0);
-    return sum + share * (primaryPlayerWeight(finisher, playType) / total);
-  }, 0);
-}
+import { productionFinisherShare, productionPlayTypeMix } from './shared-lineup-model';
 
 function weighted(values: readonly { value: number; weight: number }[]): { mean: number; sd: number } {
   const total = values.reduce((sum, row) => sum + row.weight, 0);
@@ -83,7 +53,7 @@ async function main() {
     const five = starters.slice(0, 5);
     fiveSum += rawOffBallGravity(five); fiveN++;
 
-    const mix = playTypeMix(five, team);
+    const mix = productionPlayTypeMix(five, team);
     for (const finisher of five) {
       const offBall = five.filter((p) => p.id !== finisher.id);
       const gravity = rawOffBallGravity(offBall);
@@ -92,7 +62,7 @@ async function main() {
 
       // Weight = the finisher's production selection probability, from the
       // shared primaryPlayerWeight and the lineup's production play-type mix.
-      spacingPopulation.push({ value: gravity, weight: finisherShare(finisher, five, mix) });
+      spacingPopulation.push({ value: gravity, weight: productionFinisherShare(finisher, five, mix) });
     }
     versatilityPopulation.push({ value: rawVersatility(five), weight: 1 });
   }

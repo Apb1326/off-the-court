@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-14 · **Merged F2 commit:** `694886f` (rejected implementation `41a80b2`) · **Repair state:** `codex/f2-playoffs-acceptance-repair` worktree, locally accepted and not yet committed/merged · **Save schema:** v8 · **NBA data schema:** 3
+> **Date:** 2026-07-15 · **Merged F2 commit:** `c8e4b46` (repair `33e4926`; rejected implementation `41a80b2`) · **Save schema:** v8 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -11,12 +11,12 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (2026-07-14)
+## Verification evidence (2026-07-15)
 
-### F2 playoffs acceptance repair (locally accepted; pending commit/merge)
+### F2 playoffs acceptance repair (accepted and merged)
 
-`694886f` merged the F2 implementation but it was not accepted. The repair state above
-restores the original contract: regular-season output is byte-identical to `349575c`;
+`33e4926` repaired the F2 implementation and is merged in `c8e4b46`. The accepted
+contract is: regular-season output is byte-identical to `349575c`;
 all completed games live in one append-only `results` ledger; series wins, winners,
 status, and champion are derived from bracket construction plus that ledger; candidate-v8
 mirrors are canonicalized at the save boundary; and injury history is immutable onset
@@ -41,6 +41,50 @@ Regular-season A/B projection (`currentDate`, `gamesPlayed`, ordered `results`,
 `standings`, `playerStats`, `injuries`, `recoveries`; excluding F2-only playoff state
 and the intentionally changed injury-history representation): `349575c` = repair =
 SHA-256 `715ba6504be40472df855565061703710a4186a656a81354fdb02c06397d5800`.
+
+### S3.a historical lineup-model validation (accepted 2026-07-15)
+
+`scripts/validate-lineups.ts` now provides the deterministic season-as-of projection
+seam and writes the generated oracle
+[`docs/S3_LINEUP_VALIDATION.md`](/Users/atticusboyle/Desktop/Claude%20Code/OffTheCourt/docs/S3_LINEUP_VALIDATION.md).
+The seam re-keys the existing derivation recency/full-window policy to each target
+season, uses empty absent contracts only for historical projections, and rescues
+pre-2023-24 shot mix from that season's `shot_zones`. The production 2025-26 default
+options and direct shot-events path remain unchanged; `calibrate-spacing` uses the
+shared finisher-share helper and remained byte-identical.
+
+Coverage gates were green for all 18 completed seasons: 35,381 usable lineups,
+2,893,040 usable possessions, and 114,488 canonical four-of-five pairs. The lowest
+usable-row coverage was 97.20% (2020-21); usable-possession coverage was 100.00% in
+every season. The primary all-row results were spacing on the long-run cohort:
+Pearson 0.0575, Spearman 0.0599, direction 51.82%, out-of-fold CV RMSE 19.6624,
+frozen LOSO tolerance 0.0596; versatility on the defense/tracking cohort: Pearson
+0.0312, Spearman 0.0365, direction 51.32%, out-of-fold CV RMSE 19.8467, tolerance
+0.0438; combined on the defense/tracking cohort: Pearson 0.0372, Spearman 0.0409,
+direction 51.46%, out-of-fold CV RMSE 28.7122, tolerance 0.0339. These low
+correlations are the measured baseline oracle, not a retune trigger. The accepted
+correlations and tolerances are persisted independently in
+`docs/S3_LINEUP_VALIDATION_BASELINE.json` and enforced by the harness; a fixed
+0.0001 numerical floor rejects non-positive signal. Clamp saturation reached 8.96%
+for spacing finisher evaluations and 15.33% for versatility lineup evaluations in
+the most saturated season; the generated table records every season.
+
+| Command / artifact | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `npm run validate-nba-data` | PASS — 211 passed, 0 failed, 80 skipped |
+| `node --import tsx scripts/build-league.ts --check` | PASS — active pair and manifest byte-identical |
+| `node --import tsx scripts/test-build-league.ts` | PASS |
+| `node --import tsx scripts/validate-lineups.ts --check` | PASS — generated report byte-identical |
+| `node --import tsx scripts/test-s3a-lineups.ts` | PASS — canonicalization, leakage, weighting, usable rows, shot rescue, deterministic output |
+| `node --import tsx scripts/calibrate-spacing.ts` | PASS — pre/post SHA-256 `c120962893da36f2bc665a7f46073e956434923384cfdcc3d5edf143ffb1f5bb` |
+| profile stdout | PASS 32/32; unchanged SHA-256 `c37dfded336b446e344f592e97a8c913aea2d4894602d86b06b3d5392de5438e` |
+| calibrate stdout | exit 0; unchanged SHA-256 `5d097b907f7869ff9fc97c4c82778fe1b66354008bb38cc479ad262491c4b8c7` |
+| active `teams.json` / `players.json` | unchanged SHA-256 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9` / `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24` |
+| determinism, spacing A/B, defense A/B | PASS; no production-path changes |
+
+The next S unit is **S3.b1 — defender-matchup fidelity**. S3.a does not begin that
+work or change any engine constant.
 
 ## Earlier S2d verification evidence
 
@@ -139,18 +183,16 @@ source and the runs above.
 
 | Track | Verified state | Next unit |
 |---|---|---|
-| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. | **S3** — Stage 3 mechanics, now unblocked. |
-| **F — Franchise** | F1 done; **F2 repair accepted locally** (merged implementation `694886f` repaired in the uncommitted branch state named above; schema v8, ledger-derived deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam** is next only after the F2 repair is committed and merged; F4 → F5 follow in order. |
+| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, S2d landed (2026-07-14), and **S3.a accepted (2026-07-15)**: the NBA-derived pool/selector/diets remain the sole production path; the historical season-as-of lineup oracle is generated and byte-idempotent; all production pool/profile/calibration outputs are unchanged. | **S3.b1** — defender-matchup fidelity. |
+| **F — Franchise** | F1 done; **F2 accepted and merged in `c8e4b46`** (repair `33e4926`; schema v8, ledger-derived deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam** is next; F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
 | **U — Presentation** | App shell plus the F2 bracket/champion view: menu, league, roster, season standings/leaders/playoffs, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI or offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
 | **Pipeline (Stage 0/OP-1)** | Built and harvested; `npm run validate-nba-data` green in the recorded 2026-07-06 run. Manual, residential-IP, working-machine-only by design. | Only re-harvests (runbook in ROADMAP §4.0). |
 
 ## Gates and blockers
 
-- **F2 repair remains pending commit/merge.** Its complete local acceptance evidence is
-  above; do not start F3 from the repair worktree until it lands. With S2d landed, **S3**
-  remains independently ready; per ROADMAP §3.2 ∥-rule, later track units land
-  sequentially, not on concurrent branches.
+- **F2 repair is merged in `c8e4b46`.** F3 remains the next Franchise unit. With S2d
+  and S3.a accepted, later Track-S units still land sequentially per ROADMAP §3.2.
 - **T-5c and everything after it** (trade AI, ecosystem, RFA, draft) is blocked on the
   remaining pre-baseline chain F3 → F4c → F5 (S2d and F2 are done).
 - Do **not** reintroduce a runtime selector/table/pool mode — the production interface

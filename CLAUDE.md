@@ -25,8 +25,12 @@
   `docs/PROJECT_STATUS.md` (verified snapshot + baselines) · `README.md` ·
   `docs/S2C2_ASSIST_DECISION.md` (S2c2 decision record).
 - *Generated — regenerate, never hand-edit:* `docs/LEAGUE_TARGETS.md`
-  (`scripts/derive-league-targets.ts`). Generated docs carry measurements and
+  (`scripts/derive-league-targets.ts`) · `docs/S3_LINEUP_VALIDATION.md`
+  (`scripts/validate-lineups.ts`). Generated docs carry measurements and
   provenance only; status and interpretation live in ROADMAP/PROJECT_STATUS.
+- *Frozen oracle input:* `docs/S3_LINEUP_VALIDATION_BASELINE.json` is the accepted
+  S3.a primary-correlation baseline and regression allowance; update it only as an
+  explicit acceptance decision, never as part of ordinary report regeneration.
 - *Historical — background, not required reading:* `docs/ROADMAP_HISTORY.md` (revision
   changelogs) · `docs/prompts/` (archived phase prompts; see its README for the known
   gap) · `docs/S2C1_CANDIDATE_PROFILE.md` (phase record: generated body + addendum) ·
