@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStore } from '@/data/store';
 import { getSaveStore } from '@/data/saves';
-import { createSeasonState, advanceSeason } from '@/engine/season';
+import { createSeasonState, advanceSeason, seasonRestTarget } from '@/engine/season';
 import { addDays } from '@/engine/calendar';
 import { SeasonState, emptyPlayoffs } from '@/models/season';
 import { emptyStatLine } from '@/models/game';
@@ -12,7 +12,8 @@ import { normalizePlayersForSave } from '@/transactions/contracts';
 import { resolveSeedFromBody } from '@/lib/seed';
 import { loadProductionPool } from '@/lib/production-pool';
 import { PLAYOFF_MAX_CALENDAR_DAYS } from '@/engine/constants';
-import { allSeasonResults, isSeasonComplete, nextSeasonGameDate } from '@/engine/playoffs';
+import { allSeasonResults, deriveChampion, derivePlayoffSeries, derivePlayoffStatus, isSeasonComplete, nextSeasonGameDate } from '@/engine/playoffs';
+import { injuryGamesMissed } from '@/engine/injury';
 
 /** The lean view of a season the calendar UI needs (omits the full schedule). */
 function clientState(state: SeasonState) {
@@ -76,14 +77,14 @@ function clientState(state: SeasonState) {
       region: h.region,
       severity: h.severity,
       startDate: h.startDate,
-      gamesMissed: h.gamesMissed,
+      gamesMissed: injuryGamesMissed(h, results),
     })),
     playoffs: {
-      status: state.playoffs.status,
+      status: derivePlayoffStatus(state),
       playInEnabled: state.playoffs.playInEnabled,
-      gamesPlayed: state.playoffs.results.length,
-      championTeamId: state.playoffs.championTeamId,
-      series: state.playoffs.series.map((series) => ({
+      gamesPlayed: results.filter((result) => result.id.startsWith('PO-')).length,
+      championTeamId: deriveChampion(state),
+      series: derivePlayoffSeries(state).map((series) => ({
         id: series.id,
         round: series.round,
         conference: series.conference,
@@ -118,9 +119,7 @@ function toSaveFile(
   const now = new Date().toISOString();
   const canonicalSeason = season.playoffs && Array.isArray(season.playoffPlayerStats) ? season : {
     ...season,
-    playoffs: season.playoffs ?? emptyPlayoffs(
-      season.gamesPlayed >= season.totalGames ? 'grandfathered_complete' : 'pending',
-    ),
+    playoffs: season.playoffs ?? emptyPlayoffs(season.gamesPlayed >= season.totalGames),
     playoffPlayerStats: Array.isArray(season.playoffPlayerStats)
       ? season.playoffPlayerStats
       : players.map((player) => ({
@@ -294,7 +293,7 @@ function resolveTarget(state: SeasonState, mode: string, date?: string): string 
     case 'week':
       return addDays(state.currentDate, 7);
     case 'rest':
-      return state.playoffs.endDate ?? addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS);
+      return seasonRestTarget(state);
     case 'date':
       return date ?? (state.playoffs.endDate ?? addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS));
     case 'marker': {

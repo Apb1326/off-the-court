@@ -2,6 +2,7 @@ import { Player } from './player';
 import { Team } from './team';
 import { SeasonState } from './season';
 import { getControlledTeamId } from '@/franchise/controlled';
+import { deriveChampion, derivePlayoffSeries, derivePlayoffStatus } from '@/engine/playoffs';
 
 /**
  * Bump when the on-disk shape of a SaveFile changes in a way that older files
@@ -78,10 +79,11 @@ export interface SaveMetadata {
 
 /** Derive the phase from the season cursor. Recomputed on every write so it can't drift. */
 export function derivePhase(season: SeasonState): GamePhase {
-  if (season.playoffs.status === 'complete' || season.playoffs.status === 'grandfathered_complete') {
+  const playoffStatus = derivePlayoffStatus(season);
+  if (playoffStatus === 'complete' || playoffStatus === 'grandfathered_complete') {
     return 'offseason';
   }
-  if (season.playoffs.status === 'in_progress' || season.gamesPlayed >= season.totalGames) {
+  if (playoffStatus === 'in_progress' || season.gamesPlayed >= season.totalGames) {
     return 'playoffs';
   }
   if (season.gamesPlayed === 0 && season.currentDate < season.startDate) return 'preseason';
@@ -104,15 +106,17 @@ export function buildSummary(
     ? `${abbrev.get(controlledTeamId) ?? controlledTeamId} · `
     : '';
 
-  if (season.playoffs.status === 'complete' && season.playoffs.championTeamId) {
-    const champion = abbrev.get(season.playoffs.championTeamId) ?? season.playoffs.championTeamId;
+  const playoffStatus = derivePlayoffStatus(season);
+  const championTeamId = deriveChampion(season);
+  if (playoffStatus === 'complete' && championTeamId) {
+    const champion = abbrev.get(championTeamId) ?? championTeamId;
     return `${controlledTag}Offseason · Champion ${champion}`;
   }
-  if (season.playoffs.status === 'grandfathered_complete') {
+  if (playoffStatus === 'grandfathered_complete') {
     return `${controlledTag}Offseason · Season complete`;
   }
-  if (season.playoffs.status === 'in_progress' || season.gamesPlayed >= season.totalGames) {
-    const active = season.playoffs.series.filter((series) => !series.winnerTeamId);
+  if (playoffStatus === 'in_progress' || season.gamesPlayed >= season.totalGames) {
+    const active = derivePlayoffSeries(season).filter((series) => !series.winnerTeamId);
     const round = active[0]?.round.replaceAll('_', ' ') ?? 'playoffs';
     return `${controlledTag}Playoffs · ${round.replace(/^./, (c) => c.toUpperCase())}`;
   }

@@ -9,7 +9,7 @@
  * back-to-backs scale it. Recovery length is drawn per injury type.
  */
 import { Player } from '@/models/player';
-import { PlayerInjury, PlayerRecovery, GameSummary } from '@/models/season';
+import { PlayerInjury, PlayerRecovery, GameSummary, InjuryHistoryEntry } from '@/models/season';
 import { RotationSettings } from '@/models/team';
 import { SeededRNG } from '@/lib/rng';
 import { addDays } from './calendar';
@@ -379,6 +379,22 @@ export function scheduleStressMultiplier(
   if (gamesInWindow >= INJURY_DENSE_STRETCH_GAMES) mult *= INJURY_DENSE_STRETCH_MULT;
 
   return mult;
+}
+
+/** The sole derived missed-games count for immutable F2 injury onset evidence. */
+export function injuryGamesMissed(entry: InjuryHistoryEntry, results: GameSummary[]): number {
+  if (typeof entry.gamesMissed === 'number') return entry.gamesMissed;
+  if (!entry.onsetGameId || typeof entry.playedOnset !== 'boolean' || typeof entry.maxGamesMissed !== 'number') return 0;
+  const onset = results.findIndex((result) => result.id === entry.onsetGameId);
+  if (onset < 0) return 0;
+  let missed = 0;
+  for (let i = entry.playedOnset ? onset + 1 : onset; i < results.length; i++) {
+    const result = results[i];
+    if (result.homeTeamId !== entry.teamId && result.awayTeamId !== entry.teamId) continue;
+    missed++;
+    if (missed >= entry.maxGamesMissed) return entry.maxGamesMissed;
+  }
+  return missed;
 }
 
 /**

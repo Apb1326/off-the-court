@@ -1,10 +1,12 @@
 import { Team } from '@/models/team';
 import {
+  DerivedPlayoffSeries,
   GameSummary,
   PlayoffConference,
   PlayoffRound,
   PlayoffSeries,
   PlayoffSeed,
+  PlayoffStatus,
   SeasonState,
   TeamStanding,
 } from '@/models/season';
@@ -34,13 +36,7 @@ function compareIds(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/**
- * Deterministic simplified NBA tiebreaker.
- *
- * Equal-record teams are ranked as one tie group, which keeps the comparison
- * transitive for three-team ties: head-to-head mini-league percentage, division
- * leader, conference percentage, point differential, then stable team id.
- */
+/** Deterministic simplified NBA tiebreaker. */
 export function rankConference(
   conference: PlayoffConference,
   standings: TeamStanding[],
@@ -49,7 +45,6 @@ export function rankConference(
 ): TeamStanding[] {
   const teamById = new Map(teams.map((team) => [team.id, team]));
   const eligible = standings.filter((s) => teamById.get(s.teamId)?.conference === conference);
-
   const divisionLeaders = new Set<string>();
   const divisions = new Map<string, TeamStanding[]>();
   for (const standing of eligible) {
@@ -61,21 +56,20 @@ export function rankConference(
   for (const group of divisions.values()) {
     const bestRecord = Math.max(...group.map((standing) => pct(standing.wins, standing.losses)));
     const tied = group.filter((standing) => pct(standing.wins, standing.losses) === bestRecord);
-    const tiedIds = new Set(tied.map((standing) => standing.teamId));
+    const ids = new Set(tied.map((standing) => standing.teamId));
     const h2h = new Map(tied.map((standing) => [standing.teamId, { wins: 0, losses: 0 }]));
     for (const game of results) {
-      if (!tiedIds.has(game.homeTeamId) || !tiedIds.has(game.awayTeamId)) continue;
-      const loserId = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
+      if (!ids.has(game.homeTeamId) || !ids.has(game.awayTeamId)) continue;
+      const loser = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
       h2h.get(game.winnerId)!.wins++;
-      h2h.get(loserId)!.losses++;
+      h2h.get(loser)!.losses++;
     }
     tied.sort((a, b) => {
       const ah = h2h.get(a.teamId)!;
       const bh = h2h.get(b.teamId)!;
       return pct(bh.wins, bh.losses) - pct(ah.wins, ah.losses) ||
         pct(b.confWins, b.confLosses) - pct(a.confWins, a.confLosses) ||
-        pointDifferential(b) - pointDifferential(a) ||
-        compareIds(a.teamId, b.teamId);
+        pointDifferential(b) - pointDifferential(a) || compareIds(a.teamId, b.teamId);
     });
     if (tied[0]) divisionLeaders.add(tied[0].teamId);
   }
@@ -83,31 +77,26 @@ export function rankConference(
   const byRecord = [...eligible].sort((a, b) =>
     pct(b.wins, b.losses) - pct(a.wins, a.losses) || compareIds(a.teamId, b.teamId));
   const ranked: TeamStanding[] = [];
-
   for (let i = 0; i < byRecord.length;) {
     const record = pct(byRecord[i].wins, byRecord[i].losses);
     let end = i + 1;
     while (end < byRecord.length && pct(byRecord[end].wins, byRecord[end].losses) === record) end++;
     const tied = byRecord.slice(i, end);
-    const tiedIds = new Set(tied.map((s) => s.teamId));
-    const headToHead = new Map<string, { wins: number; losses: number }>(
-      tied.map((s) => [s.teamId, { wins: 0, losses: 0 }]),
-    );
+    const ids = new Set(tied.map((s) => s.teamId));
+    const h2h = new Map(tied.map((s) => [s.teamId, { wins: 0, losses: 0 }]));
     for (const game of results) {
-      if (!tiedIds.has(game.homeTeamId) || !tiedIds.has(game.awayTeamId)) continue;
-      const winner = headToHead.get(game.winnerId)!;
-      const loserId = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
-      winner.wins++;
-      headToHead.get(loserId)!.losses++;
+      if (!ids.has(game.homeTeamId) || !ids.has(game.awayTeamId)) continue;
+      const loser = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
+      h2h.get(game.winnerId)!.wins++;
+      h2h.get(loser)!.losses++;
     }
     tied.sort((a, b) => {
-      const ah = headToHead.get(a.teamId)!;
-      const bh = headToHead.get(b.teamId)!;
+      const ah = h2h.get(a.teamId)!;
+      const bh = h2h.get(b.teamId)!;
       return pct(bh.wins, bh.losses) - pct(ah.wins, ah.losses) ||
         Number(divisionLeaders.has(b.teamId)) - Number(divisionLeaders.has(a.teamId)) ||
         pct(b.confWins, b.confLosses) - pct(a.confWins, a.confLosses) ||
-        pointDifferential(b) - pointDifferential(a) ||
-        compareIds(a.teamId, b.teamId);
+        pointDifferential(b) - pointDifferential(a) || compareIds(a.teamId, b.teamId);
     });
     ranked.push(...tied);
     i = end;
@@ -115,310 +104,255 @@ export function rankConference(
   return ranked;
 }
 
-function seriesId(
-  conference: PlayoffConference | null,
-  round: PlayoffRound,
-  position: string,
-): string {
+function seriesId(conference: PlayoffConference | null, round: PlayoffRound, position: string): string {
   const conf = conference ? conference[0] : 'F';
-  const roundCode: Record<PlayoffRound, string> = {
-    play_in: 'PI',
-    first_round: 'R1',
-    conference_semifinals: 'R2',
-    conference_finals: 'CF',
-    finals: 'F',
+  const code: Record<PlayoffRound, string> = {
+    play_in: 'PI', first_round: 'R1', conference_semifinals: 'R2', conference_finals: 'CF', finals: 'F',
   };
-  return round === 'finals' ? 'PO-F' : `PO-${conf}-${roundCode[round]}-${position}`;
+  return round === 'finals' ? 'PO-F' : `PO-${conf}-${code[round]}-${position}`;
 }
 
 function makeSeries(args: {
-  conference: PlayoffConference | null;
-  round: PlayoffRound;
-  position: string;
-  teamAId: string;
-  teamBId: string;
-  teamASeed: number;
-  teamBSeed: number;
-  homeCourtTeamId: string;
-  startDate: string;
-  winsRequired?: number;
+  conference: PlayoffConference | null; round: PlayoffRound; position: string;
+  teamAId: string; teamBId: string; teamASeed: number; teamBSeed: number;
+  homeCourtTeamId: string; startDate: string; winsRequired?: number;
 }): PlayoffSeries {
   return {
-    id: seriesId(args.conference, args.round, args.position),
-    round: args.round,
-    conference: args.conference,
-    bracketPosition: args.position,
-    teamAId: args.teamAId,
-    teamBId: args.teamBId,
-    teamASeed: args.teamASeed,
-    teamBSeed: args.teamBSeed,
-    homeCourtTeamId: args.homeCourtTeamId,
-    teamAWins: 0,
-    teamBWins: 0,
-    winsRequired: args.winsRequired ?? PLAYOFF_SERIES_WINS_REQUIRED,
+    id: seriesId(args.conference, args.round, args.position), round: args.round,
+    conference: args.conference, bracketPosition: args.position, teamAId: args.teamAId,
+    teamBId: args.teamBId, teamASeed: args.teamASeed, teamBSeed: args.teamBSeed,
+    homeCourtTeamId: args.homeCourtTeamId, winsRequired: args.winsRequired ?? PLAYOFF_SERIES_WINS_REQUIRED,
     startDate: args.startDate,
-    gameIds: [],
-    winnerTeamId: null,
   };
-}
-
-function loser(series: PlayoffSeries): string {
-  if (!series.winnerTeamId) throw new Error(`series ${series.id} has no winner`);
-  return series.winnerTeamId === series.teamAId ? series.teamBId : series.teamAId;
 }
 
 function seedFor(state: SeasonState, teamId: string): number {
   return state.playoffs.seeds.find((seed) => seed.teamId === teamId)?.seed ?? 99;
 }
 
-function latestResultDate(state: SeasonState, series: PlayoffSeries[]): string {
-  const ids = new Set(series.flatMap((s) => s.gameIds));
-  return state.playoffs.results
-    .filter((result) => ids.has(result.id))
-    .reduce((latest, result) => result.date > latest ? result.date : latest, state.endDate);
-}
-
-function addConferenceFirstRound(state: SeasonState, conference: PlayoffConference, startDate: string): void {
-  if (state.playoffs.series.some((s) => s.conference === conference && s.round === 'first_round')) return;
-  const seeds = new Map(
-    state.playoffs.seeds.filter((s) => s.conference === conference).map((s) => [s.seed, s.teamId]),
-  );
-  const matchups: readonly [string, number, number][] = [
-    ['S1', 1, 8], ['S2', 4, 5], ['S3', 3, 6], ['S4', 2, 7],
-  ];
-  for (const [position, highSeed, lowSeed] of matchups) {
-    const high = seeds.get(highSeed);
-    const low = seeds.get(lowSeed);
-    if (!high || !low) throw new Error(`${conference} playoff seed ${highSeed}/${lowSeed} missing`);
-    state.playoffs.series.push(makeSeries({
-      conference,
-      round: 'first_round',
-      position,
-      teamAId: high,
-      teamBId: low,
-      teamASeed: highSeed,
-      teamBSeed: lowSeed,
-      homeCourtTeamId: high,
-      startDate,
-    }));
-  }
-}
-
-function initializePlayoffs(state: SeasonState, teams: Team[]): void {
-  if (state.playoffs.status !== 'pending' || state.gamesPlayed < state.totalGames) return;
-  const startDate = addDays(state.endDate, PLAYOFF_START_REST_DAYS);
-  const pendingInjuryHistory = state.playoffs.pendingInjuryHistory;
-  state.playoffs = {
-    status: 'in_progress',
-    playInEnabled: PLAY_IN_ENABLED,
-    startDate,
-    endDate: addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS),
-    seeds: [],
-    series: [],
-    schedule: [],
-    results: [],
-    pendingInjuryHistory,
-    championTeamId: null,
+function expectedGame(series: PlayoffSeries, number: number, previous: GameSummary | undefined) {
+  const higherHome = series.winsRequired === 1 || PLAYOFF_HOME_COURT_PATTERN[number - 1] === 'higher';
+  const homeTeamId = higherHome ? series.homeCourtTeamId :
+    (series.homeCourtTeamId === series.teamAId ? series.teamBId : series.teamAId);
+  return {
+    id: `${series.id}-G${number}`,
+    homeTeamId,
+    awayTeamId: homeTeamId === series.teamAId ? series.teamBId : series.teamAId,
+    date: previous ? addDays(previous.date, PLAYOFF_GAME_INTERVAL_DAYS) : series.startDate,
   };
+}
 
-  for (const conference of CONFERENCES) {
-    const ranked = rankConference(conference, state.standings, state.results, teams);
-    state.playoffs.seeds.push(...ranked.slice(0, PLAY_IN_ENABLED ? 10 : 8).map((standing, index) => ({
-      conference,
-      seed: index + 1,
-      teamId: standing.teamId,
-    } satisfies PlayoffSeed)));
-    if (!PLAY_IN_ENABLED) {
-      addConferenceFirstRound(state, conference, startDate);
-      continue;
+/**
+ * Derive one series solely from the append-only `state.results` ledger. The
+ * checks deliberately reject impossible evidence instead of guessing which
+ * mutable mirror was meant to win.
+ */
+function deriveSeries(series: PlayoffSeries, results: GameSummary[]): DerivedPlayoffSeries {
+  const prefix = `${series.id}-G`;
+  const games = results.filter((result) => result.id.startsWith(prefix));
+  let teamAWins = 0;
+  let teamBWins = 0;
+  let previous: GameSummary | undefined;
+  const gameIds: string[] = [];
+  for (let index = 0; index < games.length; index++) {
+    const game = games[index];
+    const expected = expectedGame(series, index + 1, previous);
+    if (game.id !== expected.id) throw new Error(`playoff result ${game.id} skips or reorders a game in ${series.id}`);
+    if (game.homeTeamId !== expected.homeTeamId || game.awayTeamId !== expected.awayTeamId) {
+      throw new Error(`playoff result ${game.id} does not match its bracket slot`);
     }
-    const bySeed = new Map(
-      state.playoffs.seeds.filter((s) => s.conference === conference).map((s) => [s.seed, s.teamId]),
-    );
-    for (const [position, a, b] of [['78', 7, 8], ['910', 9, 10]] as const) {
-      state.playoffs.series.push(makeSeries({
-        conference,
-        round: 'play_in',
-        position,
-        teamAId: bySeed.get(a)!,
-        teamBId: bySeed.get(b)!,
-        teamASeed: a,
-        teamBSeed: b,
-        homeCourtTeamId: bySeed.get(a)!,
-        startDate,
-        winsRequired: PLAY_IN_WINS_REQUIRED,
-      }));
+    if (game.date !== expected.date) throw new Error(`playoff result ${game.id} has a non-canonical date`);
+    if (game.winnerId !== series.teamAId && game.winnerId !== series.teamBId) {
+      throw new Error(`playoff result ${game.id} winner is outside ${series.id}`);
     }
+    if (teamAWins >= series.winsRequired || teamBWins >= series.winsRequired) {
+      throw new Error(`playoff result ${game.id} was recorded after ${series.id} clinched`);
+    }
+    if (game.winnerId === series.teamAId) teamAWins++; else teamBWins++;
+    gameIds.push(game.id);
+    previous = game;
+  }
+  return {
+    ...series, teamAWins, teamBWins, gameIds,
+    winnerTeamId: teamAWins >= series.winsRequired ? series.teamAId :
+      (teamBWins >= series.winsRequired ? series.teamBId : null),
+  };
+}
+
+/** Attach result records internally without persisting another source of truth. */
+type SeriesWithResults = DerivedPlayoffSeries & { _results?: GameSummary[] };
+function derived(series: PlayoffSeries, state: SeasonState): SeriesWithResults {
+  const d = deriveSeries(series, state.results);
+  return { ...d, _results: state.results.filter((r) => d.gameIds.includes(r.id)) };
+}
+
+function winner(series: SeriesWithResults): string {
+  if (!series.winnerTeamId) throw new Error(`series ${series.id} has no winner`);
+  return series.winnerTeamId;
+}
+function loser(series: SeriesWithResults): string {
+  return winner(series) === series.teamAId ? series.teamBId : series.teamAId;
+}
+function seriesDate(series: SeriesWithResults[], fallback: string): string {
+  return series.flatMap((s) => s._results ?? []).reduce((latest, result) =>
+    result.date > latest ? result.date : latest, fallback);
+}
+
+function addFirstRound(series: PlayoffSeries[], conference: PlayoffConference, seeds: Map<number, string>, startDate: string): void {
+  if (series.some((s) => s.conference === conference && s.round === 'first_round')) return;
+  for (const [position, high, low] of [['S1', 1, 8], ['S2', 4, 5], ['S3', 3, 6], ['S4', 2, 7]] as const) {
+    const highTeam = seeds.get(high); const lowTeam = seeds.get(low);
+    if (!highTeam || !lowTeam) throw new Error(`${conference} playoff seed ${high}/${low} missing`);
+    series.push(makeSeries({ conference, round: 'first_round', position, teamAId: highTeam, teamBId: lowTeam,
+      teamASeed: high, teamBSeed: low, homeCourtTeamId: highTeam, startDate }));
   }
 }
 
-function advanceBracket(state: SeasonState): void {
-  for (const conference of CONFERENCES) {
-    const confSeries = state.playoffs.series.filter((s) => s.conference === conference);
-    if (state.playoffs.playInEnabled) {
-      const s78 = confSeries.find((s) => s.round === 'play_in' && s.bracketPosition === '78');
-      const s910 = confSeries.find((s) => s.round === 'play_in' && s.bracketPosition === '910');
-      let final = confSeries.find((s) => s.round === 'play_in' && s.bracketPosition === '8');
-      if (s78?.winnerTeamId && s910?.winnerTeamId && !final) {
-        const teamA = loser(s78);
-        const teamB = s910.winnerTeamId;
-        final = makeSeries({
-          conference,
-          round: 'play_in',
-          position: '8',
-          teamAId: teamA,
-          teamBId: teamB,
-          teamASeed: seedFor(state, teamA),
-          teamBSeed: seedFor(state, teamB),
-          homeCourtTeamId: teamA,
-          startDate: addDays(latestResultDate(state, [s78, s910]), PLAYOFF_GAME_INTERVAL_DAYS),
-          winsRequired: PLAY_IN_WINS_REQUIRED,
-        });
-        state.playoffs.series.push(final);
-      }
-      if (s78?.winnerTeamId && final?.winnerTeamId) {
-        state.playoffs.seeds = state.playoffs.seeds
-          .filter((seed) => seed.conference !== conference || seed.seed <= 8)
-          .map((seed) => seed.conference !== conference ? seed :
-            seed.seed === 7 ? { ...seed, teamId: s78.winnerTeamId! } :
-            seed.seed === 8 ? { ...seed, teamId: final.winnerTeamId! } : seed);
-        addConferenceFirstRound(
-          state,
-          conference,
-          addDays(latestResultDate(state, [final]), PLAYOFF_ROUND_REST_DAYS),
-        );
-      }
-    }
+function initializeSeeds(state: SeasonState, teams: Team[]): void {
+  if (state.gamesPlayed < state.totalGames || state.playoffs.grandfatheredComplete || state.playoffs.seeds.length) return;
+  state.playoffs.startDate = addDays(state.endDate, PLAYOFF_START_REST_DAYS);
+  state.playoffs.endDate = addDays(state.endDate, PLAYOFF_MAX_CALENDAR_DAYS);
+  state.playoffs.playInEnabled = PLAY_IN_ENABLED;
+  state.playoffs.seeds = CONFERENCES.flatMap((conference) =>
+    rankConference(conference, state.standings, state.results, teams)
+      .slice(0, PLAY_IN_ENABLED ? 10 : 8)
+      .map((standing, index) => ({ conference, seed: index + 1, teamId: standing.teamId } satisfies PlayoffSeed)));
+}
 
-    const first = state.playoffs.series.filter((s) => s.conference === conference && s.round === 'first_round');
-    if (first.length === 4 && first.every((s) => s.winnerTeamId)) {
-      const existing = state.playoffs.series.some((s) => s.conference === conference && s.round === 'conference_semifinals');
-      if (!existing) {
-        const pairs: readonly [string, string, string][] = [['S1', 'S1', 'S2'], ['S2', 'S3', 'S4']];
-        const startDate = addDays(latestResultDate(state, first), PLAYOFF_ROUND_REST_DAYS);
-        for (const [position, aPos, bPos] of pairs) {
-          const a = first.find((s) => s.bracketPosition === aPos)!.winnerTeamId!;
-          const b = first.find((s) => s.bracketPosition === bPos)!.winnerTeamId!;
-          const aSeed = seedFor(state, a);
-          const bSeed = seedFor(state, b);
-          const home = aSeed < bSeed ? a : b;
-          state.playoffs.series.push(makeSeries({ conference, round: 'conference_semifinals', position,
-            teamAId: a, teamBId: b, teamASeed: aSeed, teamBSeed: bSeed, homeCourtTeamId: home, startDate }));
+/** Reconstruct all materialized bracket slots from seeds plus result evidence. */
+function buildBracket(state: SeasonState): PlayoffSeries[] {
+  if (!state.playoffs.startDate) return [];
+  const series: PlayoffSeries[] = [];
+  const start = state.playoffs.startDate;
+  for (const conference of CONFERENCES) {
+    const seeds = new Map(state.playoffs.seeds.filter((s) => s.conference === conference).map((s) => [s.seed, s.teamId]));
+    if (state.playoffs.playInEnabled) {
+      for (const [position, a, b] of [['78', 7, 8], ['910', 9, 10]] as const) {
+        const teamA = seeds.get(a); const teamB = seeds.get(b);
+        if (!teamA || !teamB) throw new Error(`${conference} play-in seed ${a}/${b} missing`);
+        series.push(makeSeries({ conference, round: 'play_in', position, teamAId: teamA, teamBId: teamB,
+          teamASeed: a, teamBSeed: b, homeCourtTeamId: teamA, startDate: start, winsRequired: PLAY_IN_WINS_REQUIRED }));
+      }
+    } else addFirstRound(series, conference, seeds, start);
+  }
+
+  for (const conference of CONFERENCES) {
+    if (state.playoffs.playInEnabled) {
+      const s78 = derived(series.find((s) => s.conference === conference && s.bracketPosition === '78')!, state);
+      const s910 = derived(series.find((s) => s.conference === conference && s.bracketPosition === '910')!, state);
+      if (s78.winnerTeamId && s910.winnerTeamId) {
+        const teamA = loser(s78); const teamB = winner(s910);
+        const final = makeSeries({ conference, round: 'play_in', position: '8', teamAId: teamA, teamBId: teamB,
+          teamASeed: seedFor(state, teamA), teamBSeed: seedFor(state, teamB), homeCourtTeamId: teamA,
+          startDate: addDays(seriesDate([s78, s910], state.endDate), PLAYOFF_GAME_INTERVAL_DAYS), winsRequired: PLAY_IN_WINS_REQUIRED });
+        series.push(final);
+        const finalD = derived(final, state);
+        if (finalD.winnerTeamId) {
+          const qualified = new Map(state.playoffs.seeds.filter((seed) => seed.conference === conference).map((seed) => [seed.seed, seed.teamId]));
+          qualified.set(7, winner(s78));
+          qualified.set(8, winner(finalD));
+          addFirstRound(series, conference, qualified, addDays(seriesDate([finalD], state.endDate), PLAYOFF_ROUND_REST_DAYS));
         }
       }
     }
 
-    const semis = state.playoffs.series.filter((s) => s.conference === conference && s.round === 'conference_semifinals');
-    if (semis.length === 2 && semis.every((s) => s.winnerTeamId)) {
-      const existing = state.playoffs.series.some((s) => s.conference === conference && s.round === 'conference_finals');
-      if (!existing) {
-        const a = semis.find((s) => s.bracketPosition === 'S1')!.winnerTeamId!;
-        const b = semis.find((s) => s.bracketPosition === 'S2')!.winnerTeamId!;
-        const aSeed = seedFor(state, a);
-        const bSeed = seedFor(state, b);
-        state.playoffs.series.push(makeSeries({ conference, round: 'conference_finals', position: 'S1',
-          teamAId: a, teamBId: b, teamASeed: aSeed, teamBSeed: bSeed,
-          homeCourtTeamId: aSeed < bSeed ? a : b,
-          startDate: addDays(latestResultDate(state, semis), PLAYOFF_ROUND_REST_DAYS) }));
+    const first = series.filter((s) => s.conference === conference && s.round === 'first_round').map((s) => derived(s, state));
+    if (first.length === 4 && first.every((s) => s.winnerTeamId)) {
+      const startDate = addDays(seriesDate(first, state.endDate), PLAYOFF_ROUND_REST_DAYS);
+      for (const [position, aPos, bPos] of [['S1', 'S1', 'S2'], ['S2', 'S3', 'S4']] as const) {
+        const a = winner(first.find((s) => s.bracketPosition === aPos)!);
+        const b = winner(first.find((s) => s.bracketPosition === bPos)!);
+        const aSeed = seedFor(state, a); const bSeed = seedFor(state, b);
+        series.push(makeSeries({ conference, round: 'conference_semifinals', position, teamAId: a, teamBId: b,
+          teamASeed: aSeed, teamBSeed: bSeed, homeCourtTeamId: aSeed < bSeed ? a : b, startDate }));
       }
+    }
+
+    const semis = series.filter((s) => s.conference === conference && s.round === 'conference_semifinals').map((s) => derived(s, state));
+    if (semis.length === 2 && semis.every((s) => s.winnerTeamId)) {
+      const a = winner(semis.find((s) => s.bracketPosition === 'S1')!);
+      const b = winner(semis.find((s) => s.bracketPosition === 'S2')!);
+      const aSeed = seedFor(state, a); const bSeed = seedFor(state, b);
+      series.push(makeSeries({ conference, round: 'conference_finals', position: 'S1', teamAId: a, teamBId: b,
+        teamASeed: aSeed, teamBSeed: bSeed, homeCourtTeamId: aSeed < bSeed ? a : b,
+        startDate: addDays(seriesDate(semis, state.endDate), PLAYOFF_ROUND_REST_DAYS) }));
     }
   }
 
-  const conferenceFinals = state.playoffs.series.filter((s) => s.round === 'conference_finals');
-  if (conferenceFinals.length === 2 && conferenceFinals.every((s) => s.winnerTeamId) &&
-      !state.playoffs.series.some((s) => s.round === 'finals')) {
-    const east = conferenceFinals.find((s) => s.conference === 'East')!.winnerTeamId!;
-    const west = conferenceFinals.find((s) => s.conference === 'West')!.winnerTeamId!;
-    const standing = new Map(state.standings.map((s) => [s.teamId, s]));
-    const es = standing.get(east)!;
-    const ws = standing.get(west)!;
-    const finalsHeadToHead = state.results.filter((game) =>
-      (game.homeTeamId === east && game.awayTeamId === west) ||
-      (game.homeTeamId === west && game.awayTeamId === east));
-    const eastH2hWins = finalsHeadToHead.filter((game) => game.winnerId === east).length;
-    const westH2hWins = finalsHeadToHead.length - eastH2hWins;
+  const finals = series.filter((s) => s.round === 'conference_finals').map((s) => derived(s, state));
+  if (finals.length === 2 && finals.every((s) => s.winnerTeamId)) {
+    const east = winner(finals.find((s) => s.conference === 'East')!);
+    const west = winner(finals.find((s) => s.conference === 'West')!);
+    const standings = new Map(state.standings.map((s) => [s.teamId, s]));
+    const es = standings.get(east)!; const ws = standings.get(west)!;
+    const h2h = state.results.filter((g) => (g.homeTeamId === east && g.awayTeamId === west) || (g.homeTeamId === west && g.awayTeamId === east));
+    const eastWins = h2h.filter((g) => g.winnerId === east).length;
     const eastBetter = pct(es.wins, es.losses) > pct(ws.wins, ws.losses) ||
-      (pct(es.wins, es.losses) === pct(ws.wins, ws.losses) &&
-        (eastH2hWins > westH2hWins ||
-          (eastH2hWins === westH2hWins &&
-            (pointDifferential(es) > pointDifferential(ws) ||
-              (pointDifferential(es) === pointDifferential(ws) && east < west)))));
-    state.playoffs.series.push(makeSeries({
-      conference: null,
-      round: 'finals',
-      position: 'S1',
-      teamAId: east,
-      teamBId: west,
-      teamASeed: seedFor(state, east),
-      teamBSeed: seedFor(state, west),
-      homeCourtTeamId: eastBetter ? east : west,
-      startDate: addDays(latestResultDate(state, conferenceFinals), PLAYOFF_ROUND_REST_DAYS),
-    }));
+      (pct(es.wins, es.losses) === pct(ws.wins, ws.losses) && (eastWins > h2h.length - eastWins ||
+        (eastWins === h2h.length - eastWins && (pointDifferential(es) > pointDifferential(ws) ||
+          (pointDifferential(es) === pointDifferential(ws) && east < west)))));
+    series.push(makeSeries({ conference: null, round: 'finals', position: 'S1', teamAId: east, teamBId: west,
+      teamASeed: seedFor(state, east), teamBSeed: seedFor(state, west), homeCourtTeamId: eastBetter ? east : west,
+      startDate: addDays(seriesDate(finals, state.endDate), PLAYOFF_ROUND_REST_DAYS) }));
   }
+  return series;
+}
 
-  const finals = state.playoffs.series.find((s) => s.round === 'finals');
-  if (finals?.winnerTeamId) {
-    state.playoffs.status = 'complete';
-    state.playoffs.championTeamId = finals.winnerTeamId;
+function validateLedgerIds(results: GameSummary[]): void {
+  const seen = new Map<string, GameSummary>();
+  for (const result of results) {
+    const previous = seen.get(result.id);
+    if (previous) throw new Error(JSON.stringify(previous) === JSON.stringify(result)
+      ? `duplicate completed result id ${result.id}` : `conflicting completed result id ${result.id}`);
+    seen.set(result.id, result);
   }
 }
 
-function scheduleNextGames(state: SeasonState): void {
-  const completed = new Set(state.playoffs.results.map((result) => result.id));
-  for (const series of state.playoffs.series) {
-    if (series.winnerTeamId) continue;
-    const outstanding = state.playoffs.schedule.some((game) =>
-      game.id.startsWith(`${series.id}-G`) && !completed.has(game.id));
-    if (outstanding) continue;
-    const gameNumber = series.gameIds.length + 1;
-    const id = `${series.id}-G${gameNumber}`;
-    const higherHome = series.winsRequired === 1 || PLAYOFF_HOME_COURT_PATTERN[gameNumber - 1] === 'higher';
-    const homeTeamId = higherHome
-      ? series.homeCourtTeamId
-      : series.homeCourtTeamId === series.teamAId ? series.teamBId : series.teamAId;
-    const awayTeamId = homeTeamId === series.teamAId ? series.teamBId : series.teamAId;
-    const previous = series.gameIds.length
-      ? state.playoffs.results.find((result) => result.id === series.gameIds[series.gameIds.length - 1])
-      : null;
-    const date = previous ? addDays(previous.date, PLAYOFF_GAME_INTERVAL_DAYS) : series.startDate;
-    state.playoffs.schedule.push({
-      id,
-      homeTeamId,
-      awayTeamId,
-      day: daysBetween(state.startDate, date),
-      date,
-    });
-  }
-  state.playoffs.schedule.sort((a, b) => a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : compareIds(a.id, b.id));
-}
-
-/** Pure bracket construction plus deterministic schedule materialization; no RNG. */
+/** Rebuild construction and upcoming slots. Results stay untouched and authoritative. */
 export function syncPlayoffs(state: SeasonState, teams: Team[]): void {
-  if (state.playoffs.status === 'complete' || state.playoffs.status === 'grandfathered_complete') return;
-  initializePlayoffs(state, teams);
-  if (state.playoffs.status !== 'in_progress') return;
-  advanceBracket(state);
-  if (state.playoffs.status === 'in_progress') scheduleNextGames(state);
+  validateLedgerIds(state.results);
+  if (state.playoffs.grandfatheredComplete) return;
+  initializeSeeds(state, teams);
+  if (!state.playoffs.seeds.length) return;
+  const series = buildBracket(state);
+  const derivedSeries = series.map((s) => derived(s, state));
+  const known = new Set(derivedSeries.flatMap((s) => s.gameIds));
+  for (const result of state.results.filter((r) => r.id.startsWith('PO-'))) {
+    if (!known.has(result.id)) throw new Error(`playoff result ${result.id} does not belong to the reconstructed bracket`);
+  }
+  state.playoffs.series = series;
+  state.playoffs.schedule = derivedSeries
+    .filter((series) => !series.winnerTeamId)
+    .map((series) => {
+      const previous = series._results?.[series._results.length - 1];
+      const game = expectedGame(series, series.gameIds.length + 1, previous);
+      return { ...game, day: daysBetween(state.startDate, game.date) };
+    })
+    .sort((a, b) => a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : compareIds(a.id, b.id));
 }
 
-export function recordPlayoffResult(state: SeasonState, summary: GameSummary): void {
-  const series = state.playoffs.series.find((candidate) => summary.id.startsWith(`${candidate.id}-G`));
-  if (!series) throw new Error(`playoff game ${summary.id} has no bracket series`);
-  if (series.gameIds.includes(summary.id)) return;
-  series.gameIds.push(summary.id);
-  if (summary.winnerId === series.teamAId) series.teamAWins++;
-  else if (summary.winnerId === series.teamBId) series.teamBWins++;
-  else throw new Error(`playoff game ${summary.id} winner is outside its series`);
-  if (series.teamAWins >= series.winsRequired) series.winnerTeamId = series.teamAId;
-  if (series.teamBWins >= series.winsRequired) series.winnerTeamId = series.teamBId;
+export function derivePlayoffSeries(state: SeasonState): DerivedPlayoffSeries[] {
+  return state.playoffs.series.map((series) => deriveSeries(series, state.results));
 }
 
+export function deriveChampion(state: SeasonState): string | null {
+  if (state.playoffs.grandfatheredComplete) return null;
+  return derivePlayoffSeries(state).find((series) => series.round === 'finals')?.winnerTeamId ?? null;
+}
+
+export function derivePlayoffStatus(state: SeasonState): PlayoffStatus {
+  if (state.playoffs.grandfatheredComplete) return 'grandfathered_complete';
+  if (state.gamesPlayed < state.totalGames) return 'pending';
+  return deriveChampion(state) ? 'complete' : 'in_progress';
+}
+
+/** The unified append-only results ledger is the sole completed-game source. */
 export function allSeasonResults(state: SeasonState): GameSummary[] {
-  return [...state.results, ...state.playoffs.results];
+  return state.results;
 }
 
 export function nextSeasonGameDate(state: SeasonState): string | null {
-  const completed = new Set(allSeasonResults(state).map((result) => result.id));
+  const completed = new Set(state.results.map((result) => result.id));
   let next: string | null = null;
   for (const game of [...state.schedule, ...state.playoffs.schedule]) {
     if (completed.has(game.id) || game.date! <= state.currentDate) continue;
@@ -428,17 +362,16 @@ export function nextSeasonGameDate(state: SeasonState): string | null {
 }
 
 export function isSeasonComplete(state: SeasonState): boolean {
-  return state.playoffs.status === 'complete' || state.playoffs.status === 'grandfathered_complete';
+  return derivePlayoffStatus(state) === 'complete' || derivePlayoffStatus(state) === 'grandfathered_complete';
 }
 
 export function isTeamEliminated(state: SeasonState, teamId: string): boolean {
-  if (state.playoffs.status === 'complete') return teamId !== state.playoffs.championTeamId;
-  if (state.playoffs.status === 'in_progress' &&
-      !state.playoffs.seeds.some((seed) => seed.teamId === teamId)) return true;
-  for (const series of state.playoffs.series) {
+  if (isSeasonComplete(state)) return teamId !== deriveChampion(state);
+  if (derivePlayoffStatus(state) !== 'in_progress') return false;
+  if (!state.playoffs.seeds.some((seed) => seed.teamId === teamId)) return true;
+  for (const series of derivePlayoffSeries(state)) {
     if (!series.winnerTeamId || (series.teamAId !== teamId && series.teamBId !== teamId)) continue;
     if (series.winnerTeamId === teamId) continue;
-    // The 7/8 loser gets a second play-in game for seed 8.
     if (series.round === 'play_in' && series.bracketPosition === '78') continue;
     return true;
   }

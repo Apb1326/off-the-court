@@ -8,6 +8,7 @@ import {
   derivePhase,
   metadataFor,
 } from '@/models/save';
+import { deriveChampion, derivePlayoffStatus } from '@/engine/playoffs';
 import { migrateSaveFile } from './migrations';
 import { normalizePlayersForSave } from '@/transactions/contracts';
 import { emptyPlayoffs } from '@/models/season';
@@ -119,9 +120,7 @@ export class SaveStore {
       ? file.season
       : {
           ...file.season,
-          playoffs: file.season.playoffs ?? emptyPlayoffs(
-            file.season.gamesPlayed >= file.season.totalGames ? 'grandfathered_complete' : 'pending',
-          ),
+          playoffs: file.season.playoffs ?? emptyPlayoffs(file.season.gamesPlayed >= file.season.totalGames),
           playoffPlayerStats: Array.isArray(file.season.playoffPlayerStats)
             ? file.season.playoffPlayerStats
             : file.players.map((player) => ({
@@ -133,11 +132,9 @@ export class SaveStore {
                 totals: emptyStatLine(),
               })),
         };
-    const champion = season.playoffs.championTeamId;
-    if ((season.playoffs.status === 'complete') !==
-        (typeof champion === 'string' && champion.length > 0)) {
-      throw new Error('completed playoff state must carry exactly one championTeamId');
-    }
+    // Completed playoff state is derived from the authoritative result ledger.
+    derivePlayoffStatus(season);
+    deriveChampion(season);
     const { players: normalizedPlayers, freeAgentPool: normalizedPool } =
       normalizePlayersForSave(file.players, season.freeAgentPool, file.teams);
     const full: SaveFile = {

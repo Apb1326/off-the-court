@@ -6,6 +6,7 @@ import {
 import { recomputeUsageAndFreeThrowFields } from '@/ratings/derivation';
 import { emptyPlayoffs } from '@/models/season';
 import { emptyStatLine } from '@/models/game';
+import { syncPlayoffs } from '@/engine/playoffs';
 
 /**
  * Save-schema migrations. `loadSave` runs `migrateSaveFile` on every load so older saves
@@ -90,23 +91,13 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
       ...working,
       season: {
         ...working.season,
-        playoffs: working.season.playoffs ?? emptyPlayoffs(
-          working.season.gamesPlayed >= working.season.totalGames
-            ? 'grandfathered_complete'
-            : 'pending',
-        ),
+        playoffs: working.season.playoffs ?? emptyPlayoffs(working.season.gamesPlayed >= working.season.totalGames),
         playoffPlayerStats: Array.isArray(working.season.playoffPlayerStats)
           ? working.season.playoffPlayerStats
-          : zeroPlayoffStats(working),
+          : zeroPlayoffStats(working.players),
       },
     };
     migrated = true;
-  }
-
-  const playoffStatus = working.season.playoffs.status;
-  const champion = working.season.playoffs.championTeamId;
-  if ((playoffStatus === 'complete') !== (typeof champion === 'string' && champion.length > 0)) {
-    return { ok: false, reason: 'completed playoff state must carry exactly one championTeamId' };
   }
 
   // Normalize even current-schema saves so stale FA pools/back-references cannot
@@ -133,6 +124,14 @@ export function migrateSaveFile(file: SaveFile): MigrationResult {
       ok: false,
       reason: error instanceof Error ? error.message : 'save roster normalization failed',
     };
+  }
+
+  try {
+    const canonical = canonicalizeF2State(working);
+    if (JSON.stringify(canonical) !== JSON.stringify(working)) migrated = true;
+    working = canonical;
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : 'playoff result ledger is invalid' };
   }
 
   // (future steps append here, each gated on `version < N` and bumping to N)
@@ -271,19 +270,22 @@ function migrateV6toV7(file: SaveFile): SaveFile {
  */
 function migrateV7toV8(file: SaveFile): SaveFile {
   const legacyFinished = file.season.gamesPlayed >= file.season.totalGames;
+  const normalized = normalizePlayersForSave(file.players, file.season.freeAgentPool ?? [], file.teams);
   return {
     ...file,
     schemaVersion: 8,
+    players: normalized.players,
     season: {
       ...file.season,
-      playoffs: emptyPlayoffs(legacyFinished ? 'grandfathered_complete' : 'pending'),
-      playoffPlayerStats: zeroPlayoffStats(file),
+      freeAgentPool: normalized.freeAgentPool,
+      playoffs: emptyPlayoffs(legacyFinished),
+      playoffPlayerStats: zeroPlayoffStats(normalized.players),
     },
   };
 }
 
-function zeroPlayoffStats(file: SaveFile) {
-  return file.players.map((player) => ({
+function zeroPlayoffStats(players: SaveFile['players']) {
+  return players.map((player) => ({
     playerId: player.id,
     teamId: player.teamId ?? '',
     gamesPlayed: 0,
@@ -291,4 +293,47 @@ function zeroPlayoffStats(file: SaveFile) {
     minutes: 0,
     totals: emptyStatLine(),
   }));
+}
+
+/**
+ * Candidate v8 saves wrote playoff mirrors. Fold valid old result evidence into
+ * the unified ledger, discard stale mirrors, and rebuild construction from the
+ * ledger. Contradictory result evidence is rejected rather than guessed at.
+ */
+function canonicalizeF2State(file: SaveFile): SaveFile {
+  const raw = file.season.playoffs as unknown as Record<string, unknown>;
+  const legacyResults = Array.isArray(raw?.results) ? raw.results : [];
+  const results = [...file.season.results];
+  const byId = new Map(results.map((result) => [result.id, JSON.stringify(result)]));
+  for (const result of legacyResults) {
+    if (!result || typeof result !== 'object' || typeof (result as { id?: unknown }).id !== 'string') {
+      throw new Error('playoff result evidence is malformed');
+    }
+    const typed = result as typeof results[number];
+    const encoded = JSON.stringify(typed);
+    const existing = byId.get(typed.id);
+    if (existing && existing !== encoded) throw new Error(`conflicting completed result id ${typed.id}`);
+    if (!existing) { results.push(typed); byId.set(typed.id, encoded); }
+  }
+  const rawSeries = Array.isArray(raw?.series) ? raw.series : [];
+  const series = rawSeries.map((entry) => {
+    const s = entry as Record<string, unknown>;
+    const { teamAWins: _a, teamBWins: _b, gameIds: _g, winnerTeamId: _w, ...construction } = s;
+    return construction;
+  });
+  const playoffs = {
+    playInEnabled: raw?.playInEnabled !== false,
+    startDate: typeof raw?.startDate === 'string' ? raw.startDate : null,
+    endDate: typeof raw?.endDate === 'string' ? raw.endDate : null,
+    seeds: Array.isArray(raw?.seeds) ? raw.seeds : [],
+    series,
+    schedule: Array.isArray(raw?.schedule) ? raw.schedule : [],
+    ...(raw?.grandfatheredComplete === true ? { grandfatheredComplete: true as const } : {}),
+  } as unknown as SaveFile['season']['playoffs'];
+  const working: SaveFile = { ...file, season: { ...file.season, results, playoffs } };
+  // Construction fields are deterministic cache only; rebuild them from the
+  // append-only ledger so missing/stale counters, winners, status, and champion
+  // fields cannot deadlock a valid save.
+  syncPlayoffs(working.season, working.teams);
+  return working;
 }
