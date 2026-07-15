@@ -7,10 +7,10 @@ import { addDays } from '../src/engine/calendar';
 import { deriveChampion, derivePlayoffSeries, derivePlayoffStatus, nextSeasonGameDate, rankConference } from '../src/engine/playoffs';
 import { injuryGamesMissed } from '../src/engine/injury';
 import { PLAYOFF_MAX_CALENDAR_DAYS } from '../src/engine/constants';
-import { derivePhase } from '../src/models/save';
+import { buildSummary, derivePhase } from '../src/models/save';
 import { Team } from '../src/models/team';
 import { Player } from '../src/models/player';
-import { GameSummary, TeamStanding, emptyStanding } from '../src/models/season';
+import { earliestUnresolvedPlayoffSeries, GameSummary, TeamStanding, emptyStanding } from '../src/models/season';
 
 let failures = 0;
 const PRE_F2_REGULAR_PROJECTION_SHA256 = '715ba6504be40472df855565061703710a4186a656a81354fdb02c06397d5800';
@@ -53,6 +53,18 @@ async function main(): Promise<void> {
     id: 'in-game', season: 'test', playerId: 'p', teamId: trio[0].id, injuryType: 'test', region: 'test',
     severity: 'day_to_day', startDate: '2025-01-01', onsetGameId: 'tie', playedOnset: true, maxGamesMissed: 0,
   }, h2h) === 0);
+
+  const labelState = createSeasonState(teams, players, { seed: 2026 });
+  advanceSeason(labelState, labelState.endDate, teams, players);
+  const [eastSeries, westSeries] = labelState.playoffs.series;
+  labelState.playoffs.series = [
+    { ...eastSeries, id: 'PO-E-CF-1', round: 'conference_finals', conference: 'East' },
+    { ...westSeries, id: 'PO-W-R2-1', round: 'conference_semifinals', conference: 'West' },
+  ];
+  check('earliest unresolved playoff round ignores bracket-array order',
+    earliestUnresolvedPlayoffSeries(derivePlayoffSeries(labelState))?.round === 'conference_semifinals');
+  check('save summary uses the canonical earliest unresolved playoff round',
+    buildSummary(labelState, teams).includes('Conference semifinals'));
 
   const order = createSeasonState(teams, players, { seed: 2026 });
   const openingDate = order.schedule[0].date!;

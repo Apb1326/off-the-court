@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStore } from '@/data/store';
-import { getSaveStore } from '@/data/saves';
+import { getSaveStore, SaveValidationError } from '@/data/saves';
 import { createSeasonState, advanceSeason, seasonRestTarget } from '@/engine/season';
 import { addDays } from '@/engine/calendar';
-import { SeasonState, emptyPlayoffs } from '@/models/season';
-import { emptyStatLine } from '@/models/game';
+import { SeasonState, emptyPlayoffs, zeroPlayoffStats } from '@/models/season';
 import { Team } from '@/models/team';
 import { Player } from '@/models/player';
 import { SaveFile, derivePhase } from '@/models/save';
@@ -122,14 +121,7 @@ function toSaveFile(
     playoffs: season.playoffs ?? emptyPlayoffs(season.gamesPlayed >= season.totalGames),
     playoffPlayerStats: Array.isArray(season.playoffPlayerStats)
       ? season.playoffPlayerStats
-      : players.map((player) => ({
-      playerId: player.id,
-      teamId: player.teamId ?? '',
-      gamesPlayed: 0,
-      gamesStarted: 0,
-      minutes: 0,
-      totals: emptyStatLine(),
-    })),
+      : zeroPlayoffStats(players),
   };
   const { players: normalized, freeAgentPool } =
     normalizePlayersForSave(players, canonicalSeason.freeAgentPool, teams);
@@ -273,10 +265,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const played = advanceSeason(state, target, file.teams, file.players);
-  // Auto-save after every advance: covers the per-day cadence and any phase
-  // transition (the metadata phase/summary are recomputed on write).
-  await saves.autoSave(file);
+  let played;
+  try {
+    played = advanceSeason(state, target, file.teams, file.players);
+    // Auto-save after every advance: covers the per-day cadence and any phase
+    // transition (the metadata phase/summary are recomputed on write).
+    await saves.autoSave(file);
+  } catch (error) {
+    if (error instanceof SaveValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
+    }
+    throw error;
+  }
 
   return NextResponse.json({ state: clientState(state), advanced: played.length });
 }

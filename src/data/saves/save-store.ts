@@ -11,11 +11,21 @@ import {
 import { deriveChampion, derivePlayoffStatus } from '@/engine/playoffs';
 import { migrateSaveFile } from './migrations';
 import { normalizePlayersForSave } from '@/transactions/contracts';
-import { emptyPlayoffs } from '@/models/season';
-import { emptyStatLine } from '@/models/game';
+import { emptyPlayoffs, zeroPlayoffStats } from '@/models/season';
 
 /** Reserved slot id for the auto-save. Lives alongside manual slots but is never a manual name. */
 export const AUTOSAVE_ID = '__autosave__';
+
+/** A save whose ledger or bracket evidence fails validation must never reach disk. */
+export class SaveValidationError extends Error {
+  readonly code = 'SAVE_VALIDATION_FAILED';
+
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : 'unknown validation error';
+    super(`Save validation failed: ${detail}`);
+    this.name = 'SaveValidationError';
+  }
+}
 
 /** Result of attempting to load a full save — never throws on a bad/old/missing file. */
 export type LoadResult =
@@ -123,18 +133,17 @@ export class SaveStore {
           playoffs: file.season.playoffs ?? emptyPlayoffs(file.season.gamesPlayed >= file.season.totalGames),
           playoffPlayerStats: Array.isArray(file.season.playoffPlayerStats)
             ? file.season.playoffPlayerStats
-            : file.players.map((player) => ({
-                playerId: player.id,
-                teamId: player.teamId ?? '',
-                gamesPlayed: 0,
-                gamesStarted: 0,
-                minutes: 0,
-                totals: emptyStatLine(),
-              })),
+            : zeroPlayoffStats(file.players),
         };
     // Completed playoff state is derived from the authoritative result ledger.
-    derivePlayoffStatus(season);
-    deriveChampion(season);
+    // `derivePlayoffStatus` reaches the champion only after the regular slate;
+    // call both so malformed mid-playoff evidence is rejected before writing.
+    try {
+      derivePlayoffStatus(season);
+      deriveChampion(season);
+    } catch (error) {
+      throw new SaveValidationError(error);
+    }
     const { players: normalizedPlayers, freeAgentPool: normalizedPool } =
       normalizePlayersForSave(file.players, season.freeAgentPool, file.teams);
     const full: SaveFile = {
@@ -231,8 +240,9 @@ export class SaveStore {
   async autoSave(file: SaveFile): Promise<SaveMetadata> {
     const existing = await this.readJson<SaveMetadata>(this.metaPath(AUTOSAVE_ID));
     const createdAt = existing?.createdAt ?? file.createdAt;
+    const metadata = await this.writeSave(AUTOSAVE_ID, { ...file, createdAt }, { name: 'Auto-save', isAutosave: true });
     await this.setActiveSaveId(AUTOSAVE_ID);
-    return this.writeSave(AUTOSAVE_ID, { ...file, createdAt }, { name: 'Auto-save', isAutosave: true });
+    return metadata;
   }
 
   async getActiveSaveId(): Promise<string | null> {

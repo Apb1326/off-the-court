@@ -181,15 +181,15 @@ export function advanceSeason(
   teams: Team[],
   players: Player[],
 ): GameSummary[] {
-  const before = JSON.stringify(state);
   const postseasonInScope = state.gamesPlayed >= state.totalGames || targetDate > state.endDate;
+  const before = postseasonInScope ? structuredClone(state) : null;
   try {
     return advanceSeasonMutable(state, targetDate, teams, players);
   } catch (error) {
-    // A playoff invariant is an all-or-nothing operation. Restoring by JSON
-    // round-trip also preserves the byte representation callers persist.
-    if (postseasonInScope) {
-      const restored = JSON.parse(before) as SeasonState;
+    // A playoff invariant is an all-or-nothing operation. Restore the cloned
+    // fields while preserving the live state object callers already reference.
+    if (before) {
+      const restored = before;
       for (const key of Object.keys(state)) delete (state as unknown as Record<string, unknown>)[key];
       Object.assign(state, restored);
     }
@@ -382,9 +382,8 @@ function advanceSeasonMutable(
     state.results.push(summary);
     if (!isPlayoff) {
       // The last regular result is the exact boundary where postseason state
-      // becomes eligible; no standings or regular stats move after this point.
+      // becomes eligible; sync once after the ledger push and counter bump.
       state.gamesPlayed++;
-      syncPlayoffs(state, teams);
     }
     syncPlayoffs(state, teams);
     completed.add(sg.id);

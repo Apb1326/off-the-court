@@ -36,6 +36,32 @@ function compareIds(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+type HeadToHead = Map<string, { wins: number; losses: number }>;
+type TiebreakClause = (a: TeamStanding, b: TeamStanding) => number;
+
+function buildH2h(tied: TeamStanding[], results: GameSummary[]): HeadToHead {
+  const ids = new Set(tied.map((standing) => standing.teamId));
+  const h2h: HeadToHead = new Map(tied.map((standing) => [standing.teamId, { wins: 0, losses: 0 }]));
+  for (const game of results) {
+    if (!ids.has(game.homeTeamId) || !ids.has(game.awayTeamId)) continue;
+    const loser = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
+    h2h.get(game.winnerId)!.wins++;
+    h2h.get(loser)!.losses++;
+  }
+  return h2h;
+}
+
+function tiebreakComparator(h2h: HeadToHead, extra?: TiebreakClause): TiebreakClause {
+  return (a, b) => {
+    const ah = h2h.get(a.teamId)!;
+    const bh = h2h.get(b.teamId)!;
+    return pct(bh.wins, bh.losses) - pct(ah.wins, ah.losses) ||
+      (extra?.(a, b) ?? 0) ||
+      pct(b.confWins, b.confLosses) - pct(a.confWins, a.confLosses) ||
+      pointDifferential(b) - pointDifferential(a) || compareIds(a.teamId, b.teamId);
+  };
+}
+
 /** Deterministic simplified NBA tiebreaker. */
 export function rankConference(
   conference: PlayoffConference,
@@ -56,21 +82,7 @@ export function rankConference(
   for (const group of divisions.values()) {
     const bestRecord = Math.max(...group.map((standing) => pct(standing.wins, standing.losses)));
     const tied = group.filter((standing) => pct(standing.wins, standing.losses) === bestRecord);
-    const ids = new Set(tied.map((standing) => standing.teamId));
-    const h2h = new Map(tied.map((standing) => [standing.teamId, { wins: 0, losses: 0 }]));
-    for (const game of results) {
-      if (!ids.has(game.homeTeamId) || !ids.has(game.awayTeamId)) continue;
-      const loser = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
-      h2h.get(game.winnerId)!.wins++;
-      h2h.get(loser)!.losses++;
-    }
-    tied.sort((a, b) => {
-      const ah = h2h.get(a.teamId)!;
-      const bh = h2h.get(b.teamId)!;
-      return pct(bh.wins, bh.losses) - pct(ah.wins, ah.losses) ||
-        pct(b.confWins, b.confLosses) - pct(a.confWins, a.confLosses) ||
-        pointDifferential(b) - pointDifferential(a) || compareIds(a.teamId, b.teamId);
-    });
+    tied.sort(tiebreakComparator(buildH2h(tied, results)));
     if (tied[0]) divisionLeaders.add(tied[0].teamId);
   }
 
@@ -82,22 +94,10 @@ export function rankConference(
     let end = i + 1;
     while (end < byRecord.length && pct(byRecord[end].wins, byRecord[end].losses) === record) end++;
     const tied = byRecord.slice(i, end);
-    const ids = new Set(tied.map((s) => s.teamId));
-    const h2h = new Map(tied.map((s) => [s.teamId, { wins: 0, losses: 0 }]));
-    for (const game of results) {
-      if (!ids.has(game.homeTeamId) || !ids.has(game.awayTeamId)) continue;
-      const loser = game.winnerId === game.homeTeamId ? game.awayTeamId : game.homeTeamId;
-      h2h.get(game.winnerId)!.wins++;
-      h2h.get(loser)!.losses++;
-    }
-    tied.sort((a, b) => {
-      const ah = h2h.get(a.teamId)!;
-      const bh = h2h.get(b.teamId)!;
-      return pct(bh.wins, bh.losses) - pct(ah.wins, ah.losses) ||
-        Number(divisionLeaders.has(b.teamId)) - Number(divisionLeaders.has(a.teamId)) ||
-        pct(b.confWins, b.confLosses) - pct(a.confWins, a.confLosses) ||
-        pointDifferential(b) - pointDifferential(a) || compareIds(a.teamId, b.teamId);
-    });
+    tied.sort(tiebreakComparator(
+      buildH2h(tied, results),
+      (a, b) => Number(divisionLeaders.has(b.teamId)) - Number(divisionLeaders.has(a.teamId)),
+    ));
     ranked.push(...tied);
     i = end;
   }
