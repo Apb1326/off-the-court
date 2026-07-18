@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-18 · **S3.b1 implementation:** `d574f93` · **Finalized prompt:** `eaf120c` · **Merged F2 implementation:** `694886f` · **Accepted F2 repair:** `33e4926`, merged by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
+> **Date:** 2026-07-18 · **S3.b1 implementation:** `d574f93` · **Review fix:** `f313250` · **Finalized prompt:** `eaf120c` · **Merged F2 implementation:** `694886f` · **Accepted F2 repair:** `33e4926`, merged by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -176,6 +176,30 @@ contract; no unrelated calibration knob was edited.
 | `node --import tsx scripts/test-spacing-ab.ts` | PASS - +8.7 pp rim attempts, +3.2 pp TS |
 | `node --import tsx scripts/test-defense-ab.ts` | PASS - z gap 3.69, suppression gap 2.8 pp, preserved rim/order checks |
 | active `teams.json` / `players.json` | unchanged SHA-256 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9` / `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24` |
+
+#### S3.b1 verified review follow-up (`f313250`)
+
+The post-acceptance review fixes all five findings without changing any valid-game
+output. Empty direct selector input now throws a `RangeError` before consuming RNG.
+The reported injury route was already guarded before selector entry, but tracing it
+found the underlying zero-lineup clock-stall: `forceExits` now retains the final
+available player only when no replacement exists, because the engine has no forfeit
+model. The real-engine depletion regression forces all five starters out with no
+bench and completes repeat-identically (103-125, 243 events, hash prefix
+`9018c7277521`).
+
+`RuntimeMatchupBucket` is now the sole coarse runtime type, eliminating both the
+normalized `MatchupPositionBucket` name collision and the generated duplicate alias.
+The production selector allocates only one numeric weights array; full 11-field factor
+objects are created only by `explainDefenderSelection`, while both paths share the same
+private formula. `validate-lineups.ts` now consumes the shared production position map.
+
+| Review verification | Result |
+|---|---|
+| profile stdout before/after review | byte-identical SHA-256 `fcbadc1a0cf4fa0ea2842630bd864cb9e97f9263a78f806d046827df287c23eb`; PASS 32/32; every displayed delta 0 |
+| calibrate stdout before/after review | byte-identical SHA-256 `b2f73adc825bba5fb5b8eac0dba528b1285653d41a502871280ef6affb3aa35a`; every displayed delta 0 |
+| typecheck, matchup derivation `--check`, lineup validation `--check`, build-league `--check` | PASS |
+| focused S3.b1, forced-exit depletion, determinism, spacing A/B, defense A/B, injury smoke | PASS; injury smoke remains deterministic at 9.43 missed games/player |
 
 No implementation divergence from the finalized prompt was required. The next S
 unit is **S3.b2 — zone-specific defender influence**; it remains unimplemented.
