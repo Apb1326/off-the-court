@@ -458,17 +458,22 @@ function forceExits(
     disabled.add(id);
     const lineupIdx = lineup.indexOf(id);
     if (lineupIdx >= 0) {
-      stats.recordExit(id, state.homeScore, state.awayScore, state.homeTeamId);
       const candidates = bench.filter((b) => !disabled.has(b));
       const replacement = findBestReplacement(id, candidates, playerMap, state.fatigue, state.fouls, team.rotation);
       if (replacement) {
+        stats.recordExit(id, state.homeScore, state.awayScore, state.homeTeamId);
         lineup[lineupIdx] = replacement;
         const benchIdx = bench.indexOf(replacement);
         if (benchIdx >= 0) bench.splice(benchIdx, 1);
         stats.recordEntry(replacement, state.homeScore, state.awayScore);
-      } else {
+      } else if (lineup.length > 1) {
+        stats.recordExit(id, state.homeScore, state.awayScore, state.homeTeamId);
         lineup.splice(lineupIdx, 1); // no one available — team plays a man down (rare)
       }
+      // With no replacement and only one player left, retain that final player
+      // as an emergency continuity fallback. An empty lineup cannot advance a
+      // possession clock and would hang the game loop; the engine has no
+      // forfeit model. `disabled` prevents reprocessing or later re-entry.
     } else {
       // On the bench at exit time: just make them unavailable.
       const benchIdx = bench.indexOf(id);

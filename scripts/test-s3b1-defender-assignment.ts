@@ -96,6 +96,16 @@ function validateWeights(defenders: Player[], shooter: Player, playType: PlayTyp
 }
 
 function fixedDrawContract(): void {
+  const emptyRng = new CountingRNG(6_999);
+  let emptyError: unknown;
+  try {
+    selectDefender([], player('S-empty', 'PG'), emptyRng, 'spot_up');
+  } catch (error) {
+    emptyError = error;
+  }
+  assert(emptyError instanceof RangeError, 'empty defender selection must throw RangeError');
+  assert(emptyRng.draws === 0, 'empty defender selection must fail before drawing RNG');
+
   const lineups = [
     balanced(),
     POSITIONS.map((position, index) => player(`X-${position}`, position, 10 + index * 17, {

@@ -35,6 +35,7 @@ import {
   loadShotZones,
   loadTracking,
 } from '../src/data/nba/load';
+import { NBA_POSITION_FALLBACK, nbaPrimaryPosition } from '../src/data/nba/position-mapping';
 import {
   NbaDerivationInput,
   NbaDerivationPlayer,
@@ -61,7 +62,6 @@ const SEASONS = listSeasons('lineups').filter((season) => season >= FIRST_SEASON
 const MIN_COVERAGE = 0.95;
 const MIN_CUTOFFS = [100, 250, 500];
 const CLAMP_EPSILON = 1e-12;
-const FALLBACK_POSITION: Position = 'SF';
 const CM_PER_INCH = 2.54;
 const KG_TO_LB = 2.2046226218;
 const FREE_AGENT_TEAM_ID = 'free_agent_pool';
@@ -74,8 +74,6 @@ const DEFAULT_OFFENSIVE_SYSTEM = {
   isolationEmphasis: 0.3,
   screeningEmphasis: 0.5,
 };
-
-const POSITION_MAP: Record<string, Position> = { G: 'PG', 'G-F': 'SG', 'F-G': 'SF', F: 'SF', 'F-C': 'PF', 'C-F': 'PF', C: 'C' };
 
 type ContractName = 'box_advanced' | 'shot_zones' | 'shot_events' | 'playtypes' | 'tracking' | 'defense' | 'hustle' | 'wingspan';
 const CONTRACTS: ContractName[] = ['box_advanced', 'shot_zones', 'shot_events', 'playtypes', 'tracking', 'defense', 'hustle', 'wingspan'];
@@ -196,7 +194,7 @@ function mean(values: readonly number[]): number | null { return values.length ?
 function sd(values: readonly number[]): number | null { const m = mean(values); return m === null ? null : Math.sqrt(mean(values.map((x) => (x - m) ** 2))!); }
 
 function mapPosition(raw: string | null): Position {
-  return POSITION_MAP[(raw ?? '').trim().toUpperCase()] ?? FALLBACK_POSITION;
+  return nbaPrimaryPosition(raw) ?? NBA_POSITION_FALLBACK;
 }
 
 function targetRecentSeasons(target: string): string[] {

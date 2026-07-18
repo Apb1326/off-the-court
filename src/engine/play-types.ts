@@ -29,7 +29,10 @@ import {
   S3B1_DEFENDER_MIN_WEIGHT,
 } from './constants';
 import { computeVersatility } from './spacing';
-import { enginePositionToMatchupBucket } from '@/data/nba/position-mapping';
+import {
+  enginePositionToMatchupBucket,
+  type RuntimeMatchupBucket,
+} from '@/data/nba/position-mapping';
 
 /** Machine-readable identity for S2d context checks; no selector mode is configurable at runtime. */
 export const PRODUCTION_PLAY_TYPE_SELECTOR_ID = 'nba-derived-tendency-selector-v1';
@@ -368,14 +371,14 @@ export function selectDefender(
   rng: SeededRNG,
   playType: PlayType,
 ): Player {
-  const factors = explainDefenderSelection(defensivePlayers, shooter, playType);
-  return rng.weightedChoice(defensivePlayers, factors.map((factor) => factor.finalWeight));
+  const weights = computeDefenderSelectionWeights(defensivePlayers, shooter, playType);
+  return rng.weightedChoice(defensivePlayers, weights);
 }
 
 export interface DefenderSelectionFactor {
   defenderId: string;
   position: Position;
-  shooterBucket: keyof typeof S3B1_MATCHUP_LIFT[Position];
+  shooterBucket: RuntimeMatchupBucket;
   avgDef: number;
   weakness: number;
   posTerm: number;
@@ -400,14 +403,38 @@ export function explainDefenderSelection(
   shooter: Player,
   playType: PlayType,
 ): DefenderSelectionFactor[] {
+  const factors: DefenderSelectionFactor[] = [];
+  computeDefenderSelectionWeights(defensivePlayers, shooter, playType, factors);
+  return factors;
+}
+
+/**
+ * Single source of defender-selection math. The production hot path requests
+ * only one numeric array; diagnostics opt into the full factor objects.
+ */
+function computeDefenderSelectionWeights(
+  defensivePlayers: Player[],
+  shooter: Player,
+  playType: PlayType,
+  factors?: DefenderSelectionFactor[],
+): number[] {
+  if (defensivePlayers.length === 0) {
+    throw new RangeError('selectDefender requires at least one defensive player');
+  }
   const shooterBucket = enginePositionToMatchupBucket(shooter.position);
   const huntsMismatch = playType === 'isolation' || playType === 'post_up';
-  const versatilityZ = computeVersatility(defensivePlayers);
   const huntStrength = huntsMismatch
-    ? clamp(S3B1_HUNT_BASE - VERSATILITY_HUNT_COEF * versatilityZ, S3B1_HUNT_MIN, S3B1_HUNT_MAX)
+    ? clamp(
+      S3B1_HUNT_BASE - VERSATILITY_HUNT_COEF * computeVersatility(defensivePlayers),
+      S3B1_HUNT_MIN,
+      S3B1_HUNT_MAX,
+    )
     : 0;
 
-  const raw = defensivePlayers.map((defender) => {
+  const weights = new Array<number>(defensivePlayers.length);
+  let maxRawWeight = 0;
+  for (let i = 0; i < defensivePlayers.length; i++) {
+    const defender = defensivePlayers[i];
     const avgDef = (
       defender.ratings.perimeterDefense
       + defender.ratings.interiorDefense
@@ -428,7 +455,9 @@ export function explainDefenderSelection(
       ? clamp(1 + huntStrength * weakness, S3B1_HUNT_TERM_MIN, S3B1_HUNT_TERM_MAX)
       : 1;
     const rawWeight = posTerm * qualTerm * huntTerm;
-    return {
+    weights[i] = rawWeight;
+    maxRawWeight = Math.max(maxRawWeight, rawWeight);
+    factors?.push({
       defenderId: defender.id,
       position: defender.position,
       shooterBucket,
@@ -439,13 +468,16 @@ export function explainDefenderSelection(
       huntStrength,
       huntTerm,
       rawWeight,
-    };
-  });
-  const maxRawWeight = Math.max(...raw.map((factor) => factor.rawWeight));
-  return raw.map((factor) => ({
-    ...factor,
-    finalWeight: Math.max(factor.rawWeight, S3B1_DEFENDER_MIN_WEIGHT * maxRawWeight),
-  }));
+      finalWeight: rawWeight,
+    });
+  }
+
+  const floor = S3B1_DEFENDER_MIN_WEIGHT * maxRawWeight;
+  for (let i = 0; i < weights.length; i++) {
+    weights[i] = Math.max(weights[i], floor);
+    if (factors !== undefined) factors[i].finalWeight = weights[i];
+  }
+  return weights;
 }
 
 export function checkTransitionOpportunity(

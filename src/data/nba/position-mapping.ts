@@ -25,10 +25,11 @@ export const NBA_SECONDARY_TOKEN_MAP: Readonly<Record<string, Position>> = {
   C: 'C',
 };
 
-export type MatchupPositionBucket = 'G' | 'F' | 'C';
+/** Coarse shooter-position bucket used by the runtime assignment model. */
+export type RuntimeMatchupBucket = 'G' | 'F' | 'C';
 
 /** Engine shooter position -> the coarse opponent bucket available at runtime. */
-export function enginePositionToMatchupBucket(position: Position): MatchupPositionBucket {
+export function enginePositionToMatchupBucket(position: Position): RuntimeMatchupBucket {
   if (position === 'PG' || position === 'SG') return 'G';
   if (position === 'SF' || position === 'PF') return 'F';
   return 'C';
@@ -42,7 +43,7 @@ export function nbaPrimaryPosition(raw: string | null | undefined): Position | u
  * NBA matchup bucket -> runtime bucket, mechanically composed through the
  * production primary-position mapping. In particular C-F -> PF -> F.
  */
-export function nbaMatchupBucketToRuntimeBucket(raw: string): MatchupPositionBucket | undefined {
+export function nbaMatchupBucketToRuntimeBucket(raw: string): RuntimeMatchupBucket | undefined {
   const primary = nbaPrimaryPosition(raw);
   return primary === undefined ? undefined : enginePositionToMatchupBucket(primary);
 }
