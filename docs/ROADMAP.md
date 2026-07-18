@@ -1,6 +1,6 @@
 # Off the Court — Master Roadmap
 
-> **Status:** living master plan, **revision 8 + S3 execution-plan addendum (2026-07-15)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; **F2 accepted and merged 2026-07-15**; and **S3.a accepted 2026-07-15** with its historical lineup oracle byte-idempotent and production profile/calibration output unchanged (evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3.b1 is the next simulation unit and F3 is the next independent franchise unit**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
+> **Status:** living master plan, **revision 8 + S3 execution-plan addendum (2026-07-15)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; **F2 accepted and merged 2026-07-15**; **S3.a accepted 2026-07-15**; and **S3.b1 accepted 2026-07-18** with its supply-adjusted matchup lift, fixed one-draw selector, and activated-pool profile PASS 32/32 (evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3.b2 is the next simulation unit and F3 is the next independent franchise unit**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
 >
 > **Revision history:** the per-revision change logs (revisions 2–8) were moved verbatim to `docs/ROADMAP_HISTORY.md` on 2026-07-11 — background reading, not required for executing a phase. Phase statuses and outcome records below remain current and grounded; the §-numbered structure is stable and cross-referenced from other docs.
 >
@@ -151,7 +151,7 @@ Sim-engine quality before GM features; saves before transactions (done); team se
 | 2b | **S2c1 — candidate tendencies + evaluation seam** | S | **Implemented.** Candidate-only real usage/play-type/shot-mix derivation, coverage contract, and read-only informational profiling seam landed; candidate remains inactive. **S2c1-R complete:** candidate selection now consumes possession-level tendencies through an explicit candidate-only configuration, with terminal bands passing on seeds 2026, 7, and 42; active default remains byte-identical. |
 | 2c | **S2c2 — assist decision + compensation unwind** | S | **Implemented.** Candidate-only scorekeeper proxy and locked real diets; decision/report in `docs/S2C2_*`. |
 | 2d | **S2d — activation, re-baseline, legacy retirement** ✅ 2026-07-14 | S | Done. Promoted the real diets into the sole table, retired the shaded table + legacy selector + BDL/seed paths, re-derived baselines, re-passed profile 32/32; promotion manifest + activation-context gate anchor gated runs. |
-| 3 | **F2 — playoffs** ✅ merged 2026-07-15 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted and merged; S3.a accepted. S3.b1 is next.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
+| 3 | **F2 — playoffs** ✅ merged 2026-07-15 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted and merged; S3.a and S3.b1 accepted. S3.b2 is next.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
 | 4 | **F3 — multi-season seam (offseason v1) + rotation normalization** | F | Wires `processContractRollover` into a pure season→season advance — now including the shared deterministic rotation-repair primitive (§5.3), because rollover/autofill themselves mutate rosters. The 5c harness drives *this* seam — never a private fork of it. |
 | 5 | **F4a–c — curves, development, retirement/continuity** | F | Three ordered execution units (§5.4): empirical curve artifact; development and evolved-pool profiling; then retirement, replacement generation, and dynamic baselines. Retirement uses the F3 rotation primitive. Before the authoritative 5c baseline. |
 | 6 | **F5 — in-season transaction integration** | F | Ahead of the harness. Reuses the F3 rotation primitive for in-season mutations; adds stat stints and live-deadline wiring — the parts genuinely in-season-specific. |
@@ -367,15 +367,17 @@ The first accepted run freezes a regression floor; it does **not** have to flatt
 
 **S3.a acceptance:** profile and calibrate stdout byte-identical; production pool/build byte-identical; lineup report deterministic; coverage/fallback strata explicit; no future-season leakage; no scouted ratings; no runtime behavior change.
 
-**Accepted outcome:** all 18 completed seasons cleared the coverage gates; the generated report and frozen baseline record the measured low-positive spacing/versatility correlations without retuning; production pool, profile, calibrate, and spacing-calibration hashes remained unchanged. Exact metrics and hashes live in `docs/PROJECT_STATUS.md`; S3.b1 is next.
+**Accepted outcome:** all 18 completed seasons cleared the coverage gates; the generated report and frozen baseline record the measured low-positive spacing/versatility correlations without retuning; production pool, profile, calibrate, and spacing-calibration hashes remained unchanged. Exact metrics and hashes live in `docs/PROJECT_STATUS.md`.
 
 #### Wave S3-2 — pre-approved first mechanics tranche
 
 These units are ordered and may not run in parallel. Each starts from the prior unit merged on `main`.
 
-**S3.b1 — defender assignment fidelity.** Prompt: `docs/prompts/S3B1_DEFENDER_ASSIGNMENT_IMPLEMENTATION_PROMPT.md`.
+**S3.b1 — defender assignment fidelity. ✅ accepted 2026-07-18.** Prompt: `docs/prompts/S3B1_DEFENDER_ASSIGNMENT_IMPLEMENTATION_PROMPT.md`.
 
 Derive an opponent-position matchup matrix from `defense.matchupsByOppPosition.partialPoss`. Use it to sharpen `selectDefender` through existing position, secondary position, defensive ratings, play type, and centered versatility. This unit changes defender assignment only — not zone defender strength, contest levels, fouls, steals, or ratings derivation. Add a focused distribution/A-B harness and preserve a fixed RNG draw contract.
+
+**Accepted outcome:** the 2017-18 through 2024-25 partial-possession sample produced a generated, supply-adjusted 5×3 lift table; runtime selection now uses one explained weight vector and exactly one unconditional RNG draw. The focused one-draw/lift/hunt/reachability harness, lineup oracle, determinism, spacing and defense A/B checks are green, and the activated-pool profile remains PASS 32/32. Exact coverage, deltas, and hashes live in `docs/PROJECT_STATUS.md`; S3.b2 is next.
 
 **S3.b2 — zone-specific defender influence.** Prompt: `docs/prompts/S3B2_DEFENDER_INFLUENCE_IMPLEMENTATION_PROMPT.md`.
 
