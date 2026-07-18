@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "acceptedAt": "2026-07-15",
+  "metric": "primary-cohort all-row possession-weighted Pearson correlation",
+  "toleranceFormula": "max(0.0100, 2 * accepted primary-cohort LOSO correlation SD)",
+  "numericalFloor": 0.0001,
+  "comparisons": {
+    "spacing": {
+      "primaryCohort": "long-run",
+      "acceptedPearson": 0.0576,
+      "acceptedLosoCorrelationSd": 0.0298,
+      "tolerance": 0.0596
+    },
+    "versatility": {
+      "primaryCohort": "defense/tracking",
+      "acceptedPearson": 0.0312,
+      "acceptedLosoCorrelationSd": 0.0219,
+      "tolerance": 0.0438
+    },
+    "combined": {
+      "primaryCohort": "defense/tracking",
+      "acceptedPearson": 0.0373,
+      "acceptedLosoCorrelationSd": 0.0169,
+      "tolerance": 0.0339
+    }
+  }
+}

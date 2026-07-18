@@ -35,6 +35,41 @@ export const RECENT_SEASON_WEIGHTS: Record<(typeof RECENT_SEASONS)[number], numb
   '2024-25': 0.30,
   '2023-24': 0.15,
 };
+
+/**
+ * Season-relative derivation policy. The production default below is frozen;
+ * historical validation supplies the same weights relative to its target
+ * season so a row never sees a later season.
+ */
+export interface NbaDerivationOptions {
+  recentSeasons: readonly string[];
+  recentSeasonWeights: Readonly<Record<string, number>>;
+  fullWindowLatestStartYear: number;
+}
+
+export const PRODUCTION_NBA_DERIVATION_OPTIONS: NbaDerivationOptions = {
+  recentSeasons: RECENT_SEASONS,
+  recentSeasonWeights: RECENT_SEASON_WEIGHTS,
+  fullWindowLatestStartYear: 2025,
+};
+
+function seasonStartYear(season: string): number {
+  const start = Number.parseInt(season.slice(0, 4), 10);
+  if (!Number.isFinite(start)) throw new Error(`Invalid NBA season: ${season}`);
+  return start;
+}
+
+/** Build the production recency/full-window policy relative to a target season. */
+export function seasonRelativeNbaDerivationOptions(targetSeason: string): NbaDerivationOptions {
+  const targetStart = seasonStartYear(targetSeason);
+  const recentSeasons = [0, 1, 2].map((offset) => `${targetStart - offset}-${String((targetStart - offset + 1) % 100).padStart(2, '0')}`);
+  const recentSeasonWeights: Record<string, number> = {
+    [recentSeasons[0]]: 0.55,
+    [recentSeasons[1]]: 0.30,
+    [recentSeasons[2]]: 0.15,
+  };
+  return { recentSeasons, recentSeasonWeights, fullWindowLatestStartYear: targetStart };
+}
 /** Full-career stamina/durability window gives each older season this decay. */
 export const FULL_WINDOW_SEASON_DECAY = 0.85;
 /** Per-rating pseudo-sample prior strength.  Higher = more small-sample pull. */
@@ -188,11 +223,12 @@ function weightedRate(parts: readonly { made: number; attempts: number; weight: 
   return { id: '', label: '', value: attempts > 0 ? made / attempts : 0, n: attempts };
 }
 
-function recentBox(player: NbaDerivationPlayer): { row: BoxAdvancedRow; weight: number }[] {
+function recentBox(player: NbaDerivationPlayer, options: NbaDerivationOptions): { row: BoxAdvancedRow; weight: number }[] {
   const bySeason = new Map(player.boxSeasons.map((entry) => [entry.season, entry.row]));
-  return RECENT_SEASONS.flatMap((season) => {
+  return options.recentSeasons.flatMap((season) => {
     const row = bySeason.get(season);
-    return row ? [{ row, weight: RECENT_SEASON_WEIGHTS[season] }] : [];
+    const weight = options.recentSeasonWeights[season];
+    return row && weight !== undefined ? [{ row, weight }] : [];
   });
 }
 
@@ -200,10 +236,11 @@ function aggregateBoxMetric(
   player: NbaDerivationPlayer,
   read: (row: BoxAdvancedRow) => number | null | undefined,
   sample: (row: BoxAdvancedRow) => number | null | undefined,
+  options: NbaDerivationOptions,
 ): Metric {
   let numerator = 0;
   let denominator = 0;
-  for (const { row, weight } of recentBox(player)) {
+  for (const { row, weight } of recentBox(player, options)) {
     const value = read(row);
     const count = sample(row);
     if (!finite(value) || !finite(count) || count <= 0) continue;
@@ -213,8 +250,8 @@ function aggregateBoxMetric(
   return { id: '', label: '', value: denominator > 0 ? numerator / denominator : 0, n: denominator };
 }
 
-function fullWindow(player: NbaDerivationPlayer): { row: BoxAdvancedRow; weight: number }[] {
-  const latestStart = 2025;
+function fullWindow(player: NbaDerivationPlayer, options: NbaDerivationOptions): { row: BoxAdvancedRow; weight: number }[] {
+  const latestStart = options.fullWindowLatestStartYear;
   return player.boxSeasons.flatMap(({ season, row }) => {
     const start = Number.parseInt(season.slice(0, 4), 10);
     if (!Number.isFinite(start)) return [];
@@ -226,10 +263,11 @@ function aggregateFullMetric(
   player: NbaDerivationPlayer,
   read: (row: BoxAdvancedRow) => number | null | undefined,
   sample: (row: BoxAdvancedRow) => number | null | undefined,
+  options: NbaDerivationOptions,
 ): Metric {
   let numerator = 0;
   let denominator = 0;
-  for (const { row, weight } of fullWindow(player)) {
+  for (const { row, weight } of fullWindow(player, options)) {
     const value = read(row);
     const count = sample(row);
     if (!finite(value) || !finite(count) || count <= 0) continue;
@@ -244,11 +282,11 @@ function aggregateFullMetric(
  * GP per season, while n carries the recency-weighted games themselves so
  * durability shrinkage reflects actual game exposure rather than season count.
  */
-function aggregateFullGamesPlayed(player: NbaDerivationPlayer): Metric {
+function aggregateFullGamesPlayed(player: NbaDerivationPlayer, options: NbaDerivationOptions): Metric {
   let numerator = 0;
   let seasonWeight = 0;
   let weightedGames = 0;
-  for (const { row, weight } of fullWindow(player)) {
+  for (const { row, weight } of fullWindow(player, options)) {
     const games = n(row.gp);
     if (games <= 0) continue;
     numerator += games * weight;
@@ -263,16 +301,17 @@ function aggregateFullGamesPlayed(player: NbaDerivationPlayer): Metric {
   };
 }
 
-function recentShotEventAggregate(player: NbaDerivationPlayer): Record<keyof Omit<ShotEventSeasonAggregate, 'season'>, ZoneAggregate> {
+function recentShotEventAggregate(player: NbaDerivationPlayer, options: NbaDerivationOptions): Record<keyof Omit<ShotEventSeasonAggregate, 'season'>, ZoneAggregate> {
   const zero = (): ZoneAggregate => ({ fgm: 0, fga: 0 });
   const out = {
     midrangeUnder14: zero(), longMidrange: zero(), aboveBreakThree: zero(), deepThree: zero(),
   };
   const bySeason = new Map(player.shotEventSeasons.map((entry) => [entry.season, entry]));
-  for (const season of RECENT_SEASONS) {
+  for (const season of options.recentSeasons) {
     const data = bySeason.get(season);
     if (!data) continue;
-    const weight = RECENT_SEASON_WEIGHTS[season];
+    const weight = options.recentSeasonWeights[season];
+    if (weight === undefined) continue;
     for (const key of Object.keys(out) as (keyof typeof out)[]) {
       out[key].fgm += data[key].fgm * weight;
       out[key].fga += data[key].fga * weight;
@@ -281,13 +320,14 @@ function recentShotEventAggregate(player: NbaDerivationPlayer): Record<keyof Omi
   return out;
 }
 
-function recentShotZoneAggregate(player: NbaDerivationPlayer): Record<'rim' | 'paintNonRa' | 'cornerThree', ZoneAggregate> {
+function recentShotZoneAggregate(player: NbaDerivationPlayer, options: NbaDerivationOptions): Record<'rim' | 'paintNonRa' | 'cornerThree', ZoneAggregate> {
   const out = { rim: { fgm: 0, fga: 0 }, paintNonRa: { fgm: 0, fga: 0 }, cornerThree: { fgm: 0, fga: 0 } };
   const bySeason = new Map(player.shotZoneSeasons.map((entry) => [entry.season, entry.row]));
-  for (const season of RECENT_SEASONS) {
+  for (const season of options.recentSeasons) {
     const row = bySeason.get(season);
     if (!row) continue;
-    const weight = RECENT_SEASON_WEIGHTS[season];
+    const weight = options.recentSeasonWeights[season];
+    if (weight === undefined) continue;
     const add = (target: ZoneAggregate, source: ZoneAggregate) => {
       target.fgm += source.fgm * weight;
       target.fga += source.fga * weight;
@@ -354,9 +394,9 @@ function resolveWingspans(input: NbaDerivationInput, fallbacks: FallbackLogEntry
   return out;
 }
 
-function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<RatingKey, Metric[]> {
-  const eventShots = recentShotEventAggregate(player);
-  const zones = recentShotZoneAggregate(player);
+function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number, options: NbaDerivationOptions): Record<RatingKey, Metric[]> {
+  const eventShots = recentShotEventAggregate(player, options);
+  const zones = recentShotZoneAggregate(player, options);
   // `deep_three` has no distinct engine rating, so its deterministic event
   // aggregate remains evidence for outside shooting rather than a new rating.
   const outsideAttempts = zones.cornerThree.fga + eventShots.aboveBreakThree.fga + eventShots.deepThree.fga;
@@ -375,15 +415,15 @@ function buildMetrics(player: NbaDerivationPlayer, wingspanCm: number): Record<R
     { made: zones.rim.fgm, attempts: zones.rim.fga, weight: 0.75 },
     { made: shortMid.fgm, attempts: shortMid.fga, weight: 0.25 },
   ]);
-  const ft = aggregateBoxMetric(player, (row) => row.perGame.ftPct, (row) => n(row.perGame.fta) * n(row.gp));
-  const astPct = aggregateBoxMetric(player, (row) => row.advanced?.astPct, (row) => row.advanced?.poss);
-  const astTo = aggregateBoxMetric(player, (row) => row.advanced?.astTo, (row) => row.advanced?.poss);
-  const tovPct = aggregateBoxMetric(player, (row) => row.advanced?.tmTovPct, (row) => row.advanced?.poss);
-  const rebPct = aggregateBoxMetric(player, (row) => row.advanced?.rebPct, (row) => row.advanced?.poss);
-  const stl100 = aggregateBoxMetric(player, (row) => row.per100?.stl, (row) => row.advanced?.poss);
-  const blk100 = aggregateBoxMetric(player, (row) => row.per100?.blk, (row) => row.advanced?.poss);
-  const fullMpg = aggregateFullMetric(player, (row) => row.mpg, (row) => row.gp);
-  const fullGp = aggregateFullGamesPlayed(player);
+  const ft = aggregateBoxMetric(player, (row) => row.perGame.ftPct, (row) => n(row.perGame.fta) * n(row.gp), options);
+  const astPct = aggregateBoxMetric(player, (row) => row.advanced?.astPct, (row) => row.advanced?.poss, options);
+  const astTo = aggregateBoxMetric(player, (row) => row.advanced?.astTo, (row) => row.advanced?.poss, options);
+  const tovPct = aggregateBoxMetric(player, (row) => row.advanced?.tmTovPct, (row) => row.advanced?.poss, options);
+  const rebPct = aggregateBoxMetric(player, (row) => row.advanced?.rebPct, (row) => row.advanced?.poss, options);
+  const stl100 = aggregateBoxMetric(player, (row) => row.per100?.stl, (row) => row.advanced?.poss, options);
+  const blk100 = aggregateBoxMetric(player, (row) => row.per100?.blk, (row) => row.advanced?.poss, options);
+  const fullMpg = aggregateFullMetric(player, (row) => row.mpg, (row) => row.gp, options);
+  const fullGp = aggregateFullGamesPlayed(player, options);
 
   const overall = player.defense?.defended.overall;
   const defendedOverallDelta = metric(
@@ -573,7 +613,10 @@ export function blendScore(rating: RatingKey, standardized: (id: string) => numb
   }
 }
 
-export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult {
+export function deriveNbaRatings(
+  input: NbaDerivationInput,
+  options: NbaDerivationOptions = PRODUCTION_NBA_DERIVATION_OPTIONS,
+): NbaDerivationResult {
   if (input.players.length === 0) throw new Error('S2b derivation received no eligible players');
   const fallbackLog: FallbackLogEntry[] = [];
   const wingspans = resolveWingspans(input, fallbackLog);
@@ -581,7 +624,7 @@ export function deriveNbaRatings(input: NbaDerivationInput): NbaDerivationResult
     .sort((a, b) => a.personId - b.personId)
     .map((player) => ({
       input: player,
-      metrics: buildMetrics(player, wingspans.get(player.personId)!),
+      metrics: buildMetrics(player, wingspans.get(player.personId)!, options),
       shrunk: new Map(), standardized: new Map(),
       rawScore: Object.fromEntries(RATING_KEYS.map((rating) => [rating, 0])) as Record<RatingKey, number>,
       resolvedWingspanCm: wingspans.get(player.personId)!,

@@ -1,6 +1,6 @@
 # Off the Court — Master Roadmap
 
-> **Status:** living master plan, **revision 8 + S3 execution-plan addendum (2026-07-15)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; and **F2 accepted and merged 2026-07-15** (deterministic playoffs/champion, migration and UI, profile/calibrate byte-identical — evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3.a is the next simulation unit and F3 is the next independent franchise unit**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
+> **Status:** living master plan, **revision 8 + S3 execution-plan addendum (2026-07-15)**. Save schema **v8**; transactions **Phases 1–5b implemented**; Stage 1 accepted; F1 done; **S2a through S2d landed**; **F2 accepted and merged 2026-07-15**; and **S3.a accepted 2026-07-15** with its historical lineup oracle byte-idempotent and production profile/calibration output unchanged (evidence in `docs/PROJECT_STATUS.md`). The NBA-derived pool/selector/diets remain the sole production path; **S3.b1 is the next simulation unit and F3 is the next independent franchise unit**. Every claim below was verified against source or execution — where documents disagreed, the code won (§1.4).
 >
 > **Revision history:** the per-revision change logs (revisions 2–8) were moved verbatim to `docs/ROADMAP_HISTORY.md` on 2026-07-11 — background reading, not required for executing a phase. Phase statuses and outcome records below remain current and grounded; the §-numbered structure is stable and cross-referenced from other docs.
 >
@@ -151,7 +151,7 @@ Sim-engine quality before GM features; saves before transactions (done); team se
 | 2b | **S2c1 — candidate tendencies + evaluation seam** | S | **Implemented.** Candidate-only real usage/play-type/shot-mix derivation, coverage contract, and read-only informational profiling seam landed; candidate remains inactive. **S2c1-R complete:** candidate selection now consumes possession-level tendencies through an explicit candidate-only configuration, with terminal bands passing on seeds 2026, 7, and 42; active default remains byte-identical. |
 | 2c | **S2c2 — assist decision + compensation unwind** | S | **Implemented.** Candidate-only scorekeeper proxy and locked real diets; decision/report in `docs/S2C2_*`. |
 | 2d | **S2d — activation, re-baseline, legacy retirement** ✅ 2026-07-14 | S | Done. Promoted the real diets into the sole table, retired the shaded table + legacy selector + BDL/seed paths, re-derived baselines, re-passed profile 32/32; promotion manifest + activation-context gate anchor gated runs. |
-| 3 | **F2 — playoffs** ✅ merged 2026-07-15 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted and merged. S3.a is unlocked.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
+| 3 | **F2 — playoffs** ✅ merged 2026-07-15 ∥ **S3 — Stage 3 mechanics (first tranche)** | F / S | **F2 accepted and merged; S3.a accepted. S3.b1 is next.** Continue landing one unit at a time on main; F2 makes the championship metric real before the 5c baseline. |
 | 4 | **F3 — multi-season seam (offseason v1) + rotation normalization** | F | Wires `processContractRollover` into a pure season→season advance — now including the shared deterministic rotation-repair primitive (§5.3), because rollover/autofill themselves mutate rosters. The 5c harness drives *this* seam — never a private fork of it. |
 | 5 | **F4a–c — curves, development, retirement/continuity** | F | Three ordered execution units (§5.4): empirical curve artifact; development and evolved-pool profiling; then retirement, replacement generation, and dynamic baselines. Retirement uses the F3 rotation primitive. Before the authoritative 5c baseline. |
 | 6 | **F5 — in-season transaction integration** | F | Ahead of the harness. Reuses the F3 rotation primitive for in-season mutations; adds stat stints and live-deadline wiring — the parts genuinely in-season-specific. |
@@ -352,7 +352,7 @@ The frozen candidate-era coverage/fallback policy, per-rating inputs, repaired r
 
 #### Wave S3-1 — mandatory measurement foundation
 
-**S3.a — historical lineup-model validation.** Prompt: `docs/prompts/S3A_LINEUP_VALIDATION_IMPLEMENTATION_PROMPT.md`.
+**S3.a — historical lineup-model validation. ✅ accepted 2026-07-15.** Prompt: `docs/prompts/S3A_LINEUP_VALIDATION_IMPLEMENTATION_PROMPT.md`.
 
 Build `scripts/validate-lineups.ts` against normalized five-man lineup seasons 2007-08 through 2024-25. It must evaluate the production spacing + versatility model without summing player ratings as lineup value:
 
@@ -366,6 +366,8 @@ Build `scripts/validate-lineups.ts` against normalized five-man lineup seasons 2
 The first accepted run freezes a regression floor; it does **not** have to flatter the current model. If the signs or held-out score are weak, land the honest measurement and diagnose before changing fit constants.
 
 **S3.a acceptance:** profile and calibrate stdout byte-identical; production pool/build byte-identical; lineup report deterministic; coverage/fallback strata explicit; no future-season leakage; no scouted ratings; no runtime behavior change.
+
+**Accepted outcome:** all 18 completed seasons cleared the coverage gates; the generated report and frozen baseline record the measured low-positive spacing/versatility correlations without retuning; production pool, profile, calibrate, and spacing-calibration hashes remained unchanged. Exact metrics and hashes live in `docs/PROJECT_STATUS.md`; S3.b1 is next.
 
 #### Wave S3-2 — pre-approved first mechanics tranche
 
@@ -751,7 +753,7 @@ The tuned/derived artifacts the re-baseline matrix (§3.3) governs — location,
 | **Calibrate drift report** | `scripts/calibrate-history.ts` (+ `npm run download-history` data) | Re-run; report deltas | **Reclassified (revision 4):** historical data ends 2015 → a drift comparison, not an era acceptance. Expected gap vs a 2023–26-tuned engine (~114.4 vs 99.3). A complete modern-era row requires its own normalized-games derivation (Horizon); it is not part of S1-R. |
 | FT inverse pair (`FT_LEAGUE_AVG_PCT`/`FT_PCT_SLOPE`/`FT_DERIVE_SCALE`) | `engine/constants.ts` | Round-trip asserted by the S2d harness (`scripts/test-s2c1-r.ts`) | Change together, always. Settled at S2d (2026-07-14): anchored to the empirical 0.7823. |
 | Spacing/versatility baselines (`SPACING_*`, `VERSATILITY_*`) | `engine/constants.ts` | `tsx scripts/calibrate-spacing.ts` | Re-derived at S2d (2026-07-14) from the activated pool, spacing weighted by production finisher-selection shares (shared `primaryPlayerWeight`); per-season deterministic snapshots at F4 (constants remain the season-1 anchor). |
-| S3 lineup-fit oracle | `scripts/validate-lineups.ts` → `docs/S3_LINEUP_VALIDATION.md` | S3.a derivation; `--check` verifies the committed measurement report | Planned S3.a artifact: historical 2007-08..2024-25 within-team four-of-five comparisons, coverage strata, held-out metrics, and a frozen non-regression tolerance. Generated report carries measurements/provenance only. |
+| **Historical lineup-model validation oracle** | `docs/S3_LINEUP_VALIDATION.md` + frozen input `docs/S3_LINEUP_VALIDATION_BASELINE.json` | `node --import tsx scripts/validate-lineups.ts` (`--check` for byte identity and regression enforcement) | **S3.a.** Deterministic season-as-of spacing/versatility validation over completed five-man lineup outcomes, with contract-era fallback rates, out-of-fold LOSO calibration errors, frozen per-comparison tolerance, and clamp-saturation diagnostics. The report is generated measurements; the baseline is updated only by an explicit acceptance decision. |
 | A/B expectations | `scripts/test-spacing-ab.ts`, `test-defense-ab.ts` | Re-verified at S2d on the activated pool (defense fixtures rescaled to its rating scale) | Material, correctly-signed effects. Green 2026-07-14. |
 | Rating statistical contract (spread/tails/shrinkage/correlations) | S2 derivation module + its committed report | S2 derivation re-run | New at S2 (§4.2). The modifier-distribution comparison is the operative check. |
 | Aging/development curves + evolved-pool profile | `engine`- or `ratings`-side constants (F4) plus the reusable pool-profile harness | `tsx scripts/derive-aging-curves.ts` over Stage-0 longitudinal data; profile deterministic year-3/year-5/year-10 pools | New at F4a–c; proxy-mapping table + coverage windows + survivor-bias correction + era normalization + held-out validation, followed by enforced behavioral checks on evolved leagues (§5.4). |

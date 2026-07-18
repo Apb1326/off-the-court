@@ -11,7 +11,7 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (2026-07-14; repair merged 2026-07-15)
+## Verification evidence (through 2026-07-15)
 
 ### F2 playoffs acceptance repair (accepted and merged)
 
@@ -42,6 +42,50 @@ Regular-season A/B projection (`currentDate`, `gamesPlayed`, ordered `results`,
 `standings`, `playerStats`, `injuries`, `recoveries`; excluding F2-only playoff state
 and the intentionally changed injury-history representation): `349575c` = repair =
 SHA-256 `715ba6504be40472df855565061703710a4186a656a81354fdb02c06397d5800`.
+
+### S3.a historical lineup-model validation (accepted 2026-07-15)
+
+`scripts/validate-lineups.ts` now provides the deterministic season-as-of projection
+seam and writes the generated oracle
+[`docs/S3_LINEUP_VALIDATION.md`](/Users/atticusboyle/Desktop/Claude%20Code/OffTheCourt/docs/S3_LINEUP_VALIDATION.md).
+The seam re-keys the existing derivation recency/full-window policy to each target
+season, uses empty absent contracts only for historical projections, and rescues
+pre-2023-24 shot mix from that season's `shot_zones`. The production 2025-26 default
+options and direct shot-events path remain unchanged; `calibrate-spacing` uses the
+shared finisher-share helper and remained byte-identical.
+
+Coverage gates were green for all 18 completed seasons: 35,381 usable lineups,
+2,893,040 usable possessions, and 114,488 canonical four-of-five pairs. The lowest
+usable-row coverage was 97.20% (2020-21); usable-possession coverage was 100.00% in
+every season. The primary all-row results were spacing on the long-run cohort:
+Pearson 0.0575, Spearman 0.0599, direction 51.82%, out-of-fold CV RMSE 19.6624,
+frozen LOSO tolerance 0.0596; versatility on the defense/tracking cohort: Pearson
+0.0312, Spearman 0.0365, direction 51.32%, out-of-fold CV RMSE 19.8467, tolerance
+0.0438; combined on the defense/tracking cohort: Pearson 0.0372, Spearman 0.0409,
+direction 51.46%, out-of-fold CV RMSE 28.7122, tolerance 0.0339. These low
+correlations are the measured baseline oracle, not a retune trigger. The accepted
+correlations and tolerances are persisted independently in
+`docs/S3_LINEUP_VALIDATION_BASELINE.json` and enforced by the harness; a fixed
+0.0001 numerical floor rejects non-positive signal. Clamp saturation reached 8.96%
+for spacing finisher evaluations and 15.33% for versatility lineup evaluations in
+the most saturated season; the generated table records every season.
+
+| Command / artifact | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `npm run validate-nba-data` | PASS — 211 passed, 0 failed, 80 skipped |
+| `node --import tsx scripts/build-league.ts --check` | PASS — active pair and manifest byte-identical |
+| `node --import tsx scripts/test-build-league.ts` | PASS |
+| `node --import tsx scripts/validate-lineups.ts --check` | PASS — generated report byte-identical |
+| `node --import tsx scripts/test-s3a-lineups.ts` | PASS — canonicalization, leakage, weighting, usable rows, shot rescue, deterministic output |
+| `node --import tsx scripts/calibrate-spacing.ts` | PASS — pre/post SHA-256 `c120962893da36f2bc665a7f46073e956434923384cfdcc3d5edf143ffb1f5bb` |
+| profile stdout | PASS 32/32; unchanged SHA-256 `c37dfded336b446e344f592e97a8c913aea2d4894602d86b06b3d5392de5438e` |
+| calibrate stdout | exit 0; unchanged SHA-256 `5d097b907f7869ff9fc97c4c82778fe1b66354008bb38cc479ad262491c4b8c7` |
+| active `teams.json` / `players.json` | unchanged SHA-256 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9` / `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24` |
+| determinism, spacing A/B, defense A/B | PASS; no production-path changes |
+
+The next S unit is **S3.b1 — defender-matchup fidelity**. S3.a does not begin that
+work or change any engine constant.
 
 ## Earlier S2d verification evidence
 
@@ -140,7 +184,7 @@ source and the runs above.
 
 | Track | Verified state | Next unit |
 |---|---|---|
-| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. The S3 execution roadmap and first-tranche prompts were authored 2026-07-15; no S3 runtime work has landed. | **S3.a** — historical lineup-model validation; S3.b1 → S3.b2 → S3.c1 follow only after sequential acceptance. |
+| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. **S3.a was accepted 2026-07-15**: its historical season-as-of lineup oracle is generated and byte-idempotent, with production pool/profile/calibration output unchanged. | **S3.b1** — defender-matchup fidelity; S3.b2 → S3.c1 follow only after sequential acceptance. |
 | **F — Franchise** | F1 done; **F2 accepted and merged** (`33e4926` via `c8e4b46`; schema v8, ledger-derived deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam**; F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
 | **U — Presentation** | App shell plus the F2 bracket/champion view: menu, league, roster, season standings/leaders/playoffs, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI or offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
@@ -148,10 +192,10 @@ source and the runs above.
 
 ## Gates and blockers
 
-- **F2 repair is merged on `main`.** With S2d and F2 landed, **S3.a** and **F3** are
-  independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one unit at a
-  time on main, not on concurrent branches that both touch shared foundations.
-- **S3 first-tranche sequencing is locked:** S3.a → S3.b1 → S3.b2 → S3.c1 →
+- **F2 repair is merged on `main`.** With S2d, F2, and S3.a accepted, **S3.b1** and
+  **F3** are independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one
+  unit at a time on main, not on concurrent branches that both touch shared foundations.
+- **S3 first-tranche sequencing is locked:** S3.a (done) → S3.b1 → S3.b2 → S3.c1 →
   read-only Checkpoint A. Later S3.c2/c3/d/e/f implementation prompts are intentionally
   deferred until that checkpoint authorizes at most one next mechanic. S3.g remains dormant.
 - **T-5c and everything after it** (trade AI, ecosystem, RFA, draft) is blocked on the
