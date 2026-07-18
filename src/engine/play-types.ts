@@ -16,8 +16,20 @@ import {
   PLAY_TYPE_POSITION_MODIFIER_STRENGTH,
   PLAY_TYPE_SITUATION_MODIFIER_STRENGTH,
   SHOT_ZONE_FREQUENCY_FACTORS,
+  S3B1_MATCHUP_LIFT,
+  S3B1_SECONDARY_POS_FACTOR,
+  S3B1_QUALITY_COEF,
+  S3B1_QUALITY_MIN,
+  S3B1_QUALITY_MAX,
+  S3B1_HUNT_BASE,
+  S3B1_HUNT_MIN,
+  S3B1_HUNT_MAX,
+  S3B1_HUNT_TERM_MIN,
+  S3B1_HUNT_TERM_MAX,
+  S3B1_DEFENDER_MIN_WEIGHT,
 } from './constants';
 import { computeVersatility } from './spacing';
+import { enginePositionToMatchupBucket } from '@/data/nba/position-mapping';
 
 /** Machine-readable identity for S2d context checks; no selector mode is configurable at runtime. */
 export const PRODUCTION_PLAY_TYPE_SELECTOR_ID = 'nba-derived-tendency-selector-v1';
@@ -354,39 +366,86 @@ export function selectDefender(
   defensivePlayers: Player[],
   shooter: Player,
   rng: SeededRNG,
-  playType: PlayType = 'isolation',
+  playType: PlayType,
 ): Player {
-  // On isolation and post-ups the offense actively hunts the weakest defender
-  // (a classic switch-and-attack), so the primary defender skews softer. A
-  // genuinely switchable defense (high perimeter-D FLOOR, low mobility/size
-  // spread) finds that soft target LESS often: an additive, centered offset to
-  // the hunt rate driven by the WEAK LINK, not the mean — so four studs and one
-  // sieve (high mean, low floor) still get hunted. An average defense (z≈0)
-  // leaves the 0.45 base rate unchanged.
-  const huntsMismatch = playType === 'isolation' || playType === 'post_up';
-  const versatility = computeVersatility(defensivePlayers);
-  const huntRate = Math.max(0.15, Math.min(0.6, 0.45 - VERSATILITY_HUNT_COEF * versatility));
-  if (huntsMismatch && rng.nextBool(huntRate)) {
-    const weakWeights = defensivePlayers.map((d) => {
-      const defRating = (d.ratings.perimeterDefense + d.ratings.interiorDefense + d.ratings.defensiveIQ) / 3;
-      return Math.max(1, 85 - defRating); // invert: weaker defenders weighted higher
-    });
-    return rng.weightedChoice(defensivePlayers, weakWeights);
-  }
+  const factors = explainDefenderSelection(defensivePlayers, shooter, playType);
+  return rng.weightedChoice(defensivePlayers, factors.map((factor) => factor.finalWeight));
+}
 
-  // Match by position primarily
-  const positionalMatch = defensivePlayers.find(
-    (d) => d.position === shooter.position || d.secondaryPosition === shooter.position
-  );
-  if (positionalMatch && rng.nextBool(0.7)) {
-    return positionalMatch;
-  }
-  // Otherwise weighted by defensive rating
-  const weights = defensivePlayers.map((d) => {
-    const defRating = (d.ratings.perimeterDefense + d.ratings.interiorDefense) / 2;
-    return Math.max(1, defRating);
+export interface DefenderSelectionFactor {
+  defenderId: string;
+  position: Position;
+  shooterBucket: keyof typeof S3B1_MATCHUP_LIFT[Position];
+  avgDef: number;
+  weakness: number;
+  posTerm: number;
+  qualTerm: number;
+  huntStrength: number;
+  huntTerm: number;
+  rawWeight: number;
+  finalWeight: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Pure decomposition of S3.b1 defender assignment, in existing lineup order.
+ * The empirical term uses only the shooter's primary engine position. The same
+ * three-rating average drives quality and signed weak-link hunting.
+ */
+export function explainDefenderSelection(
+  defensivePlayers: Player[],
+  shooter: Player,
+  playType: PlayType,
+): DefenderSelectionFactor[] {
+  const shooterBucket = enginePositionToMatchupBucket(shooter.position);
+  const huntsMismatch = playType === 'isolation' || playType === 'post_up';
+  const versatilityZ = computeVersatility(defensivePlayers);
+  const huntStrength = huntsMismatch
+    ? clamp(S3B1_HUNT_BASE - VERSATILITY_HUNT_COEF * versatilityZ, S3B1_HUNT_MIN, S3B1_HUNT_MAX)
+    : 0;
+
+  const raw = defensivePlayers.map((defender) => {
+    const avgDef = (
+      defender.ratings.perimeterDefense
+      + defender.ratings.interiorDefense
+      + defender.ratings.defensiveIQ
+    ) / 3;
+    const weakness = (40 - avgDef) / 40;
+    const primaryLift = S3B1_MATCHUP_LIFT[defender.position][shooterBucket];
+    const secondaryLift = defender.secondaryPosition === undefined
+      ? 0
+      : S3B1_SECONDARY_POS_FACTOR * S3B1_MATCHUP_LIFT[defender.secondaryPosition][shooterBucket];
+    const posTerm = Math.max(primaryLift, secondaryLift);
+    const qualTerm = clamp(
+      1 + S3B1_QUALITY_COEF * (avgDef - 40) / 40,
+      S3B1_QUALITY_MIN,
+      S3B1_QUALITY_MAX,
+    );
+    const huntTerm = huntsMismatch
+      ? clamp(1 + huntStrength * weakness, S3B1_HUNT_TERM_MIN, S3B1_HUNT_TERM_MAX)
+      : 1;
+    const rawWeight = posTerm * qualTerm * huntTerm;
+    return {
+      defenderId: defender.id,
+      position: defender.position,
+      shooterBucket,
+      avgDef,
+      weakness,
+      posTerm,
+      qualTerm,
+      huntStrength,
+      huntTerm,
+      rawWeight,
+    };
   });
-  return rng.weightedChoice(defensivePlayers, weights);
+  const maxRawWeight = Math.max(...raw.map((factor) => factor.rawWeight));
+  return raw.map((factor) => ({
+    ...factor,
+    finalWeight: Math.max(factor.rawWeight, S3B1_DEFENDER_MIN_WEIGHT * maxRawWeight),
+  }));
 }
 
 export function checkTransitionOpportunity(

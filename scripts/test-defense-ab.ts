@@ -15,16 +15,17 @@
  *                     OPPOSITE of switch-everything.
  *
  * Defender positions are all set to one value the hunted star does NOT play, so
- * selectDefender's positional-match path is neutralized and the hunt RATE (the
- * lever this layer moves) drives selection cleanly. The soft-target hit rate is
+ * the S3.b1 position term is uniform and cancels after normalization. The
+ * versatility-gated hunt term drives selection cleanly. The soft-target hit rate is
  * the fraction of draws where the assigned defender is the lineup's weakest
  * (lowest combined defensive rating) — i.e. how often hunting finds the mismatch.
  *
  * Stated, asserted thresholds (script exits non-zero if unmet):
  *   - z(switchable) - z(studsSieve)  >= Z_GAP  (equal mean, opposite floor → the
  *     value is floor-driven, not mean-driven),
- *   - huntRate(studsSieve) - huntRate(switchable) >= HUNT_GAP (the studs-sieve
- *     lineup gets hunted materially more often than the switchable one),
+ *   - softTargetRate(studsSieve) - softTargetRate(switchable) >=
+ *     S3B1_AB_SUPPRESSION_GAP (the studs-sieve lineup gets hunted materially
+ *     more often than the switchable one),
  *   - z(rimProtectors) <= z(switchable) - RIM_GAP (rim protection does NOT buy
  *     switchability),
  *   - softTarget(studsSieve) > softTarget(switchable) (hunting finds the soft
@@ -35,16 +36,16 @@ import { Player, Position, PlayerRatings } from '../src/models/player';
 import { SeededRNG } from '../src/lib/rng';
 import { selectDefender } from '../src/engine/play-types';
 import { computeVersatility } from '../src/engine/spacing';
-import { VERSATILITY_HUNT_COEF } from '../src/engine/constants';
 
 const Z_GAP = 2.0;
-const HUNT_GAP = 0.12;
+// Frozen before S3.b1 gameplay tuning: behavioral weak-link suppression, 2 pp.
+const S3B1_AB_SUPPRESSION_GAP = 0.02;
 const RIM_GAP = 1.5;
 const DRAWS = 60000;
 
 let pid = 0;
 // All defenders are position 'C'; the star is a 'PG', so selectDefender finds no
-// positional match and the hunt rate becomes the lever (clean mechanism test).
+// positional advantage and the hunt term becomes the lever (clean mechanism test).
 function mkDef(perim: number, ath: number, ht: number, defIQ: number, intDef: number): Player {
   pid++;
   const ratings: PlayerRatings = {
@@ -110,7 +111,6 @@ function evaluate(name: string, build: () => Player[]) {
   const meanPerim = def.reduce((s, d) => s + d.ratings.perimeterDefense, 0) / def.length;
   const floor = Math.min(...def.map((d) => d.ratings.perimeterDefense));
   const z = computeVersatility(def);
-  const huntRate = Math.max(0.15, Math.min(0.6, 0.45 - VERSATILITY_HUNT_COEF * z));
 
   const weakestId = def.reduce((min, d) => (combined(d) < combined(min) ? d : min)).id;
   let softHits = 0;
@@ -120,9 +120,9 @@ function evaluate(name: string, build: () => Player[]) {
   const softTarget = softHits / DRAWS;
   console.log(
     `${name.padEnd(13)} meanPerimD ${meanPerim.toFixed(1).padStart(5)} | floor ${floor.toString().padStart(2)} | ` +
-    `vers-z ${z.toFixed(2).padStart(6)} | huntRate ${huntRate.toFixed(3)} | softTargetRate ${(softTarget * 100).toFixed(1)}%`,
+    `vers-z ${z.toFixed(2).padStart(6)} | softTargetRate ${(softTarget * 100).toFixed(1)}%`,
   );
-  return { z, huntRate, softTarget };
+  return { z, softTarget };
 }
 
 function main() {
@@ -133,17 +133,17 @@ function main() {
   const r = evaluate('rimProtectors', rimProtectors);
 
   const zGap = a.z - b.z;
-  const huntGap = b.huntRate - a.huntRate;
+  const suppressionGap = b.softTarget - a.softTarget;
   console.log(`\nWeak-link checks (switchable & studsSieve have ~equal MEAN perimeter D, opposite floors):`);
   console.log(`  z gap (switchable - studsSieve)        = ${zGap.toFixed(2)}   (need ≥ ${Z_GAP})`);
-  console.log(`  huntRate gap (studsSieve - switchable) = ${huntGap.toFixed(3)} (need ≥ ${HUNT_GAP})`);
+  console.log(`  soft-target suppression gap            = ${suppressionGap.toFixed(3)} (need ≥ ${S3B1_AB_SUPPRESSION_GAP})`);
   console.log(`  soft-target rate: studsSieve ${(b.softTarget * 100).toFixed(1)}% > switchable ${(a.softTarget * 100).toFixed(1)}%`);
   console.log(`  rim-protectors z ${r.z.toFixed(2)} ≤ switchable z - ${RIM_GAP} (${(a.z - RIM_GAP).toFixed(2)})? rim protection ≠ switchability`);
   console.log(`  versatility ordering: switchable ${a.z.toFixed(2)} > average ${c.z.toFixed(2)} > studsSieve ${b.z.toFixed(2)}`);
 
   const checks = {
     zGap: zGap >= Z_GAP,
-    huntGap: huntGap >= HUNT_GAP,
+    suppressionGap: suppressionGap >= S3B1_AB_SUPPRESSION_GAP,
     rimNotSwitchable: r.z <= a.z - RIM_GAP,
     softTargetDir: b.softTarget > a.softTarget,
     ordering: a.z > c.z && c.z > b.z,
