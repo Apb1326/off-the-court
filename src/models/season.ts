@@ -1,4 +1,5 @@
-import { StatLine } from './game';
+import { emptyStatLine, StatLine } from './game';
+import type { Player } from './player';
 import { TransactionEntry } from './transaction';
 
 /** Immutable, append-only grant record for a banked Standard TPE. */
@@ -63,6 +64,30 @@ export type PlayoffRound =
   | 'conference_finals'
   | 'finals';
 export type PlayoffStatus = 'pending' | 'in_progress' | 'complete' | 'grandfathered_complete';
+
+/** Canonical bracket order for summaries and UI progress labels. */
+export function playoffRoundOrder(round: PlayoffRound): number {
+  const order: Record<PlayoffRound, number> = {
+    play_in: 0,
+    first_round: 1,
+    conference_semifinals: 2,
+    conference_finals: 3,
+    finals: 4,
+  };
+  return order[round];
+}
+
+/** Return the earliest unresolved round, independent of bracket-array construction order. */
+export function earliestUnresolvedPlayoffSeries<T extends { round: PlayoffRound; winnerTeamId: string | null }>(
+  series: readonly T[],
+): T | undefined {
+  let earliest: T | undefined;
+  for (const candidate of series) {
+    if (candidate.winnerTeamId) continue;
+    if (!earliest || playoffRoundOrder(candidate.round) < playoffRoundOrder(earliest.round)) earliest = candidate;
+  }
+  return earliest;
+}
 
 export interface PlayoffSeed {
   conference: PlayoffConference;
@@ -232,6 +257,18 @@ export interface PlayerSeasonStats {
   gamesStarted: number;
   minutes: number;
   totals: StatLine;
+}
+
+/** Initialize the shared regular- or postseason stats shape for every player. */
+export function zeroPlayoffStats(players: readonly Player[]): PlayerSeasonStats[] {
+  return players.map((player) => ({
+    playerId: player.id,
+    teamId: player.teamId ?? '',
+    gamesPlayed: 0,
+    gamesStarted: 0,
+    minutes: 0,
+    totals: emptyStatLine(),
+  }));
 }
 
 export interface SeasonResult {

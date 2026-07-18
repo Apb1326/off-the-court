@@ -4,8 +4,7 @@ import {
   normalizePlayersForSave,
 } from '@/transactions/contracts';
 import { recomputeUsageAndFreeThrowFields } from '@/ratings/derivation';
-import { emptyPlayoffs } from '@/models/season';
-import { emptyStatLine } from '@/models/game';
+import { emptyPlayoffs, zeroPlayoffStats } from '@/models/season';
 import { syncPlayoffs } from '@/engine/playoffs';
 
 /**
@@ -282,17 +281,6 @@ function migrateV7toV8(file: SaveFile): SaveFile {
       playoffPlayerStats: zeroPlayoffStats(normalized.players),
     },
   };
-}
-
-function zeroPlayoffStats(players: SaveFile['players']) {
-  return players.map((player) => ({
-    playerId: player.id,
-    teamId: player.teamId ?? '',
-    gamesPlayed: 0,
-    gamesStarted: 0,
-    minutes: 0,
-    totals: emptyStatLine(),
-  }));
 }
 
 /**

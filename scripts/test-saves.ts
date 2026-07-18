@@ -17,7 +17,7 @@ import { Player } from '../src/models/player';
 import { Team } from '../src/models/team';
 import { SeasonState } from '../src/models/season';
 import { SaveFile, SAVE_SCHEMA_VERSION, derivePhase } from '../src/models/save';
-import { SaveStore } from '../src/data/saves/save-store';
+import { AUTOSAVE_ID, SaveStore, SaveValidationError } from '../src/data/saves/save-store';
 import { getControlledTeamId, isControlledTeam } from '../src/franchise/controlled';
 import { createSeasonState, advanceSeason } from '../src/engine/season';
 import { addDays } from '../src/engine/calendar';
@@ -185,6 +185,33 @@ async function main() {
   const playoffReload = await store.loadSave(playoffMeta.saveId);
   check('playoff phase survives save/load and metadata derivation',
     playoffReload.ok && derivePhase(playoffReload.file.season) === 'playoffs' && playoffMeta.phase === 'playoffs');
+
+  // A malformed ledger must be rejected before it can replace the valid active save.
+  await store.autoSave(buildSaveFile(playoffSeason, teams, players));
+  const autosavePath = path.join(tmp, 'saves', AUTOSAVE_ID, 'save.json');
+  const persistedBeforeValidationFailure = await readFile(autosavePath, 'utf-8');
+  const corrupt = structuredClone(buildSaveFile(playoffSeason, teams, players));
+  const scheduled = corrupt.season.playoffs.schedule[0];
+  corrupt.season.results.push({
+    id: `${scheduled.id.slice(0, -1)}2`,
+    date: '1900-01-01',
+    homeTeamId: scheduled.homeTeamId,
+    awayTeamId: scheduled.awayTeamId,
+    homeScore: 100,
+    awayScore: 90,
+    overtimePeriods: 0,
+    winnerId: scheduled.homeTeamId,
+  });
+  let validationError: unknown;
+  try {
+    await store.autoSave(corrupt);
+  } catch (error) {
+    validationError = error;
+  }
+  const persistedAfterValidationFailure = await readFile(autosavePath, 'utf-8');
+  check('malformed playoff ledger returns a typed save validation error and leaves autosave untouched',
+    validationError instanceof SaveValidationError && validationError.code === 'SAVE_VALIDATION_FAILED' &&
+    persistedAfterValidationFailure === persistedBeforeValidationFailure);
 
   const firstPostseasonDate = playoffSeason.playoffs.schedule[0].date!;
   advanceSeason(playoffSeason, firstPostseasonDate, teams, players);

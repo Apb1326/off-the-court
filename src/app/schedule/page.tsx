@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { earliestUnresolvedPlayoffSeries } from '@/models/season';
 
 interface Team {
   id: string;
@@ -289,7 +290,7 @@ function ControlBar({ season, nextMarker, busy, onAdvance, onNew, championName }
   championName: string | null;
 }) {
   const pct = Math.round((season.gamesPlayed / season.totalGames) * 100);
-  const activeRound = season.playoffs.series.find((series) => !series.winnerTeamId)?.round;
+  const activeRound = earliestUnresolvedPlayoffSeries(season.playoffs.series)?.round;
   const playoffLabel = activeRound ? ROUND_LABEL[activeRound] : 'Postseason';
   return (
     <div className="ootp-panel">

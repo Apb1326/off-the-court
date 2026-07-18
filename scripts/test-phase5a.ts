@@ -394,7 +394,8 @@ function testMigration(): void {
   const v4 = { schemaVersion: 4, phase: derivePhase(f.world.season), season: v4Season, teams: f.world.teams, players: f.world.players, createdAt: now, updatedAt: now } as unknown as SaveFile;
   const logBefore = snap(v4.season.transactionLog);
   const migrated = migrateSaveFile(v4);
-  check('v4 loads through current schema with empty new ledgers', migrated.ok && migrated.file.schemaVersion === SAVE_SCHEMA_VERSION && migrated.file.season.tradeExceptions.length === 0 && migrated.file.season.teamExceptionStates.length === 0);
+  // Update this literal with the migration when the on-disk save schema changes.
+  check('v4 loads through current schema with empty new ledgers', migrated.ok && SAVE_SCHEMA_VERSION === 8 && migrated.file.schemaVersion === SAVE_SCHEMA_VERSION && migrated.file.season.tradeExceptions.length === 0 && migrated.file.season.teamExceptionStates.length === 0);
   if (!migrated.ok) return;
   check('old cut remains byte-identical and contributes dead money', snap(migrated.file.season.transactionLog) === logBefore && close(computeDeadMoney(migrated.file, f.aId), 8));
   const roundTrip = JSON.parse(JSON.stringify(migrated.file)) as SaveFile;

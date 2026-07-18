@@ -664,7 +664,7 @@ function report(seasonSummaries: readonly SeasonSummary[], pairs: readonly PairO
     reportLines.push('');
   }
   reportLines.push('## Projection seam checks', '', '- Season-relative recency weights are keyed to the target season; no input row after the target season is loaded.', '- Production 2025-26 uses the unchanged default derivation options and direct shot-events path; the rescue branch is enabled only when a historical target has no shot-events rows.', '- The production finisher-share mix is shared with `scripts/calibrate-spacing.ts` and includes the unconditional transition share multiplied by `TRANSITION_ELIGIBLE_RATE`.', '- No persisted player field, save shape, active pool, engine constant, or gameplay path is written by this harness.', '');
-  return `${reportLines.join('\n')}\n`;
+  return reportLines.join('\n');
 }
 
 function main(): void {
