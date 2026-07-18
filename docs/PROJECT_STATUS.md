@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-15 · **Merged F2 implementation:** `694886f` · **Accepted repair:** `33e4926`, merged to `main` by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
+> **Date:** 2026-07-18 · **S3.b1 implementation:** `d574f93` · **Review fix:** `f313250` · **Finalized prompt:** `eaf120c` · **Merged F2 implementation:** `694886f` · **Accepted F2 repair:** `33e4926`, merged by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -11,7 +11,7 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (through 2026-07-15)
+## Verification evidence (through 2026-07-18)
 
 ### F2 playoffs acceptance repair (accepted and merged)
 
@@ -84,8 +84,125 @@ the most saturated season; the generated table records every season.
 | active `teams.json` / `players.json` | unchanged SHA-256 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9` / `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24` |
 | determinism, spacing A/B, defense A/B | PASS; no production-path changes |
 
-The next S unit is **S3.b1 — defender-matchup fidelity**. S3.a does not begin that
-work or change any engine constant.
+The subsequent S3.b1 unit is recorded below; S3.a itself did not begin that work
+or change any engine constant.
+
+### S3.b1 defender assignment fidelity (accepted 2026-07-18)
+
+Implementation commit `d574f93` (finalized prompt archive `eaf120c`) replaces
+`selectDefender`'s conditional mismatch/position/fallback branches with one
+auditable weight vector and exactly one unconditional `SeededRNG.weightedChoice`
+draw. `explainDefenderSelection` is the pure production/diagnostic seam. It uses
+the shooter's primary coarse bucket, a max-blended discounted defender secondary
+position, one shared three-rating defensive average, signed relative weakness on
+isolation/post-up, and a 10%-of-lineup-max raw-weight reachability floor. No shot
+resolution, contest, foul, steal, spacing/versatility arithmetic, rating, save,
+or normalized pipeline path changed.
+
+`scripts/derive-s3b1-matchups.ts` discovered the declared completed matchup
+window exactly (2017-18 through 2024-25): seasonal rostered-defender coverage was
+99.81-100%, the defender-position join was 4,423/4,424 rows (99.98%) and 100.00%
+possession-weighted, and the fitted sample contained 9,398,798.40 known partial
+possessions with 0.00% `UNK`. The committed 5x3 table is supply-adjusted lift,
+not supply-skewed column share; the generated report and constant block are
+byte-checked together. Balanced-40 sampled leaders were PG vs guards (33.10%),
+PF vs forwards (24.22%), and C vs centers (44.95%). The pre-edit neutral selector
+put the exact same position on the shooter about 75.8-76.1% of the time; the new
+coarse evidence distributes guards across PG/SG, wings across SF/PF/C, and center
+coverage primarily across C/PF as the lift table specifies.
+
+The defense A/B's retired hunt-probability assertion was the only existing-harness
+mechanism edit. Its replacement threshold was frozen before gameplay tuning at a
+2.0 percentage-point studs-plus-sieve minus switchable soft-target gap; the final
+gap is 2.8 points (23.0% vs 20.1%). The focused harness proves one draw on every
+play type/configuration, direct weight validity, exact lift-normalized balanced
+probabilities, secondary max-blend, unused shooter secondary position, signed
+hunting on isolation/post-up, above-40 relative weak-link hunting (+4.02 points),
+mathematical reachability, and repeat-identical stdout (SHA-256
+`7a31a8827044ef5d84a269002b70f1fcb52937e963c0c9eb8e1f81dab89caa55`).
+
+The activated-pool profile remains **PASS 32/32**. Displayed pre/post enforced
+metrics are below; `pp` denotes percentage points. The small shifts are the
+expected result of changed defender assignment plus the locked one-draw RNG
+contract; no unrelated calibration knob was edited.
+
+| Enforced metric | S3.a pre | S3.b1 post | Delta |
+|---|---:|---:|---:|
+| Pace | 101.4 | 101.3 | -0.1 |
+| Points | 114.0 | 114.1 | +0.1 |
+| PPP | 1.124 | 1.126 | +0.002 |
+| FGA | 88.5 | 88.3 | -0.2 |
+| FG% | 47.3% | 47.4% | +0.1 pp |
+| 3PA | 35.9 | 35.7 | -0.2 |
+| 3P% | 36.2% | 36.3% | +0.1 pp |
+| FTA | 22.2 | 22.3 | +0.1 |
+| FT% | 77.7% | 77.5% | -0.2 pp |
+| OREB | 11.3 | 11.4 | +0.1 |
+| DREB | 32.9 | 32.7 | -0.2 |
+| REB | 44.3 | 44.2 | -0.1 |
+| AST | 26.7 | 26.8 | +0.1 |
+| STL | 8.1 | 8.1 | 0.0 |
+| BLK | 4.8 | 4.9 | +0.1 |
+| TOV | 14.4 | 14.5 | +0.1 |
+| Average margin | 13.1 | 12.7 | -0.4 |
+| Rim FG% | 66.4% | 66.5% | +0.1 pp |
+| Short-mid FG% | 44.2% | 44.2% | 0.0 pp |
+| Long-mid FG% | 42.0% | 42.1% | +0.1 pp |
+| Corner-three FG% | 39.1% | 38.9% | -0.2 pp |
+| Above-break-three FG% | 35.6% | 35.8% | +0.2 pp |
+| Deep-three FG% | 33.6% | 33.9% | +0.3 pp |
+| Rim share | 29.5% | 29.5% | 0.0 pp |
+| Short-mid share | 22.4% | 22.5% | +0.1 pp |
+| Long-mid share | 7.5% | 7.6% | +0.1 pp |
+| Corner-three share | 10.6% | 10.7% | +0.1 pp |
+| Above-break-three share | 22.8% | 22.7% | -0.1 pp |
+| Deep-three share | 7.2% | 7.0% | -0.2 pp |
+| Rim bucket share | 29.5% | 29.5% | 0.0 pp |
+| Mid bucket share | 29.9% | 30.1% | +0.2 pp |
+| Three bucket share | 40.6% | 40.4% | -0.2 pp |
+
+| Command / artifact | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `npm run validate-nba-data` | PASS - 211 passed, 0 failed, 80 skipped |
+| `node --import tsx scripts/build-league.ts --check` | PASS - active pair and manifest byte-identical |
+| `node --import tsx scripts/derive-s3b1-matchups.ts --check` | PASS - report and generated constant block byte-identical |
+| `node --import tsx scripts/test-s3b1-defender-assignment.ts` | PASS - focused output repeat-identical |
+| `node --import tsx scripts/validate-lineups.ts --check` | PASS - S3.a report byte-identical; no lineup-score regression |
+| profile stdout | PASS 32/32; pre SHA-256 `c37dfded336b446e344f592e97a8c913aea2d4894602d86b06b3d5392de5438e`; post `fcbadc1a0cf4fa0ea2842630bd864cb9e97f9263a78f806d046827df287c23eb` |
+| calibrate stdout | Exit 0; pre SHA-256 `5d097b907f7869ff9fc97c4c82778fe1b66354008bb38cc479ad262491c4b8c7`; post `b2f73adc825bba5fb5b8eac0dba528b1285653d41a502871280ef6affb3aa35a` |
+| calibrate deterministic 400-game row | PTS/tm 114.0→115.0; SD 12.3→13.2; margin 12.3→13.0; home 58.5%→60.3%; home advantage 2.8→3.5. This is the non-gating historical drift report; its smaller sample also reflects the intentional fixed-draw RNG-stream change. |
+| `node --import tsx scripts/test-determinism.ts` | PASS - all four seeds byte-identical on repeat |
+| `node --import tsx scripts/test-spacing-ab.ts` | PASS - +8.7 pp rim attempts, +3.2 pp TS |
+| `node --import tsx scripts/test-defense-ab.ts` | PASS - z gap 3.69, suppression gap 2.8 pp, preserved rim/order checks |
+| active `teams.json` / `players.json` | unchanged SHA-256 `9fded301cb4930eec5f155329619ca7278edffb0c1e9e6e7ffe472aa0b20bee9` / `47364273b7622aaed1a11d2b966f2adac7d3c1f23b254bdc0345aef61ae19b24` |
+
+#### S3.b1 verified review follow-up (`f313250`)
+
+The post-acceptance review fixes all five findings without changing any valid-game
+output. Empty direct selector input now throws a `RangeError` before consuming RNG.
+The reported injury route was already guarded before selector entry, but tracing it
+found the underlying zero-lineup clock-stall: `forceExits` now retains the final
+available player only when no replacement exists, because the engine has no forfeit
+model. The real-engine depletion regression forces all five starters out with no
+bench and completes repeat-identically (103-125, 243 events, hash prefix
+`9018c7277521`).
+
+`RuntimeMatchupBucket` is now the sole coarse runtime type, eliminating both the
+normalized `MatchupPositionBucket` name collision and the generated duplicate alias.
+The production selector allocates only one numeric weights array; full 11-field factor
+objects are created only by `explainDefenderSelection`, while both paths share the same
+private formula. `validate-lineups.ts` now consumes the shared production position map.
+
+| Review verification | Result |
+|---|---|
+| profile stdout before/after review | byte-identical SHA-256 `fcbadc1a0cf4fa0ea2842630bd864cb9e97f9263a78f806d046827df287c23eb`; PASS 32/32; every displayed delta 0 |
+| calibrate stdout before/after review | byte-identical SHA-256 `b2f73adc825bba5fb5b8eac0dba528b1285653d41a502871280ef6affb3aa35a`; every displayed delta 0 |
+| typecheck, matchup derivation `--check`, lineup validation `--check`, build-league `--check` | PASS |
+| focused S3.b1, forced-exit depletion, determinism, spacing A/B, defense A/B, injury smoke | PASS; injury smoke remains deterministic at 9.43 missed games/player |
+
+No implementation divergence from the finalized prompt was required. The next S
+unit is **S3.b2 — zone-specific defender influence**; it remains unimplemented.
 
 ## Earlier S2d verification evidence
 
@@ -184,7 +301,7 @@ source and the runs above.
 
 | Track | Verified state | Next unit |
 |---|---|---|
-| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. **S3.a was accepted 2026-07-15**: its historical season-as-of lineup oracle is generated and byte-idempotent, with production pool/profile/calibration output unchanged. | **S3.b1** — defender-matchup fidelity; S3.b2 → S3.c1 follow only after sequential acceptance. |
+| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. **S3.a was accepted 2026-07-15** and **S3.b1 was accepted 2026-07-18** with its generated matchup lift/report, fixed one-draw selector, focused harness, and activated-pool profile PASS 32/32. | **S3.b2** — zone-specific defender influence; S3.c1 follows only after sequential acceptance. |
 | **F — Franchise** | F1 done; **F2 accepted and merged** (`33e4926` via `c8e4b46`; schema v8, ledger-derived deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam**; F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
 | **U — Presentation** | App shell plus the F2 bracket/champion view: menu, league, roster, season standings/leaders/playoffs, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI or offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
@@ -192,10 +309,10 @@ source and the runs above.
 
 ## Gates and blockers
 
-- **F2 repair is merged on `main`.** With S2d, F2, and S3.a accepted, **S3.b1** and
-  **F3** are independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one
+- **F2 repair is merged on `main`.** With S2d, F2, S3.a, and S3.b1 accepted,
+  **S3.b2** and **F3** are independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one
   unit at a time on main, not on concurrent branches that both touch shared foundations.
-- **S3 first-tranche sequencing is locked:** S3.a (done) → S3.b1 → S3.b2 → S3.c1 →
+- **S3 first-tranche sequencing is locked:** S3.a (done) → S3.b1 (done) → S3.b2 → S3.c1 →
   read-only Checkpoint A. Later S3.c2/c3/d/e/f implementation prompts are intentionally
   deferred until that checkpoint authorizes at most one next mechanic. S3.g remains dormant.
 - **T-5c and everything after it** (trade AI, ecosystem, RFA, draft) is blocked on the

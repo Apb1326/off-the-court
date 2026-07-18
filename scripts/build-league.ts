@@ -56,6 +56,11 @@ import {
   loadShotZones,
 } from '../src/data/nba/load';
 import { BoxAdvancedRow, NbaPlayerRow, ShotEventRow } from '../src/data/nba/types';
+import {
+  NBA_POSITION_FALLBACK,
+  NBA_SECONDARY_TOKEN_MAP,
+  nbaPrimaryPosition,
+} from '../src/data/nba/position-mapping';
 import { deriveNbaTendencies } from '../src/ratings/nba-tendencies';
 
 // --- Fixed build policy (annotated constants; no magic numbers) ---
@@ -104,25 +109,6 @@ const ROTATION_LEVEL_TOP_N = 9;
 const SCOUTING_ACCURACY = 0.5;
 /** Documented last-resort age when both players.age and box age are null. */
 const FALLBACK_AGE = 25;
-/** Documented position fallback for missing/unrecognized NBA position strings. */
-const FALLBACK_POSITION: Position = 'SF';
-
-/**
- * NBA position string -> primary OTC Position. Explicit, no silent guesses.
- *   G -> PG, G-F -> SG, F-G -> SF, F -> SF, F-C -> PF, C-F -> PF, C -> C
- */
-const PRIMARY_POSITION_MAP: Record<string, Position> = {
-  G: 'PG',
-  'G-F': 'SG',
-  'F-G': 'SF',
-  F: 'SF',
-  'F-C': 'PF',
-  'C-F': 'PF',
-  C: 'C',
-};
-/** 2nd token of a hyphenated NBA position -> secondaryPosition. */
-const SECONDARY_TOKEN_MAP: Record<string, Position> = { G: 'PG', F: 'SF', C: 'C' };
-
 /**
  * Team offensive/defensive systems for the production build: default placeholders that
  * mirror src/data/ingest/transforms.ts. Inlined (rather than imported) so the
@@ -274,14 +260,14 @@ function mapPosition(
   fallbacks: FallbackEntry[],
 ): { position: Position; secondaryPosition?: Position } {
   const key = (raw ?? '').trim().toUpperCase();
-  const primary = PRIMARY_POSITION_MAP[key];
+  const primary = nbaPrimaryPosition(key);
   if (!primary) {
-    fallbacks.push({ playerId, field: 'position', reason: `unrecognized/missing NBA position "${raw ?? ''}" → ${FALLBACK_POSITION}` });
-    return { position: FALLBACK_POSITION };
+    fallbacks.push({ playerId, field: 'position', reason: `unrecognized/missing NBA position "${raw ?? ''}" → ${NBA_POSITION_FALLBACK}` });
+    return { position: NBA_POSITION_FALLBACK };
   }
   const parts = key.split('-');
   if (parts.length === 2) {
-    const secondary = SECONDARY_TOKEN_MAP[parts[1]];
+    const secondary = NBA_SECONDARY_TOKEN_MAP[parts[1]];
     if (secondary) return { position: primary, secondaryPosition: secondary };
   }
   return { position: primary };
