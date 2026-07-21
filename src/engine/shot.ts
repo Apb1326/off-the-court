@@ -12,6 +12,7 @@ import {
   FT_SIM_PCT_MIN,
   FT_SIM_PCT_MAX,
   BLOCK_BASE_RATE,
+  S3B2_INTERIOR_WEIGHT_BY_ZONE,
 } from './constants';
 
 export type ContestLevel = 'open' | 'lightly_contested' | 'contested' | 'heavily_contested';
@@ -47,18 +48,30 @@ function getShooterRating(player: Player, zone: ShotZone): number {
   }
 }
 
-function getDefenderRating(defender: Player, zone: ShotZone): number {
-  switch (zone) {
-    case 'rim':
-      return defender.ratings.interiorDefense;
-    case 'short_midrange':
-    case 'long_midrange':
-      return defender.ratings.perimeterDefense;
-    case 'corner_three':
-    case 'above_break_three':
-    case 'deep_three':
-      return defender.ratings.perimeterDefense;
-  }
+/** Pure raw-rating blend; fatigue is deliberately applied after this step. */
+export function blendDefenderRating(
+  perimeterDefense: number,
+  interiorDefense: number,
+  interiorWeight: number,
+): number {
+  return perimeterDefense * (1 - interiorWeight) + interiorDefense * interiorWeight;
+}
+
+export function getDefenderRating(defender: Player, zone: ShotZone): number {
+  return blendDefenderRating(
+    defender.ratings.perimeterDefense,
+    defender.ratings.interiorDefense,
+    S3B2_INTERIOR_WEIGHT_BY_ZONE[zone],
+  );
+}
+
+export function getDefenderModifier(
+  defender: Player,
+  defenderFatigue: number,
+  zone: ShotZone,
+): number {
+  const rawBlend = getDefenderRating(defender, zone);
+  return -ratingToModifier(getEffectiveRating(rawBlend, defenderFatigue));
 }
 
 export function determineContestLevel(
@@ -148,7 +161,7 @@ export function resolveShot(
 
   const basePct = BASE_FG_PCT_BY_ZONE[zone];
   const shooterMod = ratingToModifier(getEffectiveRating(getShooterRating(shooter, zone), shooterFatigue));
-  const defenderMod = -ratingToModifier(getEffectiveRating(getDefenderRating(defender, zone), defenderFatigue));
+  const defenderMod = getDefenderModifier(defender, defenderFatigue, zone);
   const fatigueMod = -0.08 * shooterFatigue;
   const playTypeMod = PLAY_TYPE_EFFICIENCY_MOD[playType];
   const contestMod = CONTEST_MODIFIER[contestLevel];
