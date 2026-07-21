@@ -27,7 +27,8 @@
 - *Generated — regenerate, never hand-edit:* `docs/LEAGUE_TARGETS.md`
   (`scripts/derive-league-targets.ts`) · `docs/S3_LINEUP_VALIDATION.md`
   (`scripts/validate-lineups.ts`) · `docs/S3B1_MATCHUP_DERIVATION.md`
-  (`scripts/derive-s3b1-matchups.ts`). Generated docs carry measurements and
+  (`scripts/derive-s3b1-matchups.ts`) · `docs/S3B2_DEFENDER_INFLUENCE.md`
+  (`scripts/derive-s3b2-defender-influence.ts`). Generated docs carry measurements and
   provenance only; status and interpretation live in ROADMAP/PROJECT_STATUS.
 - *Frozen oracle input:* `docs/S3_LINEUP_VALIDATION_BASELINE.json` is the accepted
   S3.a primary-correlation baseline and regression allowance; update it only as an
