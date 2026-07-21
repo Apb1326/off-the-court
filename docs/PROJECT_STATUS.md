@@ -1,6 +1,6 @@
 # Project status — verified snapshot
 
-> **Date:** 2026-07-18 · **S3.b1 implementation:** `d574f93` · **Review fix:** `f313250` · **Finalized prompt:** `eaf120c` · **Merged F2 implementation:** `694886f` · **Accepted F2 repair:** `33e4926`, merged by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
+> **Date:** 2026-07-21 · **S3.b2 decision:** read-only diagnostic `c147250bf80c745f700947f92f1585643d8d2cae6ea0fb00269cdd7b47cc448d` · **S3.b1 implementation:** `d574f93` · **Review fix:** `f313250` · **Finalized prompt:** `eaf120c` · **Merged F2 implementation:** `694886f` · **Accepted F2 repair:** `33e4926`, merged by `c8e4b46` · **Save schema:** v8 · **NBA data schema:** 3
 >
 > This file answers "where is the project right now?" with executable evidence. It owns
 > **nothing else**: `AGENTS.md` (hard rules) > `docs/TRANSACTIONS_ROADMAP.md` (transaction
@@ -11,7 +11,7 @@
 > run changes the picture; correct stale entries with evidence rather than silently
 > rewriting them.
 
-## Verification evidence (through 2026-07-18)
+## Verification evidence (through 2026-07-21)
 
 ### F2 playoffs acceptance repair (accepted and merged)
 
@@ -202,7 +202,15 @@ private formula. `validate-lineups.ts` now consumes the shared production positi
 | focused S3.b1, forced-exit depletion, determinism, spacing A/B, defense A/B, injury smoke | PASS; injury smoke remains deterministic at 9.43 missed games/player |
 
 No implementation divergence from the finalized prompt was required. The next S
-unit is **S3.b2 — zone-specific defender influence**; it remains unimplemented.
+unit is the authorized partial **S3.b2 — zone-specific defender influence**; its runtime remains unimplemented.
+
+#### S3.b2 read-only derivation decision (2026-07-21; implementation not started)
+
+A read-only diagnostic reconstructed only the defense-relevant season-as-of S2b predictors and the locked attempt-weighted, player-clustered joint fits over completed `2013-14` through `2024-25` data. Two runs produced byte-identical stdout SHA-256 `c147250bf80c745f700947f92f1585643d8d2cae6ea0fb00269cdd7b47cc448d`.
+
+The decision authorizes a partial S3.b2 without weakening its statistics. The predeclared full window remains primary for derived rim, short-midrange, and shared-3PT weights. Short midrange is approximately `0.590` interior weight in the full fit; its early `0.738` and late `0.461` movement must remain disclosed sensitivity. Long two's player-clustered 95% slope-sum interval includes zero in the full (**−0.0028 to 0.0512 pp/rating**), early (**−0.0093 to 0.0561**), and late (**−0.0147 to 0.0641**) windows. It was not identified.
+
+Accordingly, the future runtime change must preserve `long_midrange`'s accepted perimeter-only behavior (`interiorWeight = 0`) through a separately named **legacy fallback**. The generator must continue to report the long-two measurement, but neither constants nor prose may call the fallback a derived weight. No confidence level, filter, target, tolerance, or runtime source changed in this docs-only decision, and no runtime code has been implemented.
 
 ## Earlier S2d verification evidence
 
@@ -301,7 +309,7 @@ source and the runs above.
 
 | Track | Verified state | Next unit |
 |---|---|---|
-| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. **S3.a was accepted 2026-07-15** and **S3.b1 was accepted 2026-07-18** with its generated matchup lift/report, fixed one-draw selector, focused harness, and activated-pool profile PASS 32/32. | **S3.b2** — zone-specific defender influence; S3.c1 follows only after sequential acceptance. |
+| **S — Simulation & data** | S1 accepted. S2a–S2c2 done, and **S2d landed (2026-07-14)**: the NBA-derived pool/selector/diets are the sole production path (legacy BDL ingest, seed-test, candidate seams, and the shaded/`_REAL` dual table all retired); baselines re-derived (`calibrate-spacing` now also derives versatility); the coupled retune re-passed the profile **32/32** on the activated pool; the promotion manifest + activation-context gate anchor every gated run; the predeclared 6.00 pp selector band held on all three seeds (4.28–4.55 pp — the earlier seed-7 failure was resolved by the selector/pass-rate retune, no band change); the spacing baseline is derived with the shared production finisher-selection weight (`primaryPlayerWeight`), and the builder harness asserts spreads against the frozen `S2B_TARGET_SDS` contract, never the mutable live pool. **S3.a was accepted 2026-07-15** and **S3.b1 was accepted 2026-07-18** with its generated matchup lift/report, fixed one-draw selector, focused harness, and activated-pool profile PASS 32/32. **S3.b2's partial scope was authorized 2026-07-21 from a read-only diagnostic; runtime remains unimplemented.** | **Partial S3.b2** — derive rim/short-mid/shared-3PT and preserve the long-midrange perimeter-only legacy fallback; S3.c1 follows only after sequential acceptance. |
 | **F — Franchise** | F1 done; **F2 accepted and merged** (`33e4926` via `c8e4b46`; schema v8, ledger-derived deterministic playoffs/champion, migration/save/playoff harnesses green). | **F3 — multi-season seam**; F4 → F5 follow in order. |
 | **T — Transactions** | Phases 1–5b implemented; Phase 5b harness green today. `evaluateTradeForCpu` remains the documented accept-all stub. | **T-5c** is the next transaction unit but is **hard-gated on S2d + F2 + F3 + F4c + F5** — not startable yet. |
 | **U — Presentation** | App shell plus the F2 bracket/champion view: menu, league, roster, season standings/leaders/playoffs, player detail, single-game sim; API routes for players/teams/season/sim/saves. No transaction UI or offseason flow. | U1 is pinned to T-7. Read-only UI items (box-score viewer, leaders) may slot anytime per ROADMAP §7. |
@@ -310,7 +318,7 @@ source and the runs above.
 ## Gates and blockers
 
 - **F2 repair is merged on `main`.** With S2d, F2, S3.a, and S3.b1 accepted,
-  **S3.b2** and **F3** are independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one
+  **partial S3.b2** and **F3** are independently ready; per ROADMAP §3.2 ∥-rule, each track still lands one
   unit at a time on main, not on concurrent branches that both touch shared foundations.
 - **S3 first-tranche sequencing is locked:** S3.a (done) → S3.b1 (done) → S3.b2 → S3.c1 →
   read-only Checkpoint A. Later S3.c2/c3/d/e/f implementation prompts are intentionally
